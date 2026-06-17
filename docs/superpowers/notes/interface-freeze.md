@@ -337,7 +337,10 @@ loop and exercises §5 end-to-end.
   `@anthropic-ai/claude-agent-sdk` **v0.1.77**. Export names `query`, `tool`, `createSdkMcpServer` present, no
   drift. Option shapes confirmed against the installed `.d.ts`:
   `query({ prompt, options: { model, mcpServers, systemPrompt, permissionMode } })` and
-  `createSdkMcpServer({ name, tools })` match as-is. **ONE drift, fixed:** `tool()` takes a Zod **raw shape**
+  `createSdkMcpServer({ name, tools })` match as-is. `permissionMode: "bypassPermissions"` confirmed present in
+  the SDK `PermissionMode` union (`coreTypes.d.ts:173`: `'default' | 'acceptEdits' | 'bypassPermissions' |
+  'plan' | 'delegate' | 'dontAsk'`) — the most drift-prone (enum-like) option, so pinned here; re-check on any
+  SDK bump. **ONE drift, fixed:** `tool()` takes a Zod **raw shape**
   (`AnyZodRawShape`), not a `ZodObject` — runtime passes `empty.shape` (where `empty = z.object({})`), which is
   the correct type for an empty input schema. Task 23 was NOT marked DONE_WITH_CONCERNS (compiles clean). The
   in-process tools are intentionally **no-arg** (empty input schema) — `get_status`/`restart_worker`/
