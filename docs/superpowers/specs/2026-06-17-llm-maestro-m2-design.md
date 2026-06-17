@@ -307,3 +307,121 @@ streaming contract for new providers, the control-API envelope style, the secret
 no-mid-stream-failover hard rule) because those follow directly from the M1 freeze and aren't genuine forks.
 After you resolve the forks (and the user weighs in on A/B), I'll fold the decisions into this spec, then write
 the M2 freeze delta (§9–§15 promoted to FROZEN) before any coding begins.
+
+---
+
+## 18. Frontend UX contract reconciliation (from `frontend` design 7baf4ca)
+
+`frontend` committed the provider-management UX and surfaced the control-API/data shapes its TUI renders against.
+Most reconcile cleanly with §10/§14 as freeze-consistent refinements (folded in below); one is a genuine
+sub-decision routed to `team-lead` (FORK E). The TUI codes against whatever I freeze, so these become binding
+once §9–§15 are promoted.
+
+### 18.1 Naming alignment (binding refinements — not forks)
+
+- **Identity field: use `name`, not `id`.** Frontend's UX keys everything (endpoints `/api/providers/:name`,
+  reorder, enable/disable) on a human-facing `name` with a validation rule. Freeze it as: `name: string`,
+  unique, pattern `^[a-z0-9-]{1,32}$`. I'll rename `ProviderConfig.id` → `name` and `ProviderUpsert.id` → `name`
+  in §10/§14 when promoting. (M1 has no provider id, so no frozen-shape break.)
+- **`ProviderKind` label: use `"custom"` for the OpenAI-compatible case** (frontend's UX term) — i.e.
+  `"copilot" | "openai" | "anthropic" | "custom"`. `"custom"` still means "OpenAI-compatible, `baseUrl` required";
+  I'll note that semantics in the freeze so backend's adapter factory (§10.2) keys on it correctly.
+- **`baseUrl`: `string | null`** where `null` = "use the kind's default base URL" (frontend renders null as the
+  default). Equivalent to my optional `baseUrl?`; I'll standardize on `string | null` to match the UX.
+
+### 18.2 Per-provider health enum (replaces my coarse `healthy: boolean`)
+
+Frontend needs a richer per-provider state than my `ProviderStatus.healthy: boolean`. Adopt their enum — it's
+strictly better for the UX and distinct from M1's single `workerState`:
+
+```ts
+export type ProviderHealth =
+  | "ready" | "starting" | "crashed" | "unhealthy" | "unknown" | "disabled";
+```
+
+`ProviderStatus.healthy: boolean` → `health: ProviderHealth`. Note: `"disabled"` is derived (enabled=false),
+not a probe result; backend sets it from config, the other five from the last probe. `hasCredential: boolean`
+stays (secret-presence-only rule, §14, unchanged).
+
+### 18.3 New SSE event `model-resolve` (additive to the §2.2 / control SSE set)
+
+Frontend wants routing observability in the TUI. Add to the control-API `/api/events` stream (M1 set:
+hello/state/crash/metric):
+
+```
+event: model-resolve
+data: { requested: string, resolved: string, provider: string, via: ResolveVia }
+```
+
+where `ResolveVia` reflects the §13 resolution stages. **Vocabulary reconciliation:** frontend wrote
+`via = "exact" | "glob: <pattern>" | "fallback *"`; the spec calls stage 3 "fuzzy," not "glob." Freeze the
+canonical set as:
+
+```ts
+export type ResolveVia =
+  | "exact"            // §13 stage 1/2 (global or per-provider modelMap hit)
+  | "fuzzy"            // §13 stage 3 (FORK D strategy)
+  | "fallback";        // §13 stage 4 (modelMap["*"])
+```
+
+I'm standardizing on `"fuzzy"` (matches §13) over `"glob"` so the event and the resolution doc use one word;
+frontend renders the label. If FORK D lands D1 (token-set), `"fuzzy"` is accurate; "glob" would be misleading.
+The worker emits this event on each request; the supervisor relays it on the control SSE. (Worker→supervisor
+carries it as an additive IPC `request-metric` sibling — see promotion note.)
+
+### 18.4 Provider control endpoints — reconcile §14.2 with frontend's verbs
+
+Frontend's set is richer than my §14.2 (explicit reorder + enable/disable verbs). Adopt theirs; all follow the
+freeze §2.1 envelope (`{ providers }` for the collection read, `{ ok: true }` for actions):
+
+| Method | Path | Notes |
+|---|---|---|
+| GET | `/api/providers` | `{ providers: ProviderStatus[] }` |
+| POST | `/api/providers` | add (body `ProviderUpsert`, `credential` write-only) |
+| PUT or PATCH | `/api/providers/:name` | edit — **decide one verb** (I'll freeze PUT = full replace; PATCH only if frontend needs partial; confirm with frontend at promotion) |
+| DELETE | `/api/providers/:name` | remove |
+| POST | `/api/providers/:name/enable` \| `/disable` | toggle without full edit |
+| POST | `/api/providers/:name/up` \| `/down` | reorder (semantics depend on FORK E) |
+| POST | `/api/providers/:name/test` | probe → `{ ok, detail }` |
+
+**Error envelope (freeze now to unblock DaemonClient):** action failures return HTTP 4xx/5xx with
+`{ error: { code: string, message: string } }` (e.g. `code:"duplicate_name"`, `"not_found"`,
+`"invalid_name"`, `"upstream_unreachable"`). This matches the worker's existing error-body style (freeze §5
+endpoints use `{ error: { message } }`); I'm adding a `code` for the TUI to switch on. Confirm shape with
+frontend at promotion.
+
+### FORK E — provider priority model → **team-lead to resolve** (raised by frontend's open question #4)
+
+Frontend's §11 UX shows BOTH a numeric rank (#1/#2/#3) AND a high/normal/low label. Are these one axis or two?
+
+- **Option E1 — single axis: explicit ordered list; rank is position.** No `priority` int and no label stored;
+  the provider array order IS the priority (index 0 = #1). `/up` and `/down` swap adjacent entries. The "#1/#2"
+  in the UX is the rendered index; "high/normal/low" is just a visual bucket derived from position (top third /
+  middle / bottom). Pro: one source of truth, no rank/label drift, `/up`-`/down` are trivial array swaps, matches
+  how users think about a fallback chain ("this one first, then that one"). Con: no semantic "tier" — a provider
+  can't be tagged "high priority" independent of its neighbors.
+- **Option E2 — two fields: a `tier: "high"|"normal"|"low"` label AND order within tier.** Routing sorts by tier
+  then by intra-tier order. Pro: semantic tiers (e.g. mark all paid providers "low" so free Copilot is preferred
+  regardless of insertion order). Con: two sources of truth to keep coherent; `/up`-`/down` semantics get
+  ambiguous at tier boundaries (does `/up` from top-of-normal jump into high?); more UX edge cases.
+
+**Recommendation: E1 (single ordered axis; rank = list position; label is a derived view).** It's the simplest
+correct model for a priority fallback chain, makes `/up`-`/down` unambiguous, and eliminates rank/label drift.
+The `ProviderConfig.priority: number` in §10.1 becomes implicit (array order); if you prefer to keep an explicit
+`priority: number` field for stability across reorders, that's a minor variant of E1 (store the int, `/up`-`/down`
+renumber) — I lean toward storing the explicit int so reorder is a single-field update, not a whole-array
+rewrite, but the *model* is still single-axis. → Your call; affects the Provider shape + reorder semantics that
+frontend implements.
+
+### 18.5 Updated forks table
+
+| Fork | Decision | My rec |
+|---|---|---|
+| A | Credential encryption scheme | A2 (escalate to user) |
+| B | Fallback trigger policy | B1, configurable (escalate to user) |
+| C | Hot-reload mechanism | C2 (+1 additive IPC msg) |
+| D | Fuzzy-match strategy | D1 |
+| **E** | **Provider priority model (1 axis vs tier+order)** | **E1 (single ordered axis; explicit int variant)** |
+
+Items in §18.1–§18.4 are freeze-consistent refinements I've adopted from frontend's contract (not forks) and
+will fold into §10/§14 at promotion. Only FORK E needs your resolution.
