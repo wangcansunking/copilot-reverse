@@ -317,10 +317,14 @@ loop and exercises §5 end-to-end.
   - `process.env.ANTHROPIC_BASE_URL = http://<bindHost>:<workerPort>`  (the Anthropic inbound — §5.4 path)
   - `process.env.ANTHROPIC_API_KEY = <maestro server key>`  (worker accepts/ignores in M1)
   - `options.model = "claude-opus-4-8"` → router `modelMap` remaps to a Copilot model id.
-- **SDK SURFACE IS UNVERIFIED.** Per Task 22/23 notes, the owning agent MUST run
-  `node -e "console.log(Object.keys(require('@anthropic-ai/claude-agent-sdk')))"` before implementing and
-  reconcile `query` / `tool` / `createSdkMcpServer` names + option shapes against the installed version. Any
-  drift → mark DONE_WITH_CONCERNS and message `architect`. Do not guess option names.
+- **SDK SURFACE — export names VERIFIED (frontend, 2026-06-17), option shapes pending.** Installed version is
+  `@anthropic-ai/claude-agent-sdk` **v0.1.77**. Export check confirmed `query`, `tool`, `createSdkMcpServer`
+  are present exactly as the plan assumes — **no name drift** (full exports: AbortError, EXIT_REASONS,
+  HOOK_EVENTS, createSdkMcpServer, query, tool, unstable_v2_*). `zod` is installed (`z` present). REMAINING:
+  the option *shapes* — `query({ prompt, options: { model, mcpServers, systemPrompt, permissionMode } })` and
+  `tool(name, desc, zodSchema, handler)` — are verified at Task 23 via `npm run build` against the installed
+  `.d.ts`. If a shape disagrees, frontend reconciles to the real surface and pings `architect`; if it can't
+  typecheck, Task 23 is marked DONE_WITH_CONCERNS. Do not guess option names — let the build confirm them.
 - **Why this stresses §5:** the SDK's agent loop sends Anthropic `tools` + receives `tool_use` content blocks
   (streaming `content_block_start` / `input_json_delta`) and sends back `tool_result` blocks. Every clause of
   §5.2/§5.3/§5.4 must be correct or the loop stalls. This is why §5.4 is the riskiest code in M1.
