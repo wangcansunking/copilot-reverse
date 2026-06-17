@@ -11,7 +11,11 @@ import { startSupervisor } from "../supervisor/index.js";
 import { runAssistantTurn } from "../tui/assistant/runtime.js";
 import { makeOnChat } from "../tui/assistant/on-chat.js";
 import { readGhToken } from "../shared/creds.js";
-import { readClientSetup } from "../shared/client-setup.js";
+import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
+import { CopilotTokenStore } from "../providers/copilot/token.js";
+import { fetchCopilotModels } from "../providers/copilot/models.js";
+import { applyClaude, applyCodex, type Scope } from "../tui/setup/apply.js";
+import type { SetupClient } from "../tui/setup/wizard.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 
@@ -44,6 +48,19 @@ async function launchTui(): Promise<void> {
     runAssistantTurn,
   );
 
+  const tokenStore = new CopilotTokenStore(readGhToken(dataDir())!);
+  const workerBase = `http://${cfg.bindHost}:${cfg.workerPort}`;
+  const setup = {
+    loadModels: async () => fetchCopilotModels(await tokenStore.get()),
+    apply: async (clientKind: SetupClient, scope: Scope, model: string) => {
+      const r = clientKind === "claude"
+        ? applyClaude(scope, { ANTHROPIC_BASE_URL: workerBase, ANTHROPIC_API_KEY: "maestro-local", ANTHROPIC_MODEL: model })
+        : applyCodex(scope, { OPENAI_BASE_URL: `${workerBase}/v1`, OPENAI_API_KEY: "maestro-local", OPENAI_MODEL: model });
+      writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), [clientKind]: true });
+      return r;
+    },
+  };
+
   app = render(
     React.createElement(App, {
       registry,
@@ -52,6 +69,7 @@ async function launchTui(): Promise<void> {
       clients: readClientSetup(dataDir()),
       statusSource: () => client.status(),
       onChat,
+      setup,
     }),
   );
 }

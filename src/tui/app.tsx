@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import { Repl, type CommandHint } from "./repl.js";
+import { SetupWizard, type SetupClient } from "./setup/wizard.js";
+import type { Scope, ApplyResult } from "./setup/apply.js";
 import { theme } from "./theme.js";
 import type { Registry } from "./slash/registry.js";
 import type { WorkerState, StatusResponse } from "../shared/control-types.js";
@@ -24,6 +26,10 @@ export interface AppProps {
   clients?: { claude: boolean; codex: boolean };
   statusSource?: () => Promise<StatusResponse>;
   onChat?: (text: string, print: (line: string) => void) => Promise<void>;
+  setup?: {
+    loadModels: () => Promise<string[]>;
+    apply: (client: SetupClient, scope: Scope, model: string) => Promise<ApplyResult>;
+  };
 }
 
 const okDot = (ok: boolean) => (ok ? theme.ready : theme.muted);
@@ -68,13 +74,15 @@ function HelpCard({ commands }: { commands: CommandHint[] }) {
 
 export function App({
   registry, title, workerState = "starting", model = "—",
-  clients = { claude: false, codex: false }, statusSource, onChat,
+  clients = { claude: false, codex: false }, statusSource, onChat, setup,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
   const [entries, setEntries] = useState<Entry[]>([
     { type: "system", text: "Type a message to chat with the assistant, or /help for commands." },
   ]);
   const [state, setState] = useState<WorkerState>(workerState);
+  const [clientState, setClientState] = useState(clients);
+  const [wizard, setWizard] = useState<SetupClient | null>(null);
   const add = (e: Entry) => setEntries((p) => [...p, e].slice(-100));
 
   useEffect(() => {
@@ -90,6 +98,11 @@ export function App({
 
   async function handle(line: string) {
     add({ type: "user", text: `› ${line}` });
+    const t = line.trim();
+    if (setup && (t === "/setup-claude" || t === "/setup-codex")) {
+      setWizard(t === "/setup-claude" ? "claude" : "codex");
+      return;
+    }
     if (line.startsWith("/")) {
       if (line.trim() === "/help") { add({ type: "help", commands: cmds }); return; }
       const out = await registry.run(line);
@@ -119,13 +132,27 @@ export function App({
         })}
       </Box>
 
-      <Repl onSubmit={handle} commands={cmds} />
+      {wizard && setup ? (
+        <SetupWizard
+          client={wizard}
+          loadModels={setup.loadModels}
+          apply={(scope, m) => setup.apply(wizard, scope, m)}
+          onDone={(result, m) => {
+            setClientState((c) => ({ ...c, [wizard]: true }));
+            setWizard(null);
+            add({ type: "card", title: `setup ${wizard}`, tone: "ok", lines: [`✓ model ${m}`, `wrote ${result.path}`, `keys: ${result.changed.join(", ") || "(no change)"}`] });
+          }}
+          onCancel={() => { setWizard(null); add({ type: "system", text: "setup cancelled" }); }}
+        />
+      ) : (
+        <Repl onSubmit={handle} commands={cmds} />
+      )}
 
       <Box paddingX={1}>
         <Text color={theme.muted}>model </Text><Text color={theme.accent}>{model}</Text>
         <Text color={theme.muted}>  ·  daemon </Text><Text color={stateColor[state]}>{state}</Text>
-        <Text color={theme.muted}>  ·  claude </Text><Text color={okDot(clients.claude)}>{clients.claude ? "✓" : "○"}</Text>
-        <Text color={theme.muted}> codex </Text><Text color={okDot(clients.codex)}>{clients.codex ? "✓" : "○"}</Text>
+        <Text color={theme.muted}>  ·  claude </Text><Text color={okDot(clientState.claude)}>{clientState.claude ? "✓" : "○"}</Text>
+        <Text color={theme.muted}> codex </Text><Text color={okDot(clientState.codex)}>{clientState.codex ? "✓" : "○"}</Text>
         <Text color={theme.muted}>  ·  /help for commands</Text>
       </Box>
     </Box>
