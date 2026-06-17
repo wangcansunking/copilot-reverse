@@ -1,0 +1,42 @@
+import { describe, it, expect } from "vitest";
+import {
+  openaiRequestToCanonical,
+  canonicalToOpenAIResponse,
+  canonicalChunkToOpenAISSE,
+} from "../../src/core/openai-inbound.js";
+import type { CanonicalResponse } from "../../src/core/canonical.js";
+
+describe("openai inbound", () => {
+  it("normalizes request incl tools", () => {
+    const c = openaiRequestToCanonical({
+      model: "gpt-4o",
+      messages: [
+        { role: "system", content: "be brief" },
+        { role: "user", content: "hi" },
+      ],
+      stream: true,
+      tools: [{ type: "function", function: { name: "now", description: "time", parameters: { type: "object", properties: {} } } }],
+    });
+    expect(c.model).toBe("gpt-4o");
+    expect(c.stream).toBe(true);
+    expect(c.tools?.[0].name).toBe("now");
+    expect(c.messages[1]).toEqual({ role: "user", content: [{ type: "text", text: "hi" }] });
+  });
+
+  it("builds OpenAI response from canonical text", () => {
+    const r: CanonicalResponse = {
+      id: "r1", model: "gpt-4o",
+      content: [{ type: "text", text: "hello" }],
+      finishReason: "stop",
+      usage: { promptTokens: 3, completionTokens: 1 },
+    };
+    const out = canonicalToOpenAIResponse(r);
+    expect(out.choices[0].message.content).toBe("hello");
+    expect(out.usage.total_tokens).toBe(4);
+  });
+
+  it("formats a text SSE chunk and DONE", () => {
+    expect(canonicalChunkToOpenAISSE({ kind: "text", delta: "he", done: false }, "id", "m")).toContain('"content":"he"');
+    expect(canonicalChunkToOpenAISSE({ kind: "done", done: true }, "id", "m")).toBe("data: [DONE]\n\n");
+  });
+});
