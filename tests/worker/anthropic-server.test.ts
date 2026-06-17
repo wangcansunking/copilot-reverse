@@ -144,4 +144,41 @@ describe("worker Anthropic endpoint", () => {
     expect(lastStop).toBeLessThan(events.indexOf("message_delta"));
     expect(frames.find((f) => f.event === "message_delta")?.data.delta.stop_reason).toBe("tool_use");
   });
+
+  it("text + two tools: contiguous indices [0,1,2], deltas routed to mapped indices, three stops", async () => {
+    const multiProvider: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c1", model: "m", content: [], finishReason: "tool_use", usage: { promptTokens: 1, completionTokens: 1 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        yield { kind: "text", delta: "checking both", done: false };
+        yield { kind: "tool_use_start", index: 0, id: "tuA", name: "alpha", done: false };
+        yield { kind: "tool_use_delta", index: 0, argsDelta: '{"a":1}', done: false };
+        yield { kind: "tool_use_start", index: 1, id: "tuB", name: "beta", done: false };
+        yield { kind: "tool_use_delta", index: 1, argsDelta: '{"b":2}', done: false };
+        yield { kind: "done", done: true, finishReason: "tool_use" };
+      },
+    };
+    const res = await request(app(multiProvider)).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "go" }] });
+    const frames = parseFrames(res.text);
+
+    const starts = frames.filter((f) => f.event === "content_block_start");
+    expect(starts.map((f) => f.data.index)).toEqual([0, 1, 2]);
+    expect(starts[0].data.content_block.type).toBe("text");
+    expect(starts[1].data.content_block).toMatchObject({ type: "tool_use", name: "alpha" });
+    expect(starts[2].data.content_block).toMatchObject({ type: "tool_use", name: "beta" });
+
+    // text_delta -> 0, alpha's input_json_delta -> 1, beta's -> 2
+    expect(frames.find((f) => f.event === "content_block_delta" && f.data.delta?.type === "text_delta")!.data.index).toBe(0);
+    const jsonDeltas = frames.filter((f) => f.event === "content_block_delta" && f.data.delta?.type === "input_json_delta");
+    expect(jsonDeltas.map((f) => f.data.index)).toEqual([1, 2]);
+    expect(jsonDeltas[0].data.delta.partial_json).toBe('{"a":1}');
+    expect(jsonDeltas[1].data.delta.partial_json).toBe('{"b":2}');
+
+    // three stops, ascending, all before message_delta
+    const stops = frames.filter((f) => f.event === "content_block_stop");
+    expect(stops.map((f) => f.data.index)).toEqual([0, 1, 2]);
+    const events = frames.map((f) => f.event);
+    expect(events.lastIndexOf("content_block_stop")).toBeLessThan(events.indexOf("message_delta"));
+    expect(events[events.length - 1]).toBe("message_stop");
+  });
 });
