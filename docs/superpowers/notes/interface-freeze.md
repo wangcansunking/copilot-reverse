@@ -269,14 +269,30 @@ Anthropic SSE      content_block_start                 content_block_delta
 3. Per-chunk frames from `canonicalChunkToAnthropicSSE` (text deltas; or tool_use start/delta frames).
 4. On the `done` chunk: `event: message_delta` `{ delta:{ stop_reason }, usage }` then `event: message_stop`.
 
-> **KNOWN GAP (acceptable for M1, flag in code):** Step 2 unconditionally opens a `text` block at index 0, and
-> tool_use blocks arrive at their own `chunk.index`. A pure tool-call turn therefore emits an empty text block
-> at index 0 plus tool blocks at index >= 0 — indices can collide (text block 0 and tool block 0). The
-> claude-agent-sdk is tolerant of the empty leading text block in practice, but **index management for mixed
-> text+tool streams is the #1 thing to verify in the M1c live dogfood** (spec §9). If the SDK rejects it,
-> the fix is: do not pre-open the text block; open `content_block_start`/`content_block_stop` lazily per index
-> as chunks arrive, and emit `content_block_stop` before switching blocks. `architect` will review this code
-> at Task 20/21 against the live SDK behavior. Do not "optimize" the empty-text-block away without coordinating.
+> **MUST-FIX in Task 21 (team-lead directive, 2026-06-17 — NOT a TODO):** The plan code (Task 21 step 3)
+> unconditionally opens a `text` block at index 0, while tool_use blocks arrive at their own `chunk.index`. On a
+> **pure tool-call turn** this emits a phantom empty text block at index 0 plus a tool block that can collide at
+> index 0. This is NOT an acceptable M1 gap: the M1c assistant (Task 23) is tool-heavy, so pure tool-call turns
+> are the **common case** during dogfood, not an edge case — the collision manifests immediately.
+>
+> **Required implementation in `anthropic-server.ts` (Task 21):**
+> 1. Do **not** pre-open the index-0 text block. Open it lazily — emit `content_block_start`
+>    `{ index:0, content_block:{ type:"text", text:"" } }` only on the **first** `text` chunk.
+> 2. Open tool blocks via `content_block_start` at their own `chunk.index` (already emitted by
+>    `canonicalChunkToAnthropicSSE` for `tool_use_start`).
+> 3. Emit a matching `content_block_stop` for each opened block — before switching to a different index and
+>    before `message_delta`/`message_stop`.
+> 4. Track which indices have been opened (a `Set<number>`) so each block opens once and closes once.
+>
+> This makes `canonicalChunkToAnthropicSSE` (Task 20) still stateless per chunk, but the **endpoint** (Task 21)
+> owns the open/stop bookkeeping. §5.4's per-chunk frame mapping is unchanged and remains the contract; what
+> changes is the endpoint's framing logic around it.
+>
+> **Test requirement (extend `tests/worker/anthropic-server.test.ts`):** add a pure-tool-call streaming case
+> (provider yields `tool_use_start` + `tool_use_delta` + `done`, no text) asserting: (a) no phantom empty text
+> `content_block_start` at index 0; (b) the tool block opens at its own index with a matching
+> `content_block_stop`; (c) correct frame ordering ending in `message_stop`. `architect` reviews Task 20/21
+> code against this.
 
 ### 5.5 Non-streaming tool-use round-trip
 
@@ -326,10 +342,13 @@ These are real inconsistencies I found across tasks. Resolution is binding; the 
   camelCase `RestartRow` field names (`exit_code as exitCode`, etc.) — already correct in Task 10. No change;
   just don't drift the column aliases.
 
-- **D3 — Anthropic streaming index collision (Task 21).** See the KNOWN GAP box in §5.4. Not a blocker for M1
-  green tests (the unit test only checks text delta + message_stop), but it is the top live-dogfood risk.
-  `backend` must add a `// TODO(arch): lazy content_block open for mixed text+tool streams` comment at the
-  pre-opened text block in `anthropic-server.ts` so the risk is visible. `architect` reviews at Task 20/21.
+- **D3 — Anthropic streaming index collision (Task 21) — MUST-FIX, not a TODO (team-lead, 2026-06-17).**
+  See the MUST-FIX box in §5.4. Upgraded from "known gap" to a Task 21 blocker: the M1c assistant is
+  tool-heavy, so pure tool-call turns are the COMMON case during dogfood and the collision manifests
+  immediately. `backend` must implement lazy per-index `content_block_start`/`content_block_stop` bookkeeping
+  in `anthropic-server.ts` (no pre-opened index-0 text block) and extend
+  `tests/worker/anthropic-server.test.ts` with a pure-tool-call streaming case asserting correct index
+  sequencing and no phantom empty text block. `architect` reviews Task 20/21 against this before M1b closes.
 
 - **D4 — `tool_use_delta` before `tool_use_start` safety (Task 6).** The Copilot adapter must guarantee
   ordering: emit `tool_use_start` (on first fragment carrying `function.name`) **before** any
