@@ -1,5 +1,4 @@
-import type { CanonicalRequest, CanonicalResponse, CanonicalChunk, CanonicalMessage, ContentBlock } from "./canonical.js";
-import { joinText } from "./canonical.js";
+import type { CanonicalRequest, CanonicalResponse, CanonicalMessage, ContentBlock } from "./canonical.js";
 
 interface AnthropicBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown }
 interface AnthropicMsg { role: "user" | "assistant"; content: string | AnthropicBlock[] }
@@ -46,21 +45,4 @@ export function canonicalToAnthropicResponse(r: CanonicalResponse) {
     content, stop_reason: stop, stop_sequence: null,
     usage: { input_tokens: r.usage.promptTokens, output_tokens: r.usage.completionTokens },
   };
-}
-
-// Stateless per-chunk SSE. Caller emits message_start once before the first chunk (see worker server).
-export function canonicalChunkToAnthropicSSE(chunk: CanonicalChunk, state: { index: number }): string {
-  const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-  if (chunk.done) {
-    return frame("message_delta", { type: "message_delta", delta: { stop_reason: chunk.finishReason === "tool_use" ? "tool_use" : "end_turn" }, usage: { output_tokens: 0 } })
-      + frame("message_stop", { type: "message_stop" });
-  }
-  if (chunk.kind === "text") {
-    return frame("content_block_delta", { type: "content_block_delta", index: state.index, delta: { type: "text_delta", text: chunk.delta } });
-  }
-  if (chunk.kind === "tool_use_start") {
-    return frame("content_block_start", { type: "content_block_start", index: chunk.index, content_block: { type: "tool_use", id: chunk.id, name: chunk.name, input: {} } });
-  }
-  // tool_use_delta
-  return frame("content_block_delta", { type: "content_block_delta", index: chunk.index, delta: { type: "input_json_delta", partial_json: chunk.argsDelta } });
 }

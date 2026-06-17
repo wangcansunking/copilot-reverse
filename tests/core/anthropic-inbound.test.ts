@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { anthropicRequestToCanonical, canonicalToAnthropicResponse, canonicalChunkToAnthropicSSE } from "../../src/core/anthropic-inbound.js";
+import { anthropicRequestToCanonical, canonicalToAnthropicResponse } from "../../src/core/anthropic-inbound.js";
 import type { CanonicalResponse } from "../../src/core/canonical.js";
 
 describe("anthropic inbound", () => {
@@ -32,12 +32,5 @@ describe("anthropic inbound", () => {
     expect(out.stop_reason).toBe("tool_use");
     expect(out.content[1]).toEqual({ type: "tool_use", id: "tu1", name: "now", input: { x: 1 } });
     expect(out.usage.output_tokens).toBe(2);
-  });
-
-  it("emits anthropic SSE frames for a text delta and stop", () => {
-    const frames = canonicalChunkToAnthropicSSE({ kind: "text", delta: "he", done: false }, { index: 0 });
-    expect(frames).toContain("content_block_delta");
-    expect(frames).toContain('"text":"he"');
-    expect(canonicalChunkToAnthropicSSE({ kind: "done", done: true, finishReason: "stop" }, { index: 0 })).toContain("message_stop");
   });
 });
