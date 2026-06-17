@@ -29,6 +29,6 @@ export function mergeConfig(base: AppConfig, o: DeepPartial<AppConfig>): AppConf
     ...base,
     ...o,
     restart: { ...base.restart, ...(o.restart ?? {}) },
-    modelMap: { ...base.modelMap, ...(o.modelMap ?? {}) },
+    modelMap: { ...base.modelMap, ...(o.modelMap ?? {}) } as Record<string, string>,
   };
 }
