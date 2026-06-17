@@ -303,10 +303,12 @@ This is contiguous-from-0 in every case: **pure-text** `[text 0]`, **pure-tool**
 > allocation in §5.4.1: no pre-opened block; lazy per-block open; Copilot→Anthropic index mapping via a `Map`;
 > `content_block_stop` per opened index before the terminal frames.
 >
-> **Verification on record:** `tests/worker/anthropic-server.test.ts` is 5/5 green and covers all three cases —
-> pure-text (text@0), pure-tool (tool@0), and mixed (text@0, tool@1, `text_delta`@0, `input_json_delta`@1, two
-> stops ascending, `stop_reason:"tool_use"`). Full suite 26 files / 64 tests green under Node 20; `tsc --noEmit`
-> clean. `architect` read `anthropic-server.ts` + the tests and re-ran the suite independently before sign-off.
+> **Verification on record:** `tests/worker/anthropic-server.test.ts` is 6/6 green and covers all four cases —
+> pure-text (text@0), pure-tool (tool@0), mixed (text@0, tool@1, `text_delta`@0, `input_json_delta`@1, two
+> stops ascending, `stop_reason:"tool_use"`), and text+2tools (`[0,1,2]`). Full suite green under Node 20;
+> `tsc --noEmit` clean. `architect` read `anthropic-server.ts` + the tests and re-ran the suite independently
+> before M1b sign-off (initial verify at fe2f6ca: 26 files / 64 tests; after multi-tool test + helper deletion
+> at 0d4aec2: 28 files / 68 tests).
 
 ### 5.5 Non-streaming tool-use round-trip
 
