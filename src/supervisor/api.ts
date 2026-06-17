@@ -1,0 +1,34 @@
+import express, { type Express } from "express";
+import { listRestarts, recentRequests, type Db } from "./db.js";
+import type { WorkerState, DoctorCheck } from "../shared/control-types.js";
+
+export interface ControlDeps {
+  db: Db;
+  getState: () => WorkerState;
+  restart: () => void;
+  stop: () => void;
+  start: () => void;
+  doctor: () => Promise<DoctorCheck[]>;
+  subscribe: (send: (event: string, data: unknown) => void) => () => void;
+}
+
+export function createControlApp(deps: ControlDeps): Express {
+  const app = express();
+  app.use(express.json());
+  app.get("/api/status", (_req, res) => res.json({ workerState: deps.getState(), restarts: listRestarts(deps.db, 50) }));
+  app.post("/api/restart", (_req, res) => { deps.restart(); res.json({ ok: true }); });
+  app.post("/api/stop", (_req, res) => { deps.stop(); res.json({ ok: true }); });
+  app.post("/api/start", (_req, res) => { deps.start(); res.json({ ok: true }); });
+  app.get("/api/doctor", async (_req, res) => res.json({ checks: await deps.doctor() }));
+  app.get("/api/requests", (_req, res) => res.json({ requests: recentRequests(deps.db, 100) }));
+  app.get("/api/events", (req, res) => {
+    res.setHeader("content-type", "text/event-stream");
+    res.setHeader("cache-control", "no-cache");
+    res.flushHeaders?.();
+    const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    send("hello", { state: deps.getState() });
+    const off = deps.subscribe(send);
+    req.on("close", off);
+  });
+  return app;
+}
