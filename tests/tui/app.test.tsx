@@ -15,10 +15,11 @@ describe("App", () => {
     const { stdin, lastFrame } = render(<App registry={reg()} title="maestro" />);
     expect(lastFrame()).toContain("maestro");
     // let Ink's useInput subscribe to stdin before typing (avoids a write/subscribe race)
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 30));
     stdin.write("/ping");
+    await new Promise((r) => setTimeout(r, 30));
     stdin.write("\r"); // Enter
-    await new Promise((r) => setTimeout(r, 20));
+    await new Promise((r) => setTimeout(r, 60)); // async registry.run + re-render
     expect(lastFrame()).toContain("pong");
   });
 
