@@ -388,7 +388,10 @@ These are real inconsistencies I found across tasks. Resolution is binding; the 
   review. Verified zero production importers (only its own unit test). Resolution: **`canonicalChunkToAnthropicSSE`
   and its SSE unit test are deleted**; `anthropicRequestToCanonical` + `canonicalToAnthropicResponse` remain
   (live, used by the endpoint). The endpoint (`anthropic-server.ts`, §5.4 / §5.4.1) is now the literal single
-  source of truth for Anthropic streaming framing. Backend implements the deletion; architect verifies grep-clean.
+  source of truth for Anthropic streaming framing. **CLOSED 2026-06-17 (commit 6bb992a):** `architect` verified
+  grep-clean — zero `canonicalChunkToAnthropicSSE` references in `src/` or `tests/` (remaining hits are doc-only,
+  this freeze + the superseded plan code blocks); `tsc --noEmit` clean; `anthropic-inbound.test.ts` 2/2 (request
+  + response retained, SSE test removed) and `anthropic-server.test.ts` 6/6 green.
 
 - **D4 — `tool_use_delta` before `tool_use_start` safety (Task 6).** The Copilot adapter must guarantee
   ordering: emit `tool_use_start` (on first fragment carrying `function.name`) **before** any
