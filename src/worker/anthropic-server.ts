@@ -19,27 +19,42 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         const id = `msg_${canon.model}`;
         res.write(frame("message_start", { type: "message_start", message: { id, type: "message", role: "assistant", model: canon.model, content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } }));
 
-        // D3 (interface-freeze §5.4): the endpoint owns open/stop bookkeeping. We do NOT pre-open an index-0
-        // text block — that would emit a phantom empty text block (and collide at index 0) on a pure tool-call
-        // turn, which is the COMMON case during M1c dogfood. Open each block lazily on its first chunk and
-        // close every opened block before message_delta/message_stop.
-        const opened = new Set<number>();
+        // D3 (interface-freeze §5.4) + mixed text+tool fix (architect, 2026-06-17): the endpoint owns
+        // open/stop bookkeeping with DYNAMIC SEQUENTIAL allocation. We do NOT pre-open an index-0 text block,
+        // and we do NOT map the Copilot tool index straight to the Anthropic block index (that collides with a
+        // text preamble on a mixed turn). Instead, whichever block opens FIRST claims Anthropic index 0, the
+        // next claims 1, etc. This keeps indices contiguous-from-0 in all three cases: pure-text (text@0),
+        // pure-tool (tool@0), and mixed preamble+tool (text@0, tool@1).
+        let next = 0;
+        let textIndex: number | undefined;                  // Anthropic index of the (single) text block, once opened
+        const toolIndex = new Map<number, number>();        // Copilot tool index -> Anthropic block index
+        const openedOrder: number[] = [];                   // Anthropic indices in allocation order
         let stopReason: "stop" | "length" | "tool_use" | "error" = "stop";
 
         for await (const chunk of provider.stream(canon)) {
           if (chunk.done) { stopReason = chunk.finishReason ?? "stop"; break; }
           if (chunk.kind === "text") {
-            if (!opened.has(0)) { opened.add(0); res.write(frame("content_block_start", { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })); }
-            res.write(frame("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: chunk.delta } }));
+            if (textIndex === undefined) {
+              textIndex = next++;
+              openedOrder.push(textIndex);
+              res.write(frame("content_block_start", { type: "content_block_start", index: textIndex, content_block: { type: "text", text: "" } }));
+            }
+            res.write(frame("content_block_delta", { type: "content_block_delta", index: textIndex, delta: { type: "text_delta", text: chunk.delta } }));
           } else if (chunk.kind === "tool_use_start") {
-            if (!opened.has(chunk.index)) { opened.add(chunk.index); res.write(frame("content_block_start", { type: "content_block_start", index: chunk.index, content_block: { type: "tool_use", id: chunk.id, name: chunk.name, input: {} } })); }
+            if (!toolIndex.has(chunk.index)) {
+              const index = next++;
+              toolIndex.set(chunk.index, index);
+              openedOrder.push(index);
+              res.write(frame("content_block_start", { type: "content_block_start", index, content_block: { type: "tool_use", id: chunk.id, name: chunk.name, input: {} } }));
+            }
           } else if (chunk.kind === "tool_use_delta") {
-            res.write(frame("content_block_delta", { type: "content_block_delta", index: chunk.index, delta: { type: "input_json_delta", partial_json: chunk.argsDelta } }));
+            const index = toolIndex.get(chunk.index);
+            if (index !== undefined) res.write(frame("content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: chunk.argsDelta } }));
           }
         }
 
-        // Close every opened block (ascending index) before the terminal frames.
-        for (const index of [...opened].sort((a, b) => a - b)) res.write(frame("content_block_stop", { type: "content_block_stop", index }));
+        // Close every opened block (ascending Anthropic index) before the terminal frames.
+        for (const index of [...openedOrder].sort((a, b) => a - b)) res.write(frame("content_block_stop", { type: "content_block_stop", index }));
         res.write(frame("message_delta", { type: "message_delta", delta: { stop_reason: stopReason === "tool_use" ? "tool_use" : stopReason === "length" ? "max_tokens" : "end_turn" }, usage: { output_tokens: 0 } }));
         res.write(frame("message_stop", { type: "message_stop" }));
         res.end();

@@ -97,4 +97,51 @@ describe("worker Anthropic endpoint", () => {
     const delta = frames.find((f) => f.event === "message_delta");
     expect(delta?.data.delta.stop_reason).toBe("tool_use");
   });
+
+  it("mixed text+tool stream: leading text claims index 0, tool claims index 1, both stop, stop_reason=tool_use", async () => {
+    const mixedProvider: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c1", model: "m", content: [{ type: "text", text: "let me check" }, { type: "tool_use", id: "tu1", name: "now", input: { x: 1 } }], finishReason: "tool_use", usage: { promptTokens: 2, completionTokens: 2 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        yield { kind: "text", delta: "let me ", done: false };
+        yield { kind: "text", delta: "check", done: false };
+        yield { kind: "tool_use_start", index: 0, id: "tu1", name: "now", done: false };
+        yield { kind: "tool_use_delta", index: 0, argsDelta: '{"x":1}', done: false };
+        yield { kind: "done", done: true, finishReason: "tool_use" };
+      },
+    };
+    const res = await request(app(mixedProvider)).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "go" }] });
+    const frames = parseFrames(res.text);
+    const events = frames.map((f) => f.event);
+
+    // text block opens at Anthropic index 0
+    const textStart = frames.find((f) => f.event === "content_block_start" && f.data.content_block?.type === "text");
+    expect(textStart).toBeDefined();
+    expect(textStart!.data.index).toBe(0);
+
+    // tool block opens at Anthropic index 1 (NOT colliding with text@0, NOT a static +1 either — sequential alloc)
+    const toolStart = frames.find((f) => f.event === "content_block_start" && f.data.content_block?.type === "tool_use");
+    expect(toolStart).toBeDefined();
+    expect(toolStart!.data.index).toBe(1);
+    expect(toolStart!.data.content_block.name).toBe("now");
+
+    // exactly two block starts and two matching stops (one per allocated index)
+    expect(frames.filter((f) => f.event === "content_block_start")).toHaveLength(2);
+    const stops = frames.filter((f) => f.event === "content_block_stop");
+    expect(stops).toHaveLength(2);
+    expect(stops.map((f) => f.data.index).sort((a: number, b: number) => a - b)).toEqual([0, 1]);
+
+    // text_delta routes to index 0, input_json_delta routes to index 1
+    const textDelta = frames.find((f) => f.event === "content_block_delta" && f.data.delta?.type === "text_delta");
+    expect(textDelta!.data.index).toBe(0);
+    const jsonDelta = frames.find((f) => f.event === "content_block_delta" && f.data.delta?.type === "input_json_delta");
+    expect(jsonDelta!.data.index).toBe(1);
+
+    // ordering: message_start first, all content_block_stop before message_delta, message_stop last
+    expect(events[0]).toBe("message_start");
+    expect(events[events.length - 1]).toBe("message_stop");
+    const lastStop = events.lastIndexOf("content_block_stop");
+    expect(lastStop).toBeLessThan(events.indexOf("message_delta"));
+    expect(frames.find((f) => f.event === "message_delta")?.data.delta.stop_reason).toBe("tool_use");
+  });
 });
