@@ -1,6 +1,8 @@
 import { Registry, type SlashContext } from "./registry.js";
+import { claudeCodeConfig, codexConfig, type Endpoint } from "../setup/clients.js";
+import { aggregate } from "../panels/metrics-agg.js";
 
-export function buildRegistry(ctx: SlashContext): Registry {
+export function buildRegistry(ctx: SlashContext, endpoint: Endpoint): Registry {
   const reg = new Registry(ctx);
   reg.add({ name: "/status", describe: "show worker status + restart history", run: async (_a, c) => {
     const s = await c.client.status();
@@ -16,6 +18,14 @@ export function buildRegistry(ctx: SlashContext): Registry {
     const s = await c.client.status();
     return s.restarts.length ? s.restarts.map((r) => `${new Date(r.ts).toISOString()} ${r.reason} ${r.stderrTail.slice(0, 80)}`) : ["no restart events"];
   } });
+  reg.add({ name: "/metrics", describe: "show request metrics", run: async (_a, c) => {
+    const a = aggregate(await c.client.requests());
+    if (!a.total) return ["no requests yet"];
+    return [`requests: ${a.total}  errors: ${a.errors}`, ...a.byModel.map((r) => `  ${r.model.padEnd(20)} n=${r.count} avg=${r.avgMs}ms`)];
+  } });
+  reg.add({ name: "/setup-claude", describe: "print Claude Code config", run: async () => claudeCodeConfig(endpoint).instructions.split("\n") });
+  reg.add({ name: "/setup-codex", describe: "print Codex/OpenAI config", run: async () => codexConfig(endpoint).instructions.split("\n") });
+  reg.add({ name: "/setup-status", describe: "show configured endpoints", run: async () => [`OpenAI: http://${endpoint.host}:${endpoint.port}/v1`, `Anthropic: http://${endpoint.host}:${endpoint.port}`] });
   reg.add({ name: "/quit", describe: "exit maestro", run: async (_a, c) => { c.quit(); return ["bye"]; } });
   reg.add({ name: "/help", describe: "list commands", run: async () => reg.list().map((c) => `${c.name.padEnd(14)} ${c.describe}`) });
   return reg;
