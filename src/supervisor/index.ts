@@ -10,7 +10,7 @@ import { dataDir, dbPath } from "../shared/paths.js";
 import { readGhToken } from "../shared/creds.js";
 import type { WorkerState, DoctorCheck } from "../shared/control-types.js";
 
-export function startSupervisor(): void {
+export function startSupervisor(): { stop: () => void } {
   const config = defaultConfig();
   mkdirSync(dataDir(), { recursive: true });
   const db = openDb(dbPath());
@@ -49,6 +49,7 @@ export function startSupervisor(): void {
   app.listen(config.supervisorPort, config.bindHost, () => monitor.start());
   process.on("SIGINT", () => { monitor.stop(); process.exit(0); });
   process.on("SIGTERM", () => { monitor.stop(); process.exit(0); });
+  return { stop: () => monitor.stop() };
 }
 
 // Allow `node dist/supervisor/index.js` to boot the daemon directly.

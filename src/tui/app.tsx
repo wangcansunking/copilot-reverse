@@ -1,62 +1,86 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import { Repl } from "./repl.js";
+import { theme } from "./theme.js";
 import type { Registry } from "./slash/registry.js";
-import type { WorkerState } from "../shared/control-types.js";
+import type { WorkerState, StatusResponse } from "../shared/control-types.js";
+
+type LineKind = "user" | "assistant" | "output" | "system" | "error";
+interface Line { kind: LineKind; text: string }
+
+const stateColor: Record<WorkerState, string> = {
+  ready: theme.ready, starting: theme.starting, crashed: theme.crashed, unhealthy: theme.unhealthy,
+};
+const kindColor: Record<LineKind, string> = {
+  user: theme.user, assistant: theme.assistant, output: theme.output, system: theme.muted, error: theme.error,
+};
 
 export interface AppProps {
   registry: Registry;
   title: string;
-  // current worker state for the header badge; defaults to "starting".
   workerState?: WorkerState;
-  // optional natural-language handler (wired in M1c); default echoes a hint.
+  model?: string;
+  clients?: { claude: boolean; codex: boolean };
+  // when provided, the header + HUD poll it for live worker/daemon status.
+  statusSource?: () => Promise<StatusResponse>;
   onChat?: (text: string, print: (line: string) => void) => Promise<void>;
 }
 
-// UX spec §6 — worker-state word color mapping.
-const stateColor: Record<WorkerState, string> = {
-  ready: "green",
-  starting: "yellow",
-  crashed: "redBright",
-  unhealthy: "red",
-};
+const okDot = (ok: boolean) => (ok ? theme.ready : theme.muted);
 
-function HeaderBar({ title, workerState }: { title: string; workerState: WorkerState }) {
-  return (
-    <Box justifyContent="space-between">
-      <Text>{title}</Text>
-      <Text>
-        worker: <Text color={stateColor[workerState]}>{workerState}</Text>
-      </Text>
-    </Box>
-  );
-}
+export function App({
+  registry, title, workerState = "starting", model = "—",
+  clients = { claude: false, codex: false }, statusSource, onChat,
+}: AppProps) {
+  const [lines, setLines] = useState<Line[]>([
+    { kind: "system", text: "Type a message to chat with the assistant, or /help for commands." },
+  ]);
+  const [state, setState] = useState<WorkerState>(workerState);
+  const push = (kind: LineKind, text: string) => setLines((p) => [...p, { kind, text }].slice(-200));
 
-export function App({ registry, title, workerState = "starting", onChat }: AppProps) {
-  const [lines, setLines] = useState<string[]>([`${title} — type /help, or talk to the assistant`]);
-  const print = (l: string) => setLines((prev) => [...prev, l].slice(-200));
+  useEffect(() => {
+    if (!statusSource) return;
+    let alive = true;
+    const tick = async () => {
+      try { const s = await statusSource(); if (alive) setState(s.workerState); } catch { /* daemon momentarily down */ }
+    };
+    void tick();
+    const id = setInterval(tick, 2000);
+    return () => { alive = false; clearInterval(id); };
+  }, [statusSource]);
 
   async function handle(line: string) {
-    print(`› ${line}`);
+    push("user", `› ${line}`);
     if (line.startsWith("/")) {
       const out = await registry.run(line);
-      out.forEach(print);
+      for (const l of out) push(/fail|error|unknown/i.test(l) ? "error" : "output", l);
     } else if (onChat) {
-      await onChat(line, print);
+      await onChat(line, (l) => push("assistant", l));
     } else {
-      print("(assistant not available yet — use /help)");
+      push("system", "(assistant not available — use /help)");
     }
   }
 
   return (
     <Box flexDirection="column">
-      <HeaderBar title={title} workerState={workerState} />
-      <Box flexDirection="column">
-        {lines.map((l, i) => (
-          <Text key={i}>{l}</Text>
-        ))}
+      <Box justifyContent="space-between" paddingX={1}>
+        <Text color={theme.accent} bold>✳ {title}</Text>
+        <Text color={theme.muted}>worker: <Text color={stateColor[state]}>{state}</Text></Text>
       </Box>
-      <Repl onSubmit={handle} />
+
+      <Box flexDirection="column" paddingX={1} marginTop={1} marginBottom={1}>
+        {lines.map((l, i) => (<Text key={i} color={kindColor[l.kind]}>{l.text}</Text>))}
+      </Box>
+
+      <Repl onSubmit={handle} commands={registry.list().map((c) => ({ name: c.name, describe: c.describe }))} />
+
+      <Box paddingX={1}>
+        <Text color={theme.muted}>model </Text><Text color={theme.accent}>{model}</Text>
+        <Text color={theme.muted}>  ·  daemon </Text><Text color={stateColor[state]}>{state}</Text>
+        <Text color={theme.muted}>  ·  claude </Text><Text color={okDot(clients.claude)}>{clients.claude ? "✓" : "○"}</Text>
+        <Text color={theme.muted}> codex </Text><Text color={okDot(clients.codex)}>{clients.codex ? "✓" : "○"}</Text>
+        <Text color={theme.muted}>  ·  /help for commands</Text>
+      </Box>
     </Box>
   );
 }

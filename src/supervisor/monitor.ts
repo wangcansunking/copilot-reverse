@@ -42,7 +42,7 @@ export class WorkerMonitor {
     this.set("starting");
     const child = fork(this.workerEntry, [], {
       env: { ...process.env, WORKER_PORT: String(this.config.workerPort), BIND_HOST: this.config.bindHost },
-      stdio: ["ignore", "inherit", "pipe", "ipc"],
+      stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
     this.child = child;
     this.stderrTail = "";
