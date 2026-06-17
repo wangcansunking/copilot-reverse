@@ -1,3 +1,8 @@
+> **SUPERSEDED (2026-06-17):** This plan predates the TUI pivot. The product is now an
+> interactive Ink TUI (slash commands + claude-agent-sdk assistant, no web dashboard).
+> See the v2 design at `docs/superpowers/specs/2026-06-16-llm-maestro-design.md`.
+> A new M1 plan will replace this file.
+
 # llm-maestro M1 MVP Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

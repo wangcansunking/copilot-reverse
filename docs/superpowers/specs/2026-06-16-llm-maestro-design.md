@@ -1,154 +1,155 @@
-# llm-maestro 设计文档
+# llm-maestro 设计文档 (v2 — TUI-centric)
 
 > 工作名：`llm-maestro`（CLI 命令 `maestro`，可改）
-> 日期：2026-06-16
-> 状态：已通过 brainstorming，待写实现计划
+> 日期：2026-06-16（v2 修订：2026-06-17）
+> 状态：已通过 brainstorming（含 TUI pivot），待重写实现计划
+
+## 0. v2 变更说明
+
+v1 设计为「后台 daemon + Web Dashboard」。经讨论 pivot 为 **像 Claude Code 一样的交互式 CLI**：
+
+- **砍掉 Web Dashboard** —— 所有管理/可视化收进 Ink TUI。
+- `maestro` 进入交互式 REPL：slash 命令 + 自然语言对话助手。
+- 对话助手用 **claude-agent-sdk**，并 **dogfood maestro 自己**（走本机 Anthropic 兼容入站 → Copilot）。
+- 自愈 proxy daemon 由 TUI 自动拉起托管，错误/重启历史 + metrics 在 TUI 里看。
+
+v1 的 proxy/路由/自愈 daemon 核心设计保留；新增 Anthropic 入站（含 tool-use 翻译）、Ink TUI、对话助手。
 
 ## 1. 概述
 
-`llm-maestro` 是一个通过 **npm CLI 启动**的本地多 provider LLM 路由器。它以反向工程 GitHub Copilot 作为核心后端，统一对外暴露 **OpenAI 兼容**与 **Anthropic 兼容**接口，让 Claude Code、Codex 及任意 OpenAI 兼容客户端通过同一个本地端点接入多个模型 provider。
+`llm-maestro` 是一个 **npm CLI 启动的交互式终端应用**（Ink/React-for-CLI）。运行 `maestro`：
 
-与三个参考项目的区别：
+1. 未登录 → 内联 GitHub device-code 登录；
+2. 已登录 → 进入 REPL，可用 slash 命令管理，也可用自然语言让内置助手代为执行；
+3. 背后是一个自愈的多-provider 代理 daemon，把 GitHub Copilot（反向）统一暴露成 **OpenAI** 与 **Anthropic** 兼容接口，供 Claude Code / Codex 等客户端接入。
 
-- 对比 **copilot-bridge**（C# 单二进制）：我们是 npm CLI、TypeScript、带 Web Dashboard。
-- 对比 **Router-Maestro**（Python/Docker）：我们用 npm 而非 Docker，并提供管理 UI 与自愈 daemon。
-- 对比 **agent-maestro**（VS Code 扩展）：我们是独立 CLI，用 Web Dashboard 取代命令面板；**不做** agent 任务编排，但实现其代理 + 管理 + metrics 能力（含 PR #187 的 metrics dashboard）。
+与三个参考项目的关系：取 copilot-bridge 的 Copilot 反向 + typed pipeline；取 Router-Maestro 的多-provider 路由理念；取 agent-maestro 的「一键配置客户端 + 状态/doctor」能力，但**用 Ink TUI + 对话助手取代命令面板/网页**。
 
 ## 2. 决策汇总
 
 | 维度 | 决策 |
 |------|------|
-| 后端 | 多 provider 路由：Copilot(反向) + OpenAI + Anthropic + 自定义 OpenAI 兼容端点；优先级 + 失败 fallback + 模糊模型匹配 + model 重映射 |
-| 客户端接口 | OpenAI `/v1/chat/completions` + Anthropic `/v1/messages`（均含 SSE 流式） |
-| 范围 | 代理 + 管理 + metrics + 自愈 daemon。**不做** VS Code agent 任务编排 |
-| 启动 | `npx llm-maestro start` 或全局安装后 `maestro start` |
-| 进程模型 | Supervisor（控制面，常驻）+ Worker（数据面，跑 proxy，可被重启） |
+| 形态 | 交互式 Ink TUI（REPL），npm 全局/`npx` 启动，bin = `maestro` |
+| 主交互 | slash 命令 + 自然语言对话助手（二者等价地触发同一批 action） |
+| Web Dashboard | **不做**。metrics / 错误 / 重启历史全在 TUI 面板里渲染 |
+| 后端 | 多-provider 路由；M1 仅 Copilot(反向) 单 provider，多 provider/fallback 留 M2 |
+| 客户端接口 | OpenAI `/v1/chat/completions` + Anthropic `/v1/messages`（均含 SSE 流式 + tool-use） |
+| 对话助手 | `@anthropic-ai/claude-agent-sdk`，dogfood maestro：`ANTHROPIC_BASE_URL` 指向本机 Anthropic 入站 → Copilot |
+| 助手工具 | claude-agent-sdk in-process MCP 工具（`tool()` / `createSdkMcpServer`），调用 daemon 控制 API 执行 action |
+| 进程模型 | TUI 进程 ⟂ daemon。daemon = Supervisor（控制面，常驻）+ Worker（数据面，跑 proxy） |
+| daemon 协同 | TUI 启动时检查并自动拉起 daemon；slash/助手经本地控制 API 操作它 |
+| 自愈 | Worker 崩溃 → 指数退避重启；窗口内 N 次失败 → 标记 unhealthy 停止重启 |
 | 持久化 | SQLite（better-sqlite3）：config / 加密凭证 / 错误·重启历史 / 请求日志元数据；实时 metrics 走内存 ring buffer |
-| 前端 | React + Vite + Tailwind，构建为静态资源内嵌进 npm 包，由 Supervisor 服务 |
-| 语言/构建 | TypeScript 全栈；pnpm workspace 开发；发布为**单个** CLI 包（内嵌 dashboard 产物） |
-| 安全 | 默认绑定 127.0.0.1；proxy 单一 server API key；Dashboard 本地 token；请求日志只存 safe headers，永不存 body |
+| 语言/构建 | TypeScript 全栈，ESM；pnpm workspace 开发；发布单个 CLI 包 |
+| 安全 | 默认绑定 127.0.0.1；proxy server API key；请求日志只存 safe headers，永不存 body |
 
-## 3. 总体架构 / 进程模型
+## 3. 总体架构
 
 ```
- npx llm-maestro start
-        │
-        ▼
-┌──────────────────────────────────────────────┐
-│ Supervisor 进程 (控制面, 常驻, 端口 :7890)        │
-│  • 服务 Dashboard 静态资源 + REST API           │
-│  • SQLite (config / creds / errors / req-log)  │
-│  • 内存 metrics ring buffer + SSE 推送给浏览器    │
-│  • 监控 Worker：心跳 / 退出码                     │
-│  • 自愈：崩溃→指数退避重启；窗口内 N 次失败→标记      │
-│            unhealthy 并停止重启，错误入库           │
-└───────────────┬──────────────────────────────┘
-                │ child_process IPC (process.send)
-                │  ↑ 上行: metric / error / log 事件
-                │  ↓ 下行: config 热更新 / reload / drain
+$ maestro
+┌─────────────────────────────────────────────────────────────┐
+│ TUI 进程 (Ink/React)                                          │
+│  ├─ 启动: 确保已登录(device-code) + 确保 daemon 在跑(自动拉起)   │
+│  ├─ REPL 输入框:                                              │
+│  │     "/..." → SlashRouter → 调 daemon 控制 API              │
+│  │     自然语言 → Assistant(claude-agent-sdk) → tool call     │
+│  │                 → 同一批 action                            │
+│  ├─ 面板: /metrics /logs /status (Ink 组件渲染)               │
+│  └─ Assistant 模型后端 = 本机 maestro Anthropic 入站(dogfood)  │
+└───────────────┬─────────────────────────────────────────────┘
+                │ 本地 HTTP 控制 API (:7890/api) + SSE
                 ▼
-┌──────────────────────────────────────────────┐
-│ Worker 进程 (数据面, 端口 :7891 proxy)           │
-│  • OpenAI + Anthropic 兼容入站端点 (SSE)         │
-│  • 管线: 入站格式 → 内部规范表示(Anthropic Messages) │
-│    → 路由选 provider → provider 适配器 → 出站;     │
-│    响应反向同理                                  │
-│  • Providers: Copilot(反向)/OpenAI/Anthropic/   │
-│    custom; 优先级 + 失败 fallback                │
-└──────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│ Supervisor 进程 (控制面, 常驻, :7890)                          │
+│  • 控制 API: status / start / stop / restart / providers /    │
+│    setup-client / doctor / metrics / logs (REST + SSE)        │
+│  • SQLite (config / creds / errors / req-log)                 │
+│  • 内存 metrics ring buffer                                   │
+│  • 监控 Worker + 自愈(退避重启 + 熔断)                          │
+└───────────────┬─────────────────────────────────────────────┘
+                │ child_process IPC
+                ▼
+┌─────────────────────────────────────────────────────────────┐
+│ Worker 进程 (数据面, proxy, :7891)                            │
+│  • 入站: OpenAI /v1/chat/completions + Anthropic /v1/messages │
+│  • 管线: 入站 → 内部规范(Anthropic Messages, 含 tool_use)      │
+│    → 路由 → provider 适配器 → 出站; 流式 SSE 全程              │
+│  • Provider: Copilot(反向, OpenAI 形状) — 含 tool-use 双向翻译 │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-**核心不变量**：Dashboard 与错误存储归属于 Supervisor，因此即使 Worker（proxy）崩溃，Dashboard 仍在线，可展示崩溃原因与重启历史。Worker 仅承担数据面，崩溃重启代价小、隔离性好。
+**两条数据通道要分清**：
+1. **控制通道**：TUI（slash/助手工具）→ Supervisor `:7890/api` → 管理 daemon。
+2. **推理通道**：助手 / 外部客户端 → Worker `:7891`（OpenAI 或 Anthropic 入站）→ Copilot。助手走 Anthropic 入站这条，即 dogfood。
 
-## 4. 包结构（pnpm workspace，发布单包）
+## 4. 关键不变量 / 设计要点
 
-```
-packages/
-  cli/         # bin 入口: start/stop/status/auth/config/logs (commander 或 yargs)
-  supervisor/  # 控制面: 进程监控 + 自愈 + REST API + SSE + SQLite
-  worker/      # 数据面: HTTP 入站 + 路由 + 转换管线
-  core/        # 共享: 内部规范类型 / transforms / provider 适配器接口
-  providers/   # copilot(反向)/openai/anthropic/custom 适配器实现
-  dashboard/   # React + Vite + Tailwind 前端
-  shared/      # 跨进程 IPC 消息类型 / config schema / db schema
-```
+- **Dashboard 死了也能看错误**：Supervisor 常驻并持有 SQLite 与控制 API；Worker（proxy）崩了，TUI 仍能从 Supervisor 读到崩溃原因、重启历史。
+- **助手 dogfood 需要 Anthropic 入站支持 tool-use**：claude-agent-sdk 的 agent loop 通过标准 Anthropic Messages 协议下发/回收工具调用（`tool_use` / `tool_result` content blocks 与 `tools` 参数）。因此 Worker 的 `/v1/messages` 必须做 **Anthropic ↔ OpenAI 的 tool-use 双向翻译**（Copilot 是 OpenAI 形状、支持 function calling），含流式增量里的 tool_use。这是 M1 的主要难点。
+- **模型名映射**：claude-agent-sdk 默认请求 `claude-*` 模型；Worker 路由层维护默认 model map（`claude-* → 某 Copilot 模型 id`），客户端请求亦可被重映射。
+- **slash 与助手等价**：两者最终都调用同一组「action」（封装在 Supervisor 控制 API + TUI action 层）。助手的 in-process 工具就是这些 action 的薄包装，保证「能 slash 的都能对话完成」。
 
-发布：构建后将 dashboard 静态产物内嵌，打成单个 npm 包，暴露一个 bin：`maestro`。
+## 5. 组件分解
 
-每个包职责单一、通过明确接口通信、可独立测试：
+### 5.1 TUI（Ink）
+- `app`：根组件，管理屏幕状态（REPL / 面板）、全局快捷键。
+- `repl`：输入框；`/` 前缀 → SlashRouter；否则 → Assistant。
+- `slash/*`：每个命令一个处理器；`registry` 提供 `/help`。命令集（M1）：
+  `/login` `/logout` `/status` `/setup-claude` `/setup-codex` `/setup-status`
+  `/doctor` `/providers` `/start` `/stop` `/restart` `/metrics` `/logs` `/help` `/quit`
+- `panels/*`：`StatusPanel`、`MetricsPanel`（实时，SSE）、`LogsPanel`（错误/重启时间线）。
+- `daemon-client`：封装对 Supervisor 控制 API 的 REST + SSE 调用。
+- `bootstrap`：启动序列（确保登录 → 确保 daemon → 进入 REPL）。
 
-- `core` 定义内部规范表示与 `ProviderAdapter` 接口，不依赖任何具体 provider。
-- `providers` 实现适配器，仅依赖 `core` 的接口。
-- `worker` 组装管线，不关心 Supervisor 如何监控它。
-- `supervisor` 监控 worker、服务 dashboard，不关心管线内部。
-- `shared` 持有跨进程契约（IPC 消息、config schema、db schema），两侧都依赖它。
+### 5.2 Assistant（claude-agent-sdk）
+- `assistant/runtime`：用 `query()` 跑 agent loop；`ANTHROPIC_BASE_URL=http://127.0.0.1:7891`（Anthropic 入站）、auth token = maestro server API key。
+- `assistant/tools`：`createSdkMcpServer` + 一组 `tool()`，每个工具薄包 Supervisor 控制 API（如 `restart_worker`、`setup_client`、`run_doctor`、`list_providers`）。
+- `assistant/stream-view`：把助手输出流式渲染到 TUI。
 
-## 5. 数据面：转换管线 + 路由
+### 5.3 daemon（Supervisor + Worker）—— 沿用 v1
+- `supervisor/db`（SQLite）、`supervisor/monitor`（退避重启 + 熔断）、`supervisor/api`（控制 REST/SSE）、`supervisor/events`（事件总线）、`supervisor/index`（接线）。
+- `worker/server`（OpenAI + Anthropic 入站）、`worker/router`、`worker/index`（IPC 心跳）。
 
-### 5.1 内部规范表示
-统一收敛到 **Anthropic Messages 形态**（借鉴 copilot-bridge 的 typed-pipeline）。请求与响应均经过单一中间表示，新增 provider 或 client 时不改核心。
+### 5.4 core / providers
+- `core/canonical`：内部规范类型（messages、tools、tool_use/tool_result、流式 chunk）。
+- `core/openai-inbound`、`core/anthropic-inbound`：两个入站格式 ↔ 规范，**含 tool-use 翻译**。
+- `providers/copilot/*`：device-code 认证、token 交换缓存、adapter（complete/stream + function-calling 翻译）。
 
-```
-入站(OpenAI|Anthropic) → 规范化 → 校验 → 路由 → provider 适配器
-                                                      │
-出站(OpenAI|Anthropic) ← 反规范化 ← ───────────────────┘
-```
+### 5.5 shared
+- `config`、`ipc`、`paths`、`creds`、控制 API 的请求/响应类型。
 
-### 5.2 路由
-- **模糊模型匹配**：把常见别名（如 `opus-4-6`）解析为精确模型 id。
-- **优先级选择 + fallback**：按 provider 优先级选取；调用失败自动尝试下一个可用 provider。
-- **model 重映射**：将客户端请求的模型名映射到目标 provider 的实际模型（如 `gpt-4o` → 某 Copilot 模型）。
-- **热更新**：路由/provider 配置变更通过 IPC 下发，Worker 无需重启即可生效；不可热更的变更走优雅 drain → 重启。
+## 6. 持久化（SQLite 初稿）
 
-### 5.3 Provider 适配器
-- **Copilot（反向）**：GitHub OAuth device-code 登录 → 换取 Copilot token → 自动刷新；token 加密后存 SQLite。
-- **OpenAI / Anthropic / 自定义**：标准 API key + base URL；自定义端点按 OpenAI 兼容处理。
-
-### 5.4 流式
-全链路 SSE：入站流式请求 → provider 流式响应 → 跨格式转换 → 客户端，保持背压与正确的事件帧。
-
-## 6. 控制面：自愈 daemon
-
-- Supervisor 通过 `child_process.fork` 启动 Worker，监听 `exit` / `disconnect` 与 IPC 心跳（周期性 ping/pong）。
-- **崩溃重启**：指数退避（如 0.5s, 1s, 2s, 4s …，设上限）。
-- **滑动窗口熔断**：例如 60s 内崩溃 ≥ 5 次 → 标记 `unhealthy`，停止自动重启，将崩溃序列（退出码、stderr 尾部、堆栈）写入 SQLite；Dashboard 红色告警并提供一键手动重启。
-- **健康判定**：心跳超时同样视为不健康并触发重启。
-- 所有崩溃 / 重启 / 熔断事件入库，构成 Dashboard 的错误追踪时间线。
-
-## 7. Dashboard（React + Vite + Tailwind）
-
-四个区，全部经由 Supervisor 的 REST + SSE：
-
-1. **Overview / 健康**：Supervisor & Worker 状态、运行时长、重启次数、unhealthy 告警；一键 start/stop/restart。
-2. **Metrics**（对标 agent-maestro PR #187）：active requests、QPS/吞吐率、延迟分位（p50/p95）、按 endpoint 与 model 的用量表、最近请求列表（可展开详情：safe headers、provider、模型、耗时、token 用量、状态码 —— **不存 body**）。实时数据走 SSE，内存 ring buffer 提供最近窗口。
-3. **Providers / 路由管理**（取代命令面板）：增删改 provider、优先级排序、model 映射、Copilot OAuth 登录向导、连通性测试、客户端一键配置（生成 Claude Code / Codex 的 env 与配置片段）。
-4. **Errors / 日志**：崩溃与重启时间线、错误详情（退出码 / stderr / 堆栈）、请求级错误（4xx/5xx/fallback 记录），可筛选。
-
-## 8. 安全与隐私
-
-- 默认仅绑定 `127.0.0.1`。
-- proxy 需要单一 server API key（形如 `sk-rm-...`）。
-- Dashboard 使用本地 token 鉴权。
-- 请求日志只存 safe headers 与元数据，**永不存** prompt / response body。
-- provider 凭证（含 Copilot token）加密后存 SQLite。
-
-## 9. 数据模型（SQLite，初稿）
-
-- `providers`：id, type, name, priority, base_url, model_map(json), enabled。
-- `credentials`：provider_id, encrypted_blob, expires_at。
-- `settings`：单行全局配置（bind host/port、server api key hash、自愈阈值参数）。
+- `settings`：bind host/port、server api key hash、自愈阈值、默认 model map。
+- `providers` / `credentials`：provider 配置与加密凭证（M1 仅 Copilot）。
 - `restart_events`：ts, reason, exit_code, stderr_tail, backoff_ms, marked_unhealthy。
 - `request_log`：ts, endpoint, client_format, provider, model, status, latency_ms, tokens(json), safe_headers(json)。
 
-## 10. 分期交付
+## 7. 安全与隐私
 
-- **M1 MVP**：CLI + Supervisor/Worker 双进程自愈 + 单 provider（Copilot 反向）+ OpenAI 入站 + 最小 Dashboard（健康 + 手动重启）。
-- **M2**：Anthropic 入站 + 多 provider + 优先级/fallback + Provider 管理 UI + 客户端一键配置。
-- **M3**：Metrics dashboard（PR #187 全套）+ 错误追踪时间线。
-- **M4**：打磨（模糊匹配、热更新、连通性测试、打包发布到 npm）。
+- 默认仅绑定 `127.0.0.1`；proxy 与控制 API 用本地 server API key。
+- 请求日志只存 safe headers + 元数据，**永不存** prompt/response body。
+- Copilot 凭证加密存 SQLite。
+- README 声明：Copilot 反向使用社区记录的非官方端点，仅供自有订阅使用。
 
-## 11. 未决 / 后续
+## 8. 里程碑（重新切分）
 
-- 工作名 `llm-maestro` 最终定名（与 npm 上已有包查重）。
-- Copilot 反向工程的合规边界需在 README 中明确声明（仅用于自有订阅）。
-- 是否提供 Gemini 入站（当前不做，架构预留）。
+M1 因「助手 + Anthropic 入站」而变大，内部按 a→d 顺序推进，全部属于 M1：
+
+- **M1a 骨架**：单包脚手架 + shared/core(OpenAI) + Copilot 反向(auth/token/adapter, complete+stream) + Worker OpenAI 入站 + Supervisor 自愈 daemon + CLI 引导 + 最小 Ink TUI（REPL + `/status` `/doctor` `/start` `/stop` `/restart` `/logs` `/quit`）+ device 登录。
+- **M1b Anthropic 入站**：`/v1/messages`（非流式 + SSE）+ Anthropic↔OpenAI **tool-use 双向翻译** + 默认 model map。
+- **M1c 对话助手**：claude-agent-sdk runtime（dogfood）+ in-process 工具（restart/status/doctor/setup-client/providers）+ REPL 自然语言分流 + 流式渲染。
+- **M1d 管理与可视化**：`/setup-claude` `/setup-codex` `/setup-status` `/providers` + `/metrics` 面板（SSE 实时）+ `/logs` 错误/重启时间线。
+
+后续里程碑：
+
+- **M2**：多 provider（OpenAI/Anthropic/自定义）+ 优先级/fallback + 模糊匹配 + provider 管理 UI + 凭证加密强化 + 配置热更新。
+- **M3**：metrics 深化（分位延迟、按 model/endpoint 表、可展开请求详情）+ 错误追踪强化。
+- **M4**：打磨 + 发布 npm + 文档。
+
+## 9. 未决 / 风险
+
+- claude-agent-sdk 经 `ANTHROPIC_BASE_URL` 指向自建 Anthropic 端点时，对协议细节（系统提示注入、tool 结果帧、停止原因）的要求需在 M1b/M1c 用真实联调验证；先用最小 `/v1/messages` 子集打通，再按 SDK 实际行为补齐。
+- tool-use 流式翻译（OpenAI `tool_calls` 增量 ↔ Anthropic `input_json_delta`）是最易出错处，需独立单测覆盖。
+- Copilot 非官方端点/模型可用性可能变化；model map 设为可配置。
+- 工作名 `llm-maestro` 最终定名与 npm 查重。
