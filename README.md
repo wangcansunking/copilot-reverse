@@ -34,3 +34,14 @@ Point clients at:
 ```bash
 npm install && npm test && npm run build
 ```
+
+> **Build/test note:** use Node 20. `better-sqlite3` has no prebuilt binary for
+> Node 25 and will fail to compile there; Node 20 installs from a prebuild.
+
+### Test notes
+
+- **TUI input tests** (`tests/tui/app.test.tsx`): the test waits ~30 ms after
+  `render()` before writing to `stdin`. This is not flakiness padding — Ink's
+  `useInput` subscribes to stdin asynchronously after mount, so writes issued in
+  the same tick as `render()` are dropped. The delay lets the subscription
+  attach; assertions are otherwise unchanged.
