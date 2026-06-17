@@ -378,17 +378,18 @@ freeze §2.1 envelope (`{ providers }` for the collection read, `{ ok: true }` f
 |---|---|---|
 | GET | `/api/providers` | `{ providers: ProviderStatus[] }` |
 | POST | `/api/providers` | add (body `ProviderUpsert`, `credential` write-only) |
-| PUT or PATCH | `/api/providers/:name` | edit — **decide one verb** (I'll freeze PUT = full replace; PATCH only if frontend needs partial; confirm with frontend at promotion) |
+| PUT | `/api/providers/:name` | edit = **full replace** (CONFIRMED by frontend: the TUI edit form pre-fills all fields and submits the whole Provider as one unit; no partial-update path). PATCH is not part of M2. |
 | DELETE | `/api/providers/:name` | remove |
 | POST | `/api/providers/:name/enable` \| `/disable` | toggle without full edit |
 | POST | `/api/providers/:name/up` \| `/down` | reorder (semantics depend on FORK E) |
 | POST | `/api/providers/:name/test` | probe → `{ ok, detail }` |
 
-**Error envelope (freeze now to unblock DaemonClient):** action failures return HTTP 4xx/5xx with
-`{ error: { code: string, message: string } }` (e.g. `code:"duplicate_name"`, `"not_found"`,
-`"invalid_name"`, `"upstream_unreachable"`). This matches the worker's existing error-body style (freeze §5
-endpoints use `{ error: { message } }`); I'm adding a `code` for the TUI to switch on. Confirm shape with
-frontend at promotion.
+**Error envelope (FROZEN — CONFIRMED by frontend, unblocks DaemonClient):** action failures return HTTP 4xx/5xx
+with `{ error: { code: string, message: string } }`. Codes the TUI switches on: `duplicate_name`,
+`invalid_name` (both → inline red error under the add/edit form, form stays open), `not_found` (→ red
+`provider "<name>" not found`), `upstream_unreachable` (→ red `could not reach daemon: <message>`). This matches
+the worker's existing error-body style (freeze §5 endpoints use `{ error: { message } }`); the added `code` lets
+the TUI branch. `DaemonClient` surfaces `{ code, message }` to the slash handlers.
 
 ### FORK E — provider priority model → **team-lead to resolve** (raised by frontend's open question #4)
 
