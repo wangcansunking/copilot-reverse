@@ -47,10 +47,19 @@ describe("Anthropic mixed text+tool streaming (§5.4 / D3 regression)", () => {
     // The core D3 invariant: the two blocks must NOT share an index.
     expect(toolStart!.data.index).not.toBe(textStart!.data.index);
 
-    // Every opened block index must be closed by a content_block_stop.
-    const stopIdx = new Set(frames.filter((f) => f.event === "content_block_stop").map((f) => f.data.index));
-    expect(stopIdx.has(textStart!.data.index)).toBe(true);
-    expect(stopIdx.has(toolStart!.data.index)).toBe(true);
+    // The text delta must land on the text block...
+    const textDelta = frames.find((f) => f.event === "content_block_delta" && f.data.delta?.type === "text_delta");
+    expect(textDelta!.data.index).toBe(textStart!.data.index);
+    // ...and the tool's input_json_delta must land on the TOOL block, NOT the text block.
+    const toolDelta = frames.find((f) => f.event === "content_block_delta" && f.data.delta?.type === "input_json_delta");
+    expect(toolDelta!.data.index).toBe(toolStart!.data.index);
+    expect(toolDelta!.data.index).not.toBe(textStart!.data.index);
+
+    // Every opened block index must be closed by a content_block_stop (ascending).
+    const stopIndices = frames.filter((f) => f.event === "content_block_stop").map((f) => f.data.index);
+    expect(new Set(stopIndices).has(textStart!.data.index)).toBe(true);
+    expect(new Set(stopIndices).has(toolStart!.data.index)).toBe(true);
+    expect([...stopIndices]).toEqual([...stopIndices].sort((a, b) => a - b));
 
     // Terminates correctly.
     expect(frames.some((f) => f.event === "message_stop")).toBe(true);
