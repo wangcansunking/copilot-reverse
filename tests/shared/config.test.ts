@@ -8,7 +8,7 @@ describe("config", () => {
     expect(c.workerPort).toBe(7891);
     expect(c.bindHost).toBe("127.0.0.1");
     expect(c.restart.maxCrashes).toBe(5);
-    expect(c.modelMap["*"]).toBe("gpt-4o");
+    expect(c.modelMap).toEqual({}); // pass-through routing by default
   });
   it("deep merges", () => {
     const c = mergeConfig(defaultConfig(), { restart: { maxCrashes: 3 } });

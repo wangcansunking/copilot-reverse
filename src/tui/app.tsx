@@ -2,6 +2,8 @@ import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import { Repl, type CommandHint } from "./repl.js";
 import { SetupWizard, type SetupClient } from "./setup/wizard.js";
+import { ModelScreen } from "./screens/model.js";
+import { ConfigScreen, type ConfigInfo } from "./screens/config.js";
 import type { Scope, ApplyResult } from "./setup/apply.js";
 import { theme } from "./theme.js";
 import type { Registry } from "./slash/registry.js";
@@ -14,6 +16,8 @@ type Entry =
   | { type: "card"; title: string; tone: "info" | "ok" | "error"; lines: string[] }
   | { type: "help"; commands: CommandHint[] };
 
+type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | null;
+
 const stateColor: Record<WorkerState, string> = {
   ready: theme.ready, starting: theme.starting, crashed: theme.crashed, unhealthy: theme.unhealthy,
 };
@@ -22,19 +26,19 @@ export interface AppProps {
   registry: Registry;
   title: string;
   workerState?: WorkerState;
-  model?: string;
+  initialModel?: string;
   clients?: { claude: boolean; codex: boolean };
   statusSource?: () => Promise<StatusResponse>;
-  onChat?: (text: string, print: (line: string) => void) => Promise<void>;
-  setup?: {
-    loadModels: () => Promise<string[]>;
-    apply: (client: SetupClient, scope: Scope, model: string) => Promise<ApplyResult>;
-  };
+  onChat?: (text: string, print: (line: string) => void, model?: string) => Promise<void>;
+  loadModels?: () => Promise<string[]>;
+  setup?: { apply: (client: SetupClient, scope: Scope, model: string) => Promise<ApplyResult> };
+  info?: ConfigInfo;
+  onModelChange?: (model: string) => void;
+  pickModelOnStart?: boolean;
 }
 
 const okDot = (ok: boolean) => (ok ? theme.ready : theme.muted);
 
-// Each command result renders as a bordered card; OK/FAIL lines become a ✓/✗ checklist (step feel).
 function OutputCard({ title, lines, tone }: { title: string; lines: string[]; tone: "info" | "ok" | "error" }) {
   const border = tone === "error" ? theme.error : tone === "ok" ? theme.ready : theme.border;
   return (
@@ -73,8 +77,9 @@ function HelpCard({ commands }: { commands: CommandHint[] }) {
 }
 
 export function App({
-  registry, title, workerState = "starting", model = "—",
-  clients = { claude: false, codex: false }, statusSource, onChat, setup,
+  registry, title, workerState = "starting", initialModel = "—",
+  clients = { claude: false, codex: false }, statusSource, onChat,
+  loadModels, setup, info, onModelChange, pickModelOnStart,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
   const [entries, setEntries] = useState<Entry[]>([
@@ -82,7 +87,8 @@ export function App({
   ]);
   const [state, setState] = useState<WorkerState>(workerState);
   const [clientState, setClientState] = useState(clients);
-  const [wizard, setWizard] = useState<SetupClient | null>(null);
+  const [model, setModel] = useState(initialModel);
+  const [screen, setScreen] = useState<Screen>(pickModelOnStart && loadModels ? { kind: "model" } : null);
   const add = (e: Entry) => setEntries((p) => [...p, e].slice(-100));
 
   useEffect(() => {
@@ -96,24 +102,69 @@ export function App({
     return () => { alive = false; clearInterval(id); };
   }, [statusSource]);
 
+  function pickModel(m: string) {
+    setModel(m);
+    onModelChange?.(m);
+    setScreen(null);
+    add({ type: "card", title: "model", tone: "ok", lines: [`✓ chat model set to ${m}`] });
+  }
+
   async function handle(line: string) {
     add({ type: "user", text: `› ${line}` });
     const t = line.trim();
-    if (setup && (t === "/setup-claude" || t === "/setup-codex")) {
-      setWizard(t === "/setup-claude" ? "claude" : "codex");
+    if (t === "/model" && loadModels) { setScreen({ kind: "model" }); return; }
+    if (t === "/config" && info) { setScreen({ kind: "config" }); return; }
+    if (setup && loadModels && (t === "/setup-claude" || t === "/setup-codex")) {
+      setScreen({ kind: "setup", client: t === "/setup-claude" ? "claude" : "codex" });
       return;
     }
     if (line.startsWith("/")) {
-      if (line.trim() === "/help") { add({ type: "help", commands: cmds }); return; }
+      if (t === "/help") { add({ type: "help", commands: cmds }); return; }
       const out = await registry.run(line);
       const tone: "info" | "ok" | "error" =
         out.some((l) => /fail|error|unknown/i.test(l)) ? "error" : out.some((l) => /^OK /.test(l)) ? "ok" : "info";
-      add({ type: "card", title: line.trim(), tone, lines: out });
+      add({ type: "card", title: t, tone, lines: out });
     } else if (onChat) {
-      await onChat(line, (l) => add({ type: "assistant", text: l }));
+      await onChat(line, (l) => add({ type: "assistant", text: l }), model);
     } else {
       add({ type: "system", text: "(assistant not available — use /help)" });
     }
+  }
+
+  let body: React.ReactNode;
+  if (screen?.kind === "model" && loadModels) {
+    body = <ModelScreen loadModels={loadModels} current={model} onPick={pickModel} onCancel={() => setScreen(null)} />;
+  } else if (screen?.kind === "setup" && setup && loadModels) {
+    const client = screen.client;
+    body = (
+      <SetupWizard
+        client={client}
+        loadModels={loadModels}
+        apply={(scope, m) => setup.apply(client, scope, m)}
+        onDone={(result, m) => {
+          setClientState((c) => ({ ...c, [client]: true }));
+          setScreen(null);
+          add({ type: "card", title: `setup ${client}`, tone: "ok", lines: [`✓ model ${m}`, `wrote ${result.path}`, `keys: ${result.changed.join(", ") || "(no change)"}`] });
+        }}
+        onCancel={() => { setScreen(null); add({ type: "system", text: "setup cancelled" }); }}
+      />
+    );
+  } else if (screen?.kind === "config" && info) {
+    body = (
+      <ConfigScreen
+        info={info}
+        model={model}
+        clients={clientState}
+        onAction={(a) => {
+          if (a === "model") setScreen({ kind: "model" });
+          else if (a === "setup-claude") setScreen({ kind: "setup", client: "claude" });
+          else if (a === "setup-codex") setScreen({ kind: "setup", client: "codex" });
+          else setScreen(null);
+        }}
+      />
+    );
+  } else {
+    body = <Repl onSubmit={handle} commands={cmds} />;
   }
 
   return (
@@ -132,28 +183,14 @@ export function App({
         })}
       </Box>
 
-      {wizard && setup ? (
-        <SetupWizard
-          client={wizard}
-          loadModels={setup.loadModels}
-          apply={(scope, m) => setup.apply(wizard, scope, m)}
-          onDone={(result, m) => {
-            setClientState((c) => ({ ...c, [wizard]: true }));
-            setWizard(null);
-            add({ type: "card", title: `setup ${wizard}`, tone: "ok", lines: [`✓ model ${m}`, `wrote ${result.path}`, `keys: ${result.changed.join(", ") || "(no change)"}`] });
-          }}
-          onCancel={() => { setWizard(null); add({ type: "system", text: "setup cancelled" }); }}
-        />
-      ) : (
-        <Repl onSubmit={handle} commands={cmds} />
-      )}
+      {body}
 
       <Box paddingX={1}>
         <Text color={theme.muted}>model </Text><Text color={theme.accent}>{model}</Text>
         <Text color={theme.muted}>  ·  daemon </Text><Text color={stateColor[state]}>{state}</Text>
         <Text color={theme.muted}>  ·  claude </Text><Text color={okDot(clientState.claude)}>{clientState.claude ? "✓" : "○"}</Text>
         <Text color={theme.muted}> codex </Text><Text color={okDot(clientState.codex)}>{clientState.codex ? "✓" : "○"}</Text>
-        <Text color={theme.muted}>  ·  /help for commands</Text>
+        <Text color={theme.muted}>  ·  /help</Text>
       </Box>
     </Box>
   );

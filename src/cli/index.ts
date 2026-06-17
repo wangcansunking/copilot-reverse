@@ -12,6 +12,7 @@ import { runAssistantTurn } from "../tui/assistant/runtime.js";
 import { makeOnChat } from "../tui/assistant/on-chat.js";
 import { readGhToken } from "../shared/creds.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
+import { readChatModel, writeChatModel } from "../shared/prefs.js";
 import { CopilotTokenStore } from "../providers/copilot/token.js";
 import { fetchCopilotModels } from "../providers/copilot/models.js";
 import { applyClaude, applyCodex, type Scope } from "../tui/setup/apply.js";
@@ -20,7 +21,7 @@ import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
-const DEFAULT_MODEL = "claude-opus-4-8";
+const DEFAULT_MODEL = "gpt-4o"; // a valid Copilot model id; pass-through routing uses it as-is
 
 async function launchTui(): Promise<void> {
   const cfg = defaultConfig();
@@ -39,19 +40,19 @@ async function launchTui(): Promise<void> {
 
   const base = `http://${cfg.bindHost}:${cfg.supervisorPort}`;
   const client = new DaemonClient(base);
+  const workerBase = `http://${cfg.bindHost}:${cfg.workerPort}`;
   const endpoint = { host: cfg.bindHost, port: cfg.workerPort, apiKey: "maestro-local" };
   let app: { unmount: () => void } | undefined;
   const quit = () => { stopSupervisor?.(); app?.unmount(); process.exit(0); };
   const registry = buildRegistry({ client, quit }, endpoint);
   const onChat = makeOnChat(
-    { client, workerBaseUrl: `http://${cfg.bindHost}:${cfg.workerPort}`, apiKey: "maestro-local", model: DEFAULT_MODEL },
+    { client, workerBaseUrl: workerBase, apiKey: "maestro-local", model: DEFAULT_MODEL },
     runAssistantTurn,
   );
 
   const tokenStore = new CopilotTokenStore(readGhToken(dataDir())!);
-  const workerBase = `http://${cfg.bindHost}:${cfg.workerPort}`;
+  const loadModels = async () => fetchCopilotModels(await tokenStore.get());
   const setup = {
-    loadModels: async () => fetchCopilotModels(await tokenStore.get()),
     apply: async (clientKind: SetupClient, scope: Scope, model: string) => {
       const r = clientKind === "claude"
         ? applyClaude(scope, { ANTHROPIC_BASE_URL: workerBase, ANTHROPIC_API_KEY: "maestro-local", ANTHROPIC_MODEL: model })
@@ -61,15 +62,27 @@ async function launchTui(): Promise<void> {
     },
   };
 
+  const persistedModel = readChatModel(dataDir());
+
   app = render(
     React.createElement(App, {
       registry,
       title: "llm-maestro",
-      model: DEFAULT_MODEL,
+      initialModel: persistedModel ?? DEFAULT_MODEL,
       clients: readClientSetup(dataDir()),
       statusSource: () => client.status(),
       onChat,
+      loadModels,
       setup,
+      info: {
+        openai: `${workerBase}/v1`,
+        anthropic: workerBase,
+        supervisorPort: cfg.supervisorPort,
+        workerPort: cfg.workerPort,
+        dataDir: dataDir(),
+      },
+      onModelChange: (m: string) => writeChatModel(dataDir(), m),
+      pickModelOnStart: !persistedModel,
     }),
   );
 }

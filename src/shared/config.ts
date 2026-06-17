@@ -19,7 +19,8 @@ export function defaultConfig(): AppConfig {
     supervisorPort: 7890,
     workerPort: 7891,
     restart: { maxCrashes: 5, windowMs: 60_000, baseBackoffMs: 500, maxBackoffMs: 8_000 },
-    modelMap: { "*": "gpt-4o" },
+    // Empty = pass the requested model straight through to Copilot. Add entries (or "*") to remap.
+    modelMap: {},
   };
 }
 

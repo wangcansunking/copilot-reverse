@@ -26,6 +26,8 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint): Registry {
   reg.add({ name: "/setup-claude", describe: "print Claude Code config", run: async () => claudeCodeConfig(endpoint).instructions.split("\n") });
   reg.add({ name: "/setup-codex", describe: "print Codex/OpenAI config", run: async () => codexConfig(endpoint).instructions.split("\n") });
   reg.add({ name: "/setup-status", describe: "show configured endpoints", run: async () => [`OpenAI: http://${endpoint.host}:${endpoint.port}/v1`, `Anthropic: http://${endpoint.host}:${endpoint.port}`] });
+  reg.add({ name: "/model", describe: "switch the chat model", run: async () => ["opening model picker…"] });
+  reg.add({ name: "/config", describe: "view & change configuration", run: async () => ["opening config panel…"] });
   reg.add({ name: "/quit", describe: "exit maestro", run: async (_a, c) => { c.quit(); return ["bye"]; } });
   reg.add({ name: "/help", describe: "list commands", run: async () => reg.list().map((c) => `${c.name.padEnd(14)} ${c.describe}`) });
   return reg;
