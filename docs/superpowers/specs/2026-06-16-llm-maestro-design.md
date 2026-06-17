@@ -141,11 +141,15 @@ M1 因「助手 + Anthropic 入站」而变大，内部按 a→d 顺序推进，
 - **M1c 对话助手**：claude-agent-sdk runtime（dogfood）+ in-process 工具（restart/status/doctor/setup-client/providers）+ REPL 自然语言分流 + 流式渲染。
 - **M1d 管理与可视化**：`/setup-claude` `/setup-codex` `/setup-status` `/providers` + `/metrics` 面板（SSE 实时）+ `/logs` 错误/重启时间线。
 
-后续里程碑：
+### 范围决定（2026-06-17，最终）
 
-- **M2**：多 provider（OpenAI/Anthropic/自定义）+ 优先级/fallback + 模糊匹配 + provider 管理 UI + 凭证加密强化 + 配置热更新。
-- **M3**：metrics 深化（分位延迟、按 model/endpoint 表、可展开请求详情）+ 错误追踪强化。
-- **M4**：打磨 + 发布 npm + 文档。
+用户确认：**只要 GitHub Copilot，和 agent-maestro 一样**，不要多 provider。因此原 M2 的多 provider 全套**取消**，产品定型为 **Copilot-only**：
+
+- ~~M2 多 provider / 优先级 / fallback / 模糊匹配 / provider 管理 UI~~ → **不做**（YAGNI）。
+- ~~凭证加密强化~~ → **非必需**（GH token 存 `~/.llm-maestro/creds.json`，0600，与 `gh` CLI / `~/.aws/credentials` 同风险级别）；除非要 OS 钥匙串级别保护，否则不做。
+- ~~配置热更新子系统~~ → **不做**；配置在 TUI 启动时读一次（非阻塞）即可。
+
+**M1 即定型产品**。下一步只剩**验收 + 发布**：本机真机 Copilot dogfood（需真订阅）→ npm publish。本地可验项（全套测试含 e2e、构建、真 daemon 控制面自愈）均已通过。
 
 ## 9. 未决 / 风险
 

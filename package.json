@@ -1,12 +1,17 @@
 {
   "name": "llm-maestro",
   "version": "0.0.1",
+  "description": "Interactive terminal app that exposes your GitHub Copilot subscription as local OpenAI- and Anthropic-compatible endpoints, with a self-healing daemon and a built-in assistant.",
   "type": "module",
+  "license": "MIT",
   "bin": { "maestro": "dist/cli/index.js" },
+  "files": ["dist", "README.md"],
+  "keywords": ["github-copilot", "openai", "anthropic", "proxy", "cli", "tui", "ink", "claude", "llm"],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
-    "dev": "tsx src/cli/index.ts"
+    "dev": "tsx src/cli/index.ts",
+    "prepublishOnly": "npm run build && npm run test"
   },
   "engines": { "node": ">=20" },
   "dependencies": {
