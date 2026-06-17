@@ -31,12 +31,11 @@ Point clients at:
 
 ## Development
 
+Requires Node >=20.
+
 ```bash
 npm install && npm test && npm run build
 ```
-
-> **Build/test note:** use Node 20. `better-sqlite3` has no prebuilt binary for
-> Node 25 and will fail to compile there; Node 20 installs from a prebuild.
 
 ### Test notes
 
