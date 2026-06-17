@@ -10,6 +10,11 @@ export interface AssistantConfig {
   model: string;           // e.g. claude-opus-4-8 (router remaps to a Copilot model)
 }
 
+// Injectable seam for the SDK's query(); production uses the real one (default).
+// Tests inject a fake to exercise on-chat -> runtime -> consumption without
+// spawning the bundled Claude Code CLI subprocess or calling live Copilot.
+export type QueryFn = typeof query;
+
 const empty = z.object({});
 
 function sdkTools(actions: AssistantActions) {
@@ -22,7 +27,7 @@ function sdkTools(actions: AssistantActions) {
 }
 
 // Runs one assistant turn, streaming assistant text to `print`.
-export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, print: (line: string) => void): Promise<void> {
+export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, print: (line: string) => void, queryFn: QueryFn = query): Promise<void> {
   // Dogfood: route the agent SDK through maestro's own Anthropic endpoint -> Copilot.
   process.env.ANTHROPIC_BASE_URL = cfg.workerBaseUrl;
   process.env.ANTHROPIC_API_KEY = cfg.apiKey;
@@ -30,7 +35,7 @@ export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, pri
   const actions = buildActions(cfg.client);
   const mcp = createSdkMcpServer({ name: "maestro", tools: sdkTools(actions) });
 
-  const response = query({
+  const response = queryFn({
     prompt,
     options: {
       model: cfg.model,
