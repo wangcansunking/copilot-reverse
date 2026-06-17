@@ -1,18 +1,19 @@
 import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
-import { Repl } from "./repl.js";
+import { Repl, type CommandHint } from "./repl.js";
 import { theme } from "./theme.js";
 import type { Registry } from "./slash/registry.js";
 import type { WorkerState, StatusResponse } from "../shared/control-types.js";
 
-type LineKind = "user" | "assistant" | "output" | "system" | "error";
-interface Line { kind: LineKind; text: string }
+type Entry =
+  | { type: "user"; text: string }
+  | { type: "assistant"; text: string }
+  | { type: "system"; text: string }
+  | { type: "card"; title: string; tone: "info" | "ok" | "error"; lines: string[] }
+  | { type: "help"; commands: CommandHint[] };
 
 const stateColor: Record<WorkerState, string> = {
   ready: theme.ready, starting: theme.starting, crashed: theme.crashed, unhealthy: theme.unhealthy,
-};
-const kindColor: Record<LineKind, string> = {
-  user: theme.user, assistant: theme.assistant, output: theme.output, system: theme.muted, error: theme.error,
 };
 
 export interface AppProps {
@@ -21,22 +22,60 @@ export interface AppProps {
   workerState?: WorkerState;
   model?: string;
   clients?: { claude: boolean; codex: boolean };
-  // when provided, the header + HUD poll it for live worker/daemon status.
   statusSource?: () => Promise<StatusResponse>;
   onChat?: (text: string, print: (line: string) => void) => Promise<void>;
 }
 
 const okDot = (ok: boolean) => (ok ? theme.ready : theme.muted);
 
+// Each command result renders as a bordered card; OK/FAIL lines become a ✓/✗ checklist (step feel).
+function OutputCard({ title, lines, tone }: { title: string; lines: string[]; tone: "info" | "ok" | "error" }) {
+  const border = tone === "error" ? theme.error : tone === "ok" ? theme.ready : theme.border;
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={border} paddingX={1} marginBottom={1}>
+      <Text color={theme.accent} bold>{title}</Text>
+      {lines.map((l, i) => {
+        const m = /^(OK|FAIL)\s+(.*)$/.exec(l);
+        if (m) {
+          const ok = m[1] === "OK";
+          return (
+            <Text key={i}>
+              <Text color={ok ? theme.ready : theme.error}>{ok ? "✓ " : "✗ "}</Text>
+              <Text color={theme.output}>{m[2]}</Text>
+            </Text>
+          );
+        }
+        return <Text key={i} color={theme.output}>{l}</Text>;
+      })}
+    </Box>
+  );
+}
+
+function HelpCard({ commands }: { commands: CommandHint[] }) {
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.border} paddingX={1} marginBottom={1}>
+      <Text color={theme.accent} bold>Commands</Text>
+      {commands.map((c) => (
+        <Text key={c.name}>
+          <Text color={theme.prompt}>{c.name.padEnd(16)}</Text>
+          <Text color={theme.muted}>{c.describe}</Text>
+        </Text>
+      ))}
+      <Text color={theme.muted}>tip: type / to autocomplete · plain text talks to the assistant</Text>
+    </Box>
+  );
+}
+
 export function App({
   registry, title, workerState = "starting", model = "—",
   clients = { claude: false, codex: false }, statusSource, onChat,
 }: AppProps) {
-  const [lines, setLines] = useState<Line[]>([
-    { kind: "system", text: "Type a message to chat with the assistant, or /help for commands." },
+  const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
+  const [entries, setEntries] = useState<Entry[]>([
+    { type: "system", text: "Type a message to chat with the assistant, or /help for commands." },
   ]);
   const [state, setState] = useState<WorkerState>(workerState);
-  const push = (kind: LineKind, text: string) => setLines((p) => [...p, { kind, text }].slice(-200));
+  const add = (e: Entry) => setEntries((p) => [...p, e].slice(-100));
 
   useEffect(() => {
     if (!statusSource) return;
@@ -50,14 +89,17 @@ export function App({
   }, [statusSource]);
 
   async function handle(line: string) {
-    push("user", `› ${line}`);
+    add({ type: "user", text: `› ${line}` });
     if (line.startsWith("/")) {
+      if (line.trim() === "/help") { add({ type: "help", commands: cmds }); return; }
       const out = await registry.run(line);
-      for (const l of out) push(/fail|error|unknown/i.test(l) ? "error" : "output", l);
+      const tone: "info" | "ok" | "error" =
+        out.some((l) => /fail|error|unknown/i.test(l)) ? "error" : out.some((l) => /^OK /.test(l)) ? "ok" : "info";
+      add({ type: "card", title: line.trim(), tone, lines: out });
     } else if (onChat) {
-      await onChat(line, (l) => push("assistant", l));
+      await onChat(line, (l) => add({ type: "assistant", text: l }));
     } else {
-      push("system", "(assistant not available — use /help)");
+      add({ type: "system", text: "(assistant not available — use /help)" });
     }
   }
 
@@ -68,11 +110,16 @@ export function App({
         <Text color={theme.muted}>worker: <Text color={stateColor[state]}>{state}</Text></Text>
       </Box>
 
-      <Box flexDirection="column" paddingX={1} marginTop={1} marginBottom={1}>
-        {lines.map((l, i) => (<Text key={i} color={kindColor[l.kind]}>{l.text}</Text>))}
+      <Box flexDirection="column" paddingX={1} marginTop={1}>
+        {entries.map((e, i) => {
+          if (e.type === "card") return <OutputCard key={i} title={e.title} lines={e.lines} tone={e.tone} />;
+          if (e.type === "help") return <HelpCard key={i} commands={e.commands} />;
+          const color = e.type === "user" ? theme.user : e.type === "assistant" ? theme.assistant : theme.muted;
+          return <Text key={i} color={color}>{e.text}</Text>;
+        })}
       </Box>
 
-      <Repl onSubmit={handle} commands={registry.list().map((c) => ({ name: c.name, describe: c.describe }))} />
+      <Repl onSubmit={handle} commands={cmds} />
 
       <Box paddingX={1}>
         <Text color={theme.muted}>model </Text><Text color={theme.accent}>{model}</Text>
