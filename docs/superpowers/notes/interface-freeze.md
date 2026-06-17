@@ -262,10 +262,11 @@ Anthropic SSE      content_block_start                 content_block_delta
 - The OpenAI inbound translator (`canonicalChunkToOpenAISSE`, Task 3) does the symmetric thing: emits
   `arguments:""` on start, then `arguments:<frag>` on delta, both under `tool_calls[{ index }]`. OpenAI's wire
   index **is** `chunk.index` directly (no remap) — OpenAI has no leading text block reserving an index.
-- `canonicalChunkToAnthropicSSE` in `anthropic-inbound.ts` is a **standalone reference encoder only** — unit-
-  tested in isolation, **NOT** called by the production endpoint. It does not do allocation or emit
-  `content_block_stop`, so it must never be wired into a streaming endpoint as-is. The endpoint (Task 21) is the
-  single source of truth for Anthropic streaming framing. (See §5.4.1.)
+- There is **no per-chunk Anthropic SSE helper**. The endpoint (`anthropic-server.ts`) is the **single source of
+  truth** for Anthropic streaming framing. (The former `canonicalChunkToAnthropicSSE` helper was DELETED — see
+  §7/D5 — because it emitted raw `chunk.index` framing, the exact collision the endpoint avoids, and was a
+  latent trap.) If a future endpoint needs per-chunk encoding, extract it from the endpoint with explicit index
+  allocation (§5.4.1) — do not resurrect a stateless helper that owns indices.
 
 #### 5.4.1 Anthropic block-index allocation — OPEN-ORDER (shipped fe2f6ca, FROZEN)
 
@@ -376,12 +377,16 @@ These are real inconsistencies I found across tasks. Resolution is binding; the 
   `chunk.index + 1` map I first proposed was wrong — it breaks pure-tool; open-order is the correct fix,
   per team-lead.)
 
-- **D5 — `canonicalChunkToAnthropicSSE` helper / endpoint framing duplication — RESOLVED by demotion.**
-  After D3, the endpoint owns all Anthropic streaming framing (allocation + open/stop). The standalone helper
-  `canonicalChunkToAnthropicSSE` (`anthropic-inbound.ts`) no longer matches production framing (no allocation,
-  no `content_block_stop`). Resolution: it is **reference-only**, unit-tested in isolation, and **must never be
-  wired into a streaming endpoint** — §5.4 / §5.4.1 (the endpoint) is the single source of truth. Documented in
-  §5.4. If a future endpoint needs per-chunk encoding, extend the endpoint pattern, not this helper.
+- **D5 — `canonicalChunkToAnthropicSSE` helper / endpoint framing duplication — RESOLVED by DELETION**
+  (architect decision 2026-06-17, supersedes the earlier "demotion" plan). After D3 the endpoint owns all
+  Anthropic streaming framing (allocation + open/stop), leaving the standalone helper dead on the streaming path
+  AND emitting raw `index: chunk.index` for tool blocks — the exact collision the endpoint was built to avoid.
+  Keeping it (even reference-only with a comment) was a latent trap: any "route the endpoint through the helper"
+  refactor reintroduces the mixed-turn collision with green unit tests, and it already caused a false-alarm
+  review. Verified zero production importers (only its own unit test). Resolution: **`canonicalChunkToAnthropicSSE`
+  and its SSE unit test are deleted**; `anthropicRequestToCanonical` + `canonicalToAnthropicResponse` remain
+  (live, used by the endpoint). The endpoint (`anthropic-server.ts`, §5.4 / §5.4.1) is now the literal single
+  source of truth for Anthropic streaming framing. Backend implements the deletion; architect verifies grep-clean.
 
 - **D4 — `tool_use_delta` before `tool_use_start` safety (Task 6).** The Copilot adapter must guarantee
   ordering: emit `tool_use_start` (on first fragment carrying `function.name`) **before** any
