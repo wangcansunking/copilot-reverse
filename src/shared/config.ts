@@ -23,8 +23,8 @@ export function defaultConfig(): AppConfig {
     restart: { maxCrashes: 5, windowMs: 60_000, baseBackoffMs: 500, maxBackoffMs: 8_000 },
     // Empty = pass the requested model straight through to Copilot. Add entries (or "*") to remap.
     modelMap: {},
-    // Set MAESTRO_REPORT_REPO=owner/repo (or edit here) to point /report at your tracker.
-    reportRepo: process.env.MAESTRO_REPORT_REPO ?? "OWNER/REPO",
+    // Set MAESTRO_REPORT_REPO=owner/repo to override where /report files diagnostics issues.
+    reportRepo: process.env.MAESTRO_REPORT_REPO ?? "wangcansunking/copilot-reverse",
   };
 }
 
