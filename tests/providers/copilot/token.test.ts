@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { CopilotTokenStore } from "../../../src/providers/copilot/token.js";
+import { CopilotTokenStore, CopilotAuthError, isCopilotTokenValid } from "../../../src/providers/copilot/token.js";
 const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
 
 describe("CopilotTokenStore", () => {
@@ -18,5 +18,22 @@ describe("CopilotTokenStore", () => {
     expect(await s.get()).toBe("cop_1");
     now = 200_000;
     expect(await s.get()).toBe("cop_2");
+  });
+  it("throws an actionable CopilotAuthError on 401", async () => {
+    const f = vi.fn(async () => new Response("", { status: 401 }));
+    const s = new CopilotTokenStore("gho", f as unknown as typeof fetch);
+    await expect(s.get()).rejects.toBeInstanceOf(CopilotAuthError);
+    await expect(s.get()).rejects.toThrow(/login expired/i);
+  });
+});
+
+describe("isCopilotTokenValid", () => {
+  it("true when the token exchanges", async () => {
+    const f = vi.fn(async () => json({ token: "cop", expires_at: 9_999_999_999 }));
+    expect(await isCopilotTokenValid("gho", f as unknown as typeof fetch)).toBe(true);
+  });
+  it("false on 401", async () => {
+    const f = vi.fn(async () => new Response("", { status: 401 }));
+    expect(await isCopilotTokenValid("gho", f as unknown as typeof fetch)).toBe(false);
   });
 });

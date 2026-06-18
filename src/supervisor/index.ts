@@ -8,6 +8,7 @@ import { createControlApp } from "./api.js";
 import { defaultConfig } from "../shared/config.js";
 import { dataDir, dbPath } from "../shared/paths.js";
 import { readGhToken } from "../shared/creds.js";
+import { CopilotTokenStore } from "../providers/copilot/token.js";
 import type { WorkerState, DoctorCheck } from "../shared/control-types.js";
 
 export function startSupervisor(): { stop: () => void } {
@@ -32,10 +33,18 @@ export function startSupervisor(): { stop: () => void } {
     },
   });
 
-  const doctor = async (): Promise<DoctorCheck[]> => [
-    { name: "github-auth", ok: Boolean(readGhToken(dataDir())), detail: readGhToken(dataDir()) ? "token present" : "run /login" },
-    { name: "worker", ok: state === "ready", detail: `worker is ${state}` },
-  ];
+  const doctor = async (): Promise<DoctorCheck[]> => {
+    const gh = readGhToken(dataDir());
+    let auth: DoctorCheck;
+    if (!gh) {
+      auth = { name: "github-auth", ok: false, detail: "not logged in — restart maestro to log in" };
+    } else {
+      // Validate the token actually exchanges, not just that it exists on disk.
+      try { await new CopilotTokenStore(gh).get(); auth = { name: "github-auth", ok: true, detail: "token valid" }; }
+      catch (e) { auth = { name: "github-auth", ok: false, detail: e instanceof Error ? e.message : String(e) }; }
+    }
+    return [auth, { name: "worker", ok: state === "ready", detail: `worker is ${state}` }];
+  };
 
   const app = createControlApp({
     db, getState: () => state,

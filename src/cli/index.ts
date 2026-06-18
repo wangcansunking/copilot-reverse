@@ -13,7 +13,7 @@ import { makeOnChat } from "../tui/assistant/on-chat.js";
 import { readGhToken } from "../shared/creds.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
 import { readChatModel, writeChatModel } from "../shared/prefs.js";
-import { CopilotTokenStore } from "../providers/copilot/token.js";
+import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
 import { fetchCopilotModels } from "../providers/copilot/models.js";
 import { applyClaude, applyCodex, type Scope } from "../tui/setup/apply.js";
 import type { SetupClient } from "../tui/setup/wizard.js";
@@ -25,8 +25,12 @@ const DEFAULT_MODEL = "gpt-4o"; // a valid Copilot model id; pass-through routin
 
 async function launchTui(): Promise<void> {
   const cfg = defaultConfig();
-  if (!readGhToken(dataDir())) {
+  const existingToken = readGhToken(dataDir());
+  if (!existingToken) {
     console.log("No GitHub login found — starting device-code login.");
+    await runDeviceLogin(dataDir());
+  } else if (!(await isCopilotTokenValid(existingToken))) {
+    console.log("GitHub login expired — re-authenticating.");
     await runDeviceLogin(dataDir());
   }
 

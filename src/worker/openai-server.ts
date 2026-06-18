@@ -2,6 +2,7 @@ import { type Express } from "express";
 import type { Router } from "./router.js";
 import type { MetricSink } from "./server.js";
 import { openaiRequestToCanonical, canonicalToOpenAIResponse, canonicalChunkToOpenAISSE } from "../core/openai-inbound.js";
+import { CopilotAuthError } from "../providers/copilot/token.js";
 
 export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink): void {
   app.post("/v1/chat/completions", async (req, res) => {
@@ -24,9 +25,10 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      if (!res.headersSent) res.status(502).json({ error: { message } });
+      const status = err instanceof CopilotAuthError ? 401 : 502;
+      if (!res.headersSent) res.status(status).json({ error: { message } });
       else res.end();
-      metric(502);
+      metric(status);
     }
   });
 }
