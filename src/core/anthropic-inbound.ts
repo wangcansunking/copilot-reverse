@@ -29,7 +29,12 @@ export function anthropicRequestToCanonical(req: AnthropicRequest): CanonicalReq
   }
   return {
     model: req.model, stream: Boolean(req.stream), temperature: req.temperature, maxTokens: req.max_tokens,
-    tools: req.tools?.map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema })),
+    // Keep only custom tools with a real JSON-Schema. Anthropic server-side tools (web_search,
+    // bash, computer, …) arrive with a `type` and no `input_schema`; forwarding them produces an
+    // invalid tool the model can't fulfil, and the client hangs forever waiting for a tool_result.
+    tools: req.tools
+      ?.filter((t) => t.input_schema != null && typeof t.input_schema === "object")
+      .map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema })),
     messages,
   };
 }

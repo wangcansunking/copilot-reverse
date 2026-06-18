@@ -10,7 +10,7 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
     const canon = openaiRequestToCanonical(req.body);
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
-    const metric = (status: number) => onMetric({ endpoint: "/v1/chat/completions", model: canon.model, status, latencyMs: Date.now() - start });
+    const metric = (status: number, error?: string) => onMetric({ endpoint: "/v1/chat/completions", model: canon.model, status, latencyMs: Date.now() - start, error });
     try {
       if (canon.stream) {
         res.setHeader("content-type", "text/event-stream");
@@ -26,9 +26,15 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const status = err instanceof CopilotAuthError ? 401 : 502;
-      if (!res.headersSent) res.status(status).json({ error: { message } });
-      else res.end();
-      metric(status);
+      if (!res.headersSent) {
+        res.status(status).json({ error: { message } });
+      } else {
+        // Stream already opened: surface the failure as a final error chunk so the client
+        // sees it instead of a silently truncated response, then close the stream.
+        res.write(`data: ${JSON.stringify({ error: { message } })}\n\n`);
+        res.end();
+      }
+      metric(status, message);
     }
   });
 }

@@ -3,7 +3,7 @@ import type { Router } from "./router.js";
 import { mountOpenAI } from "./openai-server.js";
 import { mountAnthropic } from "./anthropic-server.js";
 
-export type MetricSink = (m: { endpoint: string; model: string; status: number; latencyMs: number }) => void;
+export type MetricSink = (m: { endpoint: string; model: string; status: number; latencyMs: number; error?: string }) => void;
 
 export function createWorkerApp(router: Router, onMetric: MetricSink): Express {
   const app = express();

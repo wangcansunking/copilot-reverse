@@ -33,4 +33,17 @@ describe("anthropic inbound", () => {
     expect(out.content[1]).toEqual({ type: "tool_use", id: "tu1", name: "now", input: { x: 1 } });
     expect(out.usage.output_tokens).toBe(2);
   });
+
+  it("drops Anthropic server-side tools that have no input_schema (prevents client hang)", () => {
+    const c = anthropicRequestToCanonical({
+      model: "claude-opus-4-8", max_tokens: 100,
+      messages: [{ role: "user", content: "hi" }],
+      tools: [
+        { name: "get_weather", description: "w", input_schema: { type: "object", properties: {} } },
+        { type: "web_search_20250305", name: "web_search", max_uses: 5 } as any,
+        { type: "bash_20250124", name: "bash" } as any,
+      ],
+    });
+    expect(c.tools?.map((t) => t.name)).toEqual(["get_weather"]);
+  });
 });

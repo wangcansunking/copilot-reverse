@@ -37,6 +37,16 @@ Requires Node >=20.
 npm install && npm test && npm run build
 ```
 
+### End-to-end tests
+
+The [`e2e/`](e2e/) folder holds cross-module end-to-end scenarios (real worker + supervisor +
+TUI wiring, fake Copilot provider). The case catalog is [`e2e/cases.md`](e2e/cases.md) and the
+latest run is [`e2e/RESULTS.md`](e2e/RESULTS.md).
+
+**Every code change must keep the full e2e suite green.** `npm test` runs it (the suite is
+included in the default vitest run); `npm run test:e2e` runs only the e2e cases. After a change,
+re-run and update `e2e/RESULTS.md`.
+
 ### Test notes
 
 - **TUI input tests** (`tests/tui/app.test.tsx`): the test waits ~30 ms after

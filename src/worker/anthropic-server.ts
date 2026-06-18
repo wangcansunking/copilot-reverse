@@ -2,17 +2,23 @@ import { type Express } from "express";
 import type { Router } from "./router.js";
 import type { MetricSink } from "./server.js";
 import { anthropicRequestToCanonical, canonicalToAnthropicResponse } from "../core/anthropic-inbound.js";
+import { estimateTokens } from "../core/tokens.js";
 import { CopilotAuthError } from "../providers/copilot/token.js";
 
 const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
 export function mountAnthropic(app: Express, router: Router, onMetric: MetricSink): void {
+  // Anthropic clients (Claude Code) call this to size the prompt and decide when to auto-compact.
+  app.post("/v1/messages/count_tokens", (req, res) => {
+    res.json({ input_tokens: estimateTokens(anthropicRequestToCanonical(req.body)) });
+  });
+
   app.post("/v1/messages", async (req, res) => {
     const start = Date.now();
     const canon = anthropicRequestToCanonical(req.body);
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
-    const metric = (status: number) => onMetric({ endpoint: "/v1/messages", model: canon.model, status, latencyMs: Date.now() - start });
+    const metric = (status: number, error?: string) => onMetric({ endpoint: "/v1/messages", model: canon.model, status, latencyMs: Date.now() - start, error });
     try {
       if (canon.stream) {
         res.setHeader("content-type", "text/event-stream");
@@ -67,9 +73,17 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
       const status = err instanceof CopilotAuthError ? 401 : 502;
-      if (!res.headersSent) res.status(status).json({ type: "error", error: { type: status === 401 ? "authentication_error" : "api_error", message } });
-      else res.end();
-      metric(status);
+      const errorType = status === 401 ? "authentication_error" : "api_error";
+      if (!res.headersSent) {
+        res.status(status).json({ type: "error", error: { type: errorType, message } });
+      } else {
+        // The stream already opened (message_start sent), so we can't set a status code.
+        // Emit an Anthropic `error` SSE event before closing so the client renders the
+        // failure instead of seeing a silently truncated response.
+        res.write(frame("error", { type: "error", error: { type: errorType, message } }));
+        res.end();
+      }
+      metric(status, message);
     }
   });
 }

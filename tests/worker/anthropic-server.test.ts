@@ -145,6 +145,49 @@ describe("worker Anthropic endpoint", () => {
     expect(frames.find((f) => f.event === "message_delta")?.data.delta.stop_reason).toBe("tool_use");
   });
 
+  it("count_tokens returns a positive input_tokens estimate", async () => {
+    const res = await request(app()).post("/v1/messages/count_tokens").send({ model: "claude-opus-4-8", messages: [{ role: "user", content: "hello world this is a longer prompt" }] });
+    expect(res.status).toBe(200);
+    expect(typeof res.body.input_tokens).toBe("number");
+    expect(res.body.input_tokens).toBeGreaterThan(0);
+  });
+
+  it("emits an Anthropic error SSE frame (not a silent close) when the provider stream throws mid-stream", async () => {
+    const failing: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c1", model: "m", content: [], finishReason: "error", usage: { promptTokens: 0, completionTokens: 0 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        yield { kind: "text", delta: "partial ", done: false };
+        throw new Error("context_length_exceeded: prompt is too long");
+      },
+    };
+    const res = await request(app(failing)).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const frames = parseFrames(res.text);
+    const events = frames.map((f) => f.event);
+    // the stream must surface the failure as an Anthropic `error` event, not just stop
+    expect(events).toContain("error");
+    const err = frames.find((f) => f.event === "error");
+    expect(err!.data.type).toBe("error");
+    expect(err!.data.error.message).toMatch(/context_length_exceeded/);
+  });
+
+  it("records the failure message in the metric when a streaming request throws", async () => {
+    const failing: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c1", model: "m", content: [], finishReason: "error", usage: { promptTokens: 0, completionTokens: 0 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        yield { kind: "text", delta: "x", done: false };
+        throw new Error("context_length_exceeded");
+      },
+    };
+    const metrics: { status: number; error?: string }[] = [];
+    const sink = (m: { status: number; error?: string }) => { metrics.push(m); };
+    const a = createWorkerApp(new Router([failing], { "*": "gpt-4o" }), sink);
+    await request(a).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
+    expect(metrics.at(-1)?.status).toBe(502);
+    expect(metrics.at(-1)?.error).toMatch(/context_length_exceeded/);
+  });
+
   it("text + two tools: contiguous indices [0,1,2], deltas routed to mapped indices, three stops", async () => {
     const multiProvider: ProviderAdapter = {
       name: "copilot",

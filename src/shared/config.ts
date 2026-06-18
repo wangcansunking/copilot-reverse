@@ -11,6 +11,8 @@ export interface AppConfig {
   restart: RestartPolicy;
   // model remap: client model name -> Copilot model id. "*" is the fallback.
   modelMap: Record<string, string>;
+  // GitHub "owner/repo" that /report files diagnostics issues against. Placeholder until set.
+  reportRepo: string;
 }
 
 export function defaultConfig(): AppConfig {
@@ -21,6 +23,8 @@ export function defaultConfig(): AppConfig {
     restart: { maxCrashes: 5, windowMs: 60_000, baseBackoffMs: 500, maxBackoffMs: 8_000 },
     // Empty = pass the requested model straight through to Copilot. Add entries (or "*") to remap.
     modelMap: {},
+    // Set MAESTRO_REPORT_REPO=owner/repo (or edit here) to point /report at your tracker.
+    reportRepo: process.env.MAESTRO_REPORT_REPO ?? "OWNER/REPO",
   };
 }
 

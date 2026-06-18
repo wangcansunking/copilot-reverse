@@ -28,6 +28,29 @@ describe("App", () => {
     expect(lastFrame()).toContain("worker: ready");
   });
 
+  it("shows a loading indicator while the assistant streams, landing deltas in one bubble", async () => {
+    let release: () => void = () => {};
+    const turnOpen = new Promise<void>((r) => { release = r; });
+    const onChat = async (_text: string, print: (l: string) => void) => {
+      print("Hel");
+      print("lo");
+      await turnOpen; // hold the turn open so the loading/streaming state is observable
+    };
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" onChat={onChat} />);
+    await new Promise((r) => setTimeout(r, 30));
+    stdin.write("hello there");
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\r");
+    await new Promise((r) => setTimeout(r, 60));
+    const mid = lastFrame() ?? "";
+    // both deltas concatenated into a single assistant bubble (not two separate "Hel"/"lo" lines)
+    expect(mid).toContain("Hello");
+    expect(mid.match(/Hello/g)?.length).toBe(1);
+    // a loading/streaming indicator is visible while the turn is still open
+    expect(mid).toMatch(/▍|…|thinking/i);
+    release();
+  });
+
   it("Enter runs the highlighted suggestion, not the raw typed prefix", async () => {
     const r = new Registry({ client: {} as any, quit: vi.fn() });
     r.add({ name: "/setup-claude", describe: "c", run: async () => ["ran-claude"] });

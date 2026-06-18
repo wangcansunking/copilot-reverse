@@ -12,8 +12,11 @@ export function openDb(file: string): Db {
       exit_code INTEGER, stderr_tail TEXT NOT NULL, backoff_ms INTEGER NOT NULL, marked_unhealthy INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS request_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, endpoint TEXT NOT NULL,
-      model TEXT NOT NULL, status INTEGER NOT NULL, latency_ms INTEGER NOT NULL);
+      model TEXT NOT NULL, status INTEGER NOT NULL, latency_ms INTEGER NOT NULL, error TEXT);
   `);
+  // Migrate request_log tables created before the error column existed.
+  const cols = db.prepare(`PRAGMA table_info(request_log)`).all() as { name: string }[];
+  if (!cols.some((c) => c.name === "error")) db.exec(`ALTER TABLE request_log ADD COLUMN error TEXT`);
   return db;
 }
 
@@ -26,8 +29,10 @@ export function listRestarts(db: Db, limit: number): RestartRow[] {
     FROM restart_events ORDER BY ts DESC LIMIT ?`).all(limit) as RestartRow[];
 }
 export function recordRequest(db: Db, m: Omit<MetricSample, "ts"> & { ts: number }): void {
-  db.prepare(`INSERT INTO request_log (ts, endpoint, model, status, latency_ms) VALUES (@ts, @endpoint, @model, @status, @latencyMs)`).run(m);
+  db.prepare(`INSERT INTO request_log (ts, endpoint, model, status, latency_ms, error) VALUES (@ts, @endpoint, @model, @status, @latencyMs, @error)`)
+    .run({ error: null, ...m });
 }
 export function recentRequests(db: Db, limit: number): MetricSample[] {
-  return db.prepare(`SELECT ts, endpoint, model, status, latency_ms as latencyMs FROM request_log ORDER BY ts DESC LIMIT ?`).all(limit) as MetricSample[];
+  return (db.prepare(`SELECT ts, endpoint, model, status, latency_ms as latencyMs, error FROM request_log ORDER BY ts DESC LIMIT ?`).all(limit) as (MetricSample & { error: string | null })[])
+    .map(({ error, ...r }) => (error == null ? r : { ...r, error }));
 }

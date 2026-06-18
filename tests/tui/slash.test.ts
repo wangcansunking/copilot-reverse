@@ -46,4 +46,37 @@ describe("slash commands", () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/metrics");
     expect(out.join("\n")).toMatch(/no requests yet/i);
   });
+  it("/dashboard opens the dashboard url in the browser", async () => {
+    const opened: string[] = [];
+    const reg = buildRegistry(ctx() as any, endpoint, { dashboardUrl: "http://127.0.0.1:7890/", openUrl: (u) => opened.push(u) });
+    const out = await reg.run("/dashboard");
+    expect(opened).toEqual(["http://127.0.0.1:7890/"]);
+    expect(out.join("\n")).toMatch(/127\.0\.0\.1:7890/);
+  });
+  it("/report opens a prefilled GitHub issue when a repo is configured", async () => {
+    const opened: string[] = [];
+    const reg = buildRegistry(ctx() as any, endpoint, { reportRepo: "octo/maestro", appVersion: "0.0.1", openUrl: (u) => opened.push(u) });
+    await reg.run("/report");
+    expect(opened[0]).toMatch(/^https:\/\/github\.com\/octo\/maestro\/issues\/new\?/);
+  });
+  it("/report guides the user to set a repo when unconfigured", async () => {
+    const opened: string[] = [];
+    const reg = buildRegistry(ctx() as any, endpoint, { openUrl: (u) => opened.push(u) });
+    const out = await reg.run("/report");
+    expect(opened).toHaveLength(0);
+    expect(out.join("\n")).toMatch(/reportRepo/);
+  });
+  it("/reset-claude invokes the reset handler for claude", async () => {
+    const calls: string[] = [];
+    const reg = buildRegistry(ctx() as any, endpoint, { resetClient: async (c) => { calls.push(c); return [`removed ${c} config`]; } });
+    const out = await reg.run("/reset-claude");
+    expect(calls).toEqual(["claude"]);
+    expect(out.join("\n")).toMatch(/removed claude config/);
+  });
+  it("/reset-codex invokes the reset handler for codex", async () => {
+    const calls: string[] = [];
+    const reg = buildRegistry(ctx() as any, endpoint, { resetClient: async (c) => { calls.push(c); return ["ok"]; } });
+    await reg.run("/reset-codex");
+    expect(calls).toEqual(["codex"]);
+  });
 });

@@ -1,9 +1,21 @@
 import { Registry, type SlashContext } from "./registry.js";
 import { claudeCodeConfig, codexConfig, type Endpoint } from "../setup/clients.js";
-import { aggregate } from "../panels/metrics-agg.js";
+import { aggregate, recentErrors } from "../panels/metrics-agg.js";
+import { openUrl as defaultOpenUrl } from "../../shared/open-url.js";
+import { buildIssueUrl, PLACEHOLDER_REPO } from "../report.js";
 
-export function buildRegistry(ctx: SlashContext, endpoint: Endpoint): Registry {
+export interface RegistryOpts {
+  dashboardUrl?: string;            // supervisor URL the /dashboard command opens
+  reportRepo?: string;              // "owner/repo" for /report; unset/placeholder disables it
+  appVersion?: string;
+  platform?: string;
+  openUrl?: (url: string) => void;  // injectable for tests
+  resetClient?: (client: "claude" | "codex") => Promise<string[]>; // restore client config
+}
+
+export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: RegistryOpts = {}): Registry {
   const reg = new Registry(ctx);
+  const openUrl = opts.openUrl ?? defaultOpenUrl;
   reg.add({ name: "/status", describe: "show worker status + restart history", run: async (_a, c) => {
     const s = await c.client.status();
     const lines = [`worker: ${s.workerState}`];
@@ -14,20 +26,46 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint): Registry {
   reg.add({ name: "/restart", describe: "restart the worker", run: async (_a, c) => { await c.client.restart(); return ["restart requested"]; } });
   reg.add({ name: "/stop", describe: "stop the worker", run: async (_a, c) => { await c.client.stop(); return ["worker stopped"]; } });
   reg.add({ name: "/start", describe: "start the worker", run: async (_a, c) => { await c.client.start(); return ["worker started"]; } });
-  reg.add({ name: "/logs", describe: "recent restart events", run: async (_a, c) => {
-    const s = await c.client.status();
-    return s.restarts.length ? s.restarts.map((r) => `${new Date(r.ts).toISOString()} ${r.reason} ${r.stderrTail.slice(0, 80)}`) : ["no restart events"];
+  reg.add({ name: "/logs", describe: "recent request errors (what failed & why)", run: async (_a, c) => {
+    const errs = recentErrors(await c.client.requests(), 20);
+    if (!errs.length) return ["no request errors logged — everything's green ✓"];
+    return errs.map((e) => `${new Date(e.ts).toISOString()} ${e.status} ${e.endpoint} ${e.model} — ${e.error ?? "(no message)"}`);
   } });
-  reg.add({ name: "/metrics", describe: "show request metrics", run: async (_a, c) => {
-    const a = aggregate(await c.client.requests());
+  reg.add({ name: "/metrics", describe: "request metrics + recent errors", run: async (_a, c) => {
+    const reqs = await c.client.requests();
+    const a = aggregate(reqs);
     if (!a.total) return ["no requests yet"];
-    return [`requests: ${a.total}  errors: ${a.errors}`, ...a.byModel.map((r) => `  ${r.model.padEnd(20)} n=${r.count} avg=${r.avgMs}ms`)];
+    const lines = [`requests: ${a.total}  errors: ${a.errors}`, ...a.byModel.map((r) => `  ${r.model.padEnd(20)} n=${r.count} avg=${r.avgMs}ms`)];
+    const errs = recentErrors(reqs, 5);
+    if (errs.length) {
+      lines.push("recent errors:");
+      for (const e of errs) lines.push(`  ${e.status} ${e.model} — ${(e.error ?? "(no message)").slice(0, 80)}`);
+    }
+    return lines;
   } });
   reg.add({ name: "/setup-claude", describe: "print Claude Code config", run: async () => claudeCodeConfig(endpoint).instructions.split("\n") });
   reg.add({ name: "/setup-codex", describe: "print Codex/OpenAI config", run: async () => codexConfig(endpoint).instructions.split("\n") });
   reg.add({ name: "/setup-status", describe: "show configured endpoints", run: async () => [`OpenAI: http://${endpoint.host}:${endpoint.port}/v1`, `Anthropic: http://${endpoint.host}:${endpoint.port}`] });
+  reg.add({ name: "/reset-claude", describe: "restore Claude Code config (remove maestro's keys)", run: async () => opts.resetClient ? opts.resetClient("claude") : ["reset not available"] });
+  reg.add({ name: "/reset-codex", describe: "restore Codex/OpenAI config (remove maestro's keys)", run: async () => opts.resetClient ? opts.resetClient("codex") : ["reset not available"] });
   reg.add({ name: "/model", describe: "switch the chat model", run: async () => ["opening model picker…"] });
   reg.add({ name: "/config", describe: "view & change configuration", run: async () => ["opening config panel…"] });
+  reg.add({ name: "/dashboard", describe: "open the web dashboard in your browser", run: async () => {
+    if (!opts.dashboardUrl) return ["dashboard URL not available"];
+    openUrl(opts.dashboardUrl);
+    return [`opening dashboard: ${opts.dashboardUrl}`];
+  } });
+  reg.add({ name: "/report", describe: "open a pre-filled GitHub issue with diagnostics", run: async (_a, c) => {
+    const repo = opts.reportRepo;
+    if (!repo || repo === PLACEHOLDER_REPO) return ["set reportRepo (owner/repo) in config to enable /report"];
+    const [status, doctor, reqs] = await Promise.all([c.client.status(), c.client.doctor(), c.client.requests()]);
+    const url = buildIssueUrl({
+      repo, version: opts.appVersion ?? "0.0.0", platform: opts.platform ?? process.platform,
+      status, doctor, errors: recentErrors(reqs, 10),
+    });
+    openUrl(url);
+    return [`opening a pre-filled GitHub issue for ${repo} in your browser…`];
+  } });
   reg.add({ name: "/quit", describe: "exit maestro", run: async (_a, c) => { c.quit(); return ["bye"]; } });
   reg.add({ name: "/help", describe: "list commands", run: async () => reg.list().map((c) => `${c.name.padEnd(14)} ${c.describe}`) });
   return reg;

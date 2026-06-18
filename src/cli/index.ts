@@ -14,14 +14,18 @@ import { readGhToken } from "../shared/creds.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
 import { readChatModel, writeChatModel } from "../shared/prefs.js";
 import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
-import { fetchCopilotModels } from "../providers/copilot/models.js";
-import { applyClaude, applyCodex, type Scope } from "../tui/setup/apply.js";
+import { fetchCopilotModels, fetchModelLimits } from "../providers/copilot/models.js";
+import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
 import type { SetupClient } from "../tui/setup/wizard.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEFAULT_MODEL = "gpt-4o"; // a valid Copilot model id; pass-through routing uses it as-is
+// Conservative context budget that drives the assistant's auto-compaction. Sized below the
+// common Copilot prompt window (gpt-4o ≈ 128K) so the engine compacts before the upstream
+// rejects an over-long turn. TODO: read each model's real max_prompt_tokens from /models.
+const DEFAULT_MAX_INPUT_TOKENS = 110_000;
 
 async function launchTui(): Promise<void> {
   const cfg = defaultConfig();
@@ -48,14 +52,36 @@ async function launchTui(): Promise<void> {
   const endpoint = { host: cfg.bindHost, port: cfg.workerPort, apiKey: "maestro-local" };
   let app: { unmount: () => void } | undefined;
   const quit = () => { stopSupervisor?.(); app?.unmount(); process.exit(0); };
-  const registry = buildRegistry({ client, quit }, endpoint);
+  // Restore a client's config: strip maestro's keys from BOTH scopes and clear the HUD flag.
+  const resetClient = async (clientKind: SetupClient): Promise<string[]> => {
+    const fn = clientKind === "claude" ? resetClaude : resetCodex;
+    const keys = clientKind === "claude" ? CLAUDE_ENV_KEYS : CODEX_ENV_KEYS;
+    const results = (["global", "project"] as Scope[]).map((scope) => fn(scope, keys));
+    writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), [clientKind]: false });
+    const lines = results
+      .filter((r) => r.changed.length)
+      .map((r) => `removed ${r.changed.join(", ")} from ${r.path}`);
+    return lines.length ? lines : [`no maestro ${clientKind} config found to remove`];
+  };
+
+  const registry = buildRegistry({ client, quit }, endpoint, {
+    dashboardUrl: `http://${cfg.bindHost}:${cfg.supervisorPort}/`,
+    reportRepo: cfg.reportRepo,
+    appVersion: "0.0.1",
+    platform: `${process.platform} node-${process.version}`,
+    resetClient,
+  });
+  // Filled in below once we have a token; the assistant prefers a model's real window over the default.
+  const modelLimits: Record<string, number> = {};
   const onChat = makeOnChat(
-    { client, workerBaseUrl: workerBase, apiKey: "maestro-local", model: DEFAULT_MODEL },
+    { client, workerBaseUrl: workerBase, apiKey: "maestro-local", model: DEFAULT_MODEL, maxInputTokens: DEFAULT_MAX_INPUT_TOKENS, modelLimits },
     runAssistantTurn,
   );
 
   const tokenStore = new CopilotTokenStore(readGhToken(dataDir())!);
   const loadModels = async () => fetchCopilotModels(await tokenStore.get());
+  // Pull each model's real context window in the background; until it lands we use the default.
+  void tokenStore.get().then((t) => fetchModelLimits(t)).then((m) => Object.assign(modelLimits, m)).catch(() => {});
   const setup = {
     apply: async (clientKind: SetupClient, scope: Scope, model: string) => {
       const r = clientKind === "claude"

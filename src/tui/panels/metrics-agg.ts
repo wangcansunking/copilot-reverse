@@ -18,3 +18,9 @@ export function aggregate(samples: MetricSample[]): Aggregate {
     byModel: [...map.entries()].map(([model, v]) => ({ model, count: v.count, avgMs: Math.round(v.sum / v.count) })),
   };
 }
+
+// The failed requests (status >= 400), in the order given (callers pass newest-first), capped at `limit`.
+// This is the actually-useful "log" — what failed and why — as opposed to worker restart events.
+export function recentErrors(samples: MetricSample[], limit: number): MetricSample[] {
+  return samples.filter((s) => s.status >= 400).slice(0, limit);
+}

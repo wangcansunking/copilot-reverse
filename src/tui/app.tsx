@@ -11,7 +11,7 @@ import type { WorkerState, StatusResponse } from "../shared/control-types.js";
 
 type Entry =
   | { type: "user"; text: string }
-  | { type: "assistant"; text: string }
+  | { type: "assistant"; text: string; streaming?: boolean }
   | { type: "system"; text: string }
   | { type: "card"; title: string; tone: "info" | "ok" | "error"; lines: string[] }
   | { type: "help"; commands: CommandHint[] };
@@ -124,8 +124,27 @@ export function App({
       const tone: "info" | "ok" | "error" =
         out.some((l) => /fail|error|unknown/i.test(l)) ? "error" : out.some((l) => /^OK /.test(l)) ? "ok" : "info";
       add({ type: "card", title: t, tone, lines: out });
+      // reflect a successful reset in the HUD badge
+      if (t === "/reset-claude") setClientState((c) => ({ ...c, claude: false }));
+      else if (t === "/reset-codex") setClientState((c) => ({ ...c, codex: false }));
     } else if (onChat) {
-      await onChat(line, (l) => add({ type: "assistant", text: l }), model);
+      // Open one streaming bubble immediately (shows a loading indicator), then append each
+      // delta into it in place rather than spawning a new line per chunk.
+      add({ type: "assistant", text: "", streaming: true });
+      const append = (chunk: string) =>
+        setEntries((p) => {
+          const copy = [...p];
+          for (let i = copy.length - 1; i >= 0; i--) {
+            const e = copy[i];
+            if (e.type === "assistant" && e.streaming) { copy[i] = { ...e, text: e.text + chunk }; break; }
+          }
+          return copy;
+        });
+      try {
+        await onChat(line, append, model);
+      } finally {
+        setEntries((p) => p.map((e) => (e.type === "assistant" && e.streaming ? { ...e, streaming: false } : e)));
+      }
     } else {
       add({ type: "system", text: "(assistant not available — use /help)" });
     }
@@ -179,6 +198,10 @@ export function App({
           if (e.type === "card") return <OutputCard key={i} title={e.title} lines={e.lines} tone={e.tone} />;
           if (e.type === "help") return <HelpCard key={i} commands={e.commands} />;
           const color = e.type === "user" ? theme.user : e.type === "assistant" ? theme.assistant : theme.muted;
+          if (e.type === "assistant" && e.streaming) {
+            // loading "…" before the first delta lands, then a "▍" cursor as text streams in
+            return <Text key={i} color={color}>{e.text}<Text color={theme.muted}>{e.text ? "▍" : "…"}</Text></Text>;
+          }
           return <Text key={i} color={color}>{e.text}</Text>;
         })}
       </Box>

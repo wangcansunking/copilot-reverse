@@ -15,4 +15,11 @@ describe("db", () => {
     recordRequest(db, { ts: 5, endpoint: "/v1/chat/completions", model: "gpt-4o", status: 200, latencyMs: 12 });
     expect(recentRequests(db, 10)[0].model).toBe("gpt-4o");
   });
+  it("persists the error message of a failed request", () => {
+    const db = openDb(":memory:");
+    recordRequest(db, { ts: 7, endpoint: "/v1/messages", model: "claude-opus-4-8", status: 502, latencyMs: 30, error: "context_length_exceeded: prompt too long" });
+    const row = recentRequests(db, 10)[0];
+    expect(row.status).toBe(502);
+    expect(row.error).toBe("context_length_exceeded: prompt too long");
+  });
 });

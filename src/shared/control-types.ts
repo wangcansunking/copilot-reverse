@@ -22,4 +22,5 @@ export interface MetricSample {
   model: string;
   status: number;
   latencyMs: number;
+  error?: string; // failure message for non-2xx requests; absent on success
 }

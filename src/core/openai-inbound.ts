@@ -1,7 +1,15 @@
 import type { CanonicalRequest, CanonicalResponse, CanonicalChunk, CanonicalMessage, ContentBlock } from "./canonical.js";
 import { joinText } from "./canonical.js";
 
-interface OpenAIMsg { role: string; content?: string | null; tool_calls?: any[]; tool_call_id?: string }
+interface OpenAIContentPart { type?: string; text?: string }
+interface OpenAIMsg { role: string; content?: string | null | OpenAIContentPart[]; tool_calls?: any[]; tool_call_id?: string }
+
+// OpenAI content may be a plain string or an array of text parts (clients that split long
+// system/user prompts do this). Collapse either shape to a single string.
+function textOf(content: OpenAIMsg["content"]): string {
+  if (Array.isArray(content)) return content.map((p) => (typeof p === "string" ? p : p?.text ?? "")).join("");
+  return content ?? "";
+}
 interface OpenAITool { type: "function"; function: { name: string; description?: string; parameters: Record<string, unknown> } }
 interface OpenAIChatRequest {
   model: string; messages: OpenAIMsg[]; stream?: boolean;
@@ -12,9 +20,10 @@ function msgToCanonical(m: OpenAIMsg): CanonicalMessage {
   const role = (["system", "user", "assistant", "tool"].includes(m.role) ? m.role : "user") as CanonicalMessage["role"];
   const content: ContentBlock[] = [];
   if (m.role === "tool" && m.tool_call_id) {
-    content.push({ type: "tool_result", toolUseId: m.tool_call_id, content: m.content ?? "" });
+    content.push({ type: "tool_result", toolUseId: m.tool_call_id, content: textOf(m.content) });
   } else {
-    if (m.content) content.push({ type: "text", text: m.content });
+    const text = textOf(m.content);
+    if (text) content.push({ type: "text", text });
     for (const tc of m.tool_calls ?? []) {
       content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input: safeJson(tc.function.arguments) });
     }

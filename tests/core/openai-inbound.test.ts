@@ -39,4 +39,12 @@ describe("openai inbound", () => {
     expect(canonicalChunkToOpenAISSE({ kind: "text", delta: "he", done: false }, "id", "m")).toContain('"content":"he"');
     expect(canonicalChunkToOpenAISSE({ kind: "done", done: true }, "id", "m")).toBe("data: [DONE]\n\n");
   });
+
+  it("normalizes array-of-text-block content (split system prompts) into a single text block", () => {
+    const c = openaiRequestToCanonical({
+      model: "gpt-4o",
+      messages: [{ role: "system", content: [{ type: "text", text: "You are " }, { type: "text", text: "helpful" }] } as any],
+    });
+    expect(c.messages[0]).toEqual({ role: "system", content: [{ type: "text", text: "You are helpful" }] });
+  });
 });

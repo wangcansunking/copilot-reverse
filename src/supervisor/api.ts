@@ -1,5 +1,6 @@
 import express, { type Express } from "express";
 import { listRestarts, recentRequests, type Db } from "./db.js";
+import { dashboardHtml } from "./dashboard.js";
 import type { WorkerState, DoctorCheck } from "../shared/control-types.js";
 
 export interface ControlDeps {
@@ -15,6 +16,7 @@ export interface ControlDeps {
 export function createControlApp(deps: ControlDeps): Express {
   const app = express();
   app.use(express.json());
+  app.get("/", (_req, res) => res.type("html").send(dashboardHtml()));
   app.get("/api/status", (_req, res) => res.json({ workerState: deps.getState(), restarts: listRestarts(deps.db, 50) }));
   app.post("/api/restart", (_req, res) => { deps.restart(); res.json({ ok: true }); });
   app.post("/api/stop", (_req, res) => { deps.stop(); res.json({ ok: true }); });
