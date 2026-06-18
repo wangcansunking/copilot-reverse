@@ -27,4 +27,18 @@ describe("App", () => {
     const { lastFrame } = render(<App registry={reg()} title="maestro" workerState="ready" />);
     expect(lastFrame()).toContain("worker: ready");
   });
+
+  it("Enter runs the highlighted suggestion, not the raw typed prefix", async () => {
+    const r = new Registry({ client: {} as any, quit: vi.fn() });
+    r.add({ name: "/setup-claude", describe: "c", run: async () => ["ran-claude"] });
+    const { stdin, lastFrame } = render(<App registry={r} title="m" />);
+    await new Promise((res) => setTimeout(res, 30));
+    stdin.write("/setup"); // "/setup" is not a command; the popup highlights /setup-claude
+    await new Promise((res) => setTimeout(res, 20));
+    stdin.write("\r"); // Enter must run the highlighted /setup-claude, not "/setup"
+    await new Promise((res) => setTimeout(res, 60));
+    const frame = lastFrame();
+    expect(frame).toContain("ran-claude");
+    expect(frame).not.toContain("unknown command");
+  });
 });

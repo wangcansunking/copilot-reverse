@@ -17,7 +17,9 @@ export function Repl({ onSubmit, commands = [] }: { onSubmit: (line: string) => 
 
   useInput((input, key) => {
     if (key.return) {
-      const line = value;
+      // If the suggestion popup is open, Enter runs the highlighted command (Claude-Code style),
+      // not the raw prefix the user typed.
+      const line = matches.length ? matches[selIdx].name : value;
       setValue(""); setSel(0);
       if (line.trim()) onSubmit(line);
       return;
