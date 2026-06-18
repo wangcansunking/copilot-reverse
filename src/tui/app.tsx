@@ -5,13 +5,14 @@ import { SetupWizard, type SetupClient } from "./setup/wizard.js";
 import { ModelScreen } from "./screens/model.js";
 import { ConfigScreen, type ConfigInfo } from "./screens/config.js";
 import type { Scope, ApplyResult } from "./setup/apply.js";
+import type { ClientStatus } from "./setup/status.js";
 import { theme } from "./theme.js";
 import type { Registry } from "./slash/registry.js";
 import type { WorkerState, StatusResponse } from "../shared/control-types.js";
 
 type Entry =
   | { type: "user"; text: string }
-  | { type: "assistant"; text: string; streaming?: boolean }
+  | { type: "assistant"; text: string; streaming?: boolean; startedAt?: number }
   | { type: "system"; text: string }
   | { type: "card"; title: string; tone: "info" | "ok" | "error"; lines: string[] }
   | { type: "help"; commands: CommandHint[] };
@@ -22,13 +23,23 @@ const stateColor: Record<WorkerState, string> = {
   ready: theme.ready, starting: theme.starting, crashed: theme.crashed, unhealthy: theme.unhealthy,
 };
 
+const EMPTY_STATUS: ClientStatus = { claude: { user: false, project: false }, codex: { user: false, project: false } };
+const SPINNER = ["✶", "✸", "✹", "✺", "✹", "✷"];
+
+const fmtElapsed = (ms: number): string => {
+  const s = Math.floor(ms / 1000);
+  return s >= 60 ? `${Math.floor(s / 60)}m ${s % 60}s` : `${s}s`;
+};
+const fmtTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+
 export interface AppProps {
   registry: Registry;
   title: string;
   workerState?: WorkerState;
   initialModel?: string;
-  clients?: { claude: boolean; codex: boolean };
   statusSource?: () => Promise<StatusResponse>;
+  readStatus?: () => ClientStatus;            // reads the real config files (per user/project scope)
+  modelLimits?: Record<string, number>;       // model id -> context window, shown in the picker
   onChat?: (text: string, print: (line: string) => void, model?: string) => Promise<void>;
   loadModels?: () => Promise<string[]>;
   setup?: { apply: (client: SetupClient, scope: Scope, model: string) => Promise<ApplyResult> };
@@ -36,8 +47,6 @@ export interface AppProps {
   onModelChange?: (model: string) => void;
   pickModelOnStart?: boolean;
 }
-
-const okDot = (ok: boolean) => (ok ? theme.ready : theme.muted);
 
 function OutputCard({ title, lines, tone }: { title: string; lines: string[]; tone: "info" | "ok" | "error" }) {
   const border = tone === "error" ? theme.error : tone === "ok" ? theme.ready : theme.border;
@@ -76,9 +85,21 @@ function HelpCard({ commands }: { commands: CommandHint[] }) {
   );
 }
 
+// HUD client cell: shows configured scopes read from the real config files.
+function ClientBadge({ name, status }: { name: string; status: { user: boolean; project: boolean } }) {
+  const cell = (label: string, on: boolean) => (
+    <Text color={on ? theme.ready : theme.muted}>{label}:{on ? "✓" : "○"}</Text>
+  );
+  return (
+    <Text color={theme.muted}>
+      {name} {cell("u", status.user)} {cell("p", status.project)}
+    </Text>
+  );
+}
+
 export function App({
   registry, title, workerState = "starting", initialModel = "—",
-  clients = { claude: false, codex: false }, statusSource, onChat,
+  statusSource, readStatus, modelLimits, onChat,
   loadModels, setup, info, onModelChange, pickModelOnStart,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
@@ -86,21 +107,31 @@ export function App({
     { type: "system", text: "Type a message to chat with the assistant, or /help for commands." },
   ]);
   const [state, setState] = useState<WorkerState>(workerState);
-  const [clientState, setClientState] = useState(clients);
+  const [status, setStatus] = useState<ClientStatus>(() => readStatus?.() ?? EMPTY_STATUS);
   const [model, setModel] = useState(initialModel);
   const [screen, setScreen] = useState<Screen>(pickModelOnStart && loadModels ? { kind: "model" } : null);
+  const [, setNow] = useState(0); // ticks the live loading line while the assistant streams
   const add = (e: Entry) => setEntries((p) => [...p, e].slice(-100));
+  const refreshStatus = () => { if (readStatus) setStatus(readStatus()); };
 
   useEffect(() => {
-    if (!statusSource) return;
+    if (!statusSource && !readStatus) return;
     let alive = true;
     const tick = async () => {
-      try { const s = await statusSource(); if (alive) setState(s.workerState); } catch { /* daemon momentarily down */ }
+      try { const s = await statusSource?.(); if (alive && s) setState(s.workerState); } catch { /* daemon momentarily down */ }
+      if (alive) refreshStatus(); // HUD reflects the real config files, even if edited externally
     };
     void tick();
     const id = setInterval(tick, 2000);
     return () => { alive = false; clearInterval(id); };
   }, [statusSource]);
+
+  const streaming = entries.some((e) => e.type === "assistant" && e.streaming);
+  useEffect(() => {
+    if (!streaming) return;
+    const id = setInterval(() => setNow((n) => n + 1), 200);
+    return () => clearInterval(id);
+  }, [streaming]);
 
   function pickModel(m: string) {
     setModel(m);
@@ -124,13 +155,11 @@ export function App({
       const tone: "info" | "ok" | "error" =
         out.some((l) => /fail|error|unknown/i.test(l)) ? "error" : out.some((l) => /^OK /.test(l)) ? "ok" : "info";
       add({ type: "card", title: t, tone, lines: out });
-      // reflect a successful reset in the HUD badge
-      if (t === "/reset-claude") setClientState((c) => ({ ...c, claude: false }));
-      else if (t === "/reset-codex") setClientState((c) => ({ ...c, codex: false }));
+      if (t === "/reset-claude" || t === "/reset-codex") refreshStatus(); // HUD follows the files
     } else if (onChat) {
-      // Open one streaming bubble immediately (shows a loading indicator), then append each
+      // Open one streaming bubble immediately (shows the live loading line), then append each
       // delta into it in place rather than spawning a new line per chunk.
-      add({ type: "assistant", text: "", streaming: true });
+      add({ type: "assistant", text: "", streaming: true, startedAt: Date.now() });
       const append = (chunk: string) =>
         setEntries((p) => {
           const copy = [...p];
@@ -150,18 +179,21 @@ export function App({
     }
   }
 
+  const configured = (s: { user: boolean; project: boolean }) => s.user || s.project;
+
   let body: React.ReactNode;
   if (screen?.kind === "model" && loadModels) {
-    body = <ModelScreen loadModels={loadModels} current={model} onPick={pickModel} onCancel={() => setScreen(null)} />;
+    body = <ModelScreen loadModels={loadModels} limits={modelLimits} current={model} onPick={pickModel} onCancel={() => setScreen(null)} />;
   } else if (screen?.kind === "setup" && setup && loadModels) {
     const client = screen.client;
     body = (
       <SetupWizard
         client={client}
         loadModels={loadModels}
+        limits={modelLimits}
         apply={(scope, m) => setup.apply(client, scope, m)}
         onDone={(result, m) => {
-          setClientState((c) => ({ ...c, [client]: true }));
+          refreshStatus();
           setScreen(null);
           add({ type: "card", title: `setup ${client}`, tone: "ok", lines: [`✓ model ${m}`, `wrote ${result.path}`, `keys: ${result.changed.join(", ") || "(no change)"}`] });
         }}
@@ -173,7 +205,7 @@ export function App({
       <ConfigScreen
         info={info}
         model={model}
-        clients={clientState}
+        clients={{ claude: configured(status.claude), codex: configured(status.codex) }}
         onAction={(a) => {
           if (a === "model") setScreen({ kind: "model" });
           else if (a === "setup-claude") setScreen({ kind: "setup", client: "claude" });
@@ -199,8 +231,15 @@ export function App({
           if (e.type === "help") return <HelpCard key={i} commands={e.commands} />;
           const color = e.type === "user" ? theme.user : e.type === "assistant" ? theme.assistant : theme.muted;
           if (e.type === "assistant" && e.streaming) {
-            // loading "…" before the first delta lands, then a "▍" cursor as text streams in
-            return <Text key={i} color={color}>{e.text}<Text color={theme.muted}>{e.text ? "▍" : "…"}</Text></Text>;
+            const elapsed = e.startedAt ? Date.now() - e.startedAt : 0;
+            const frame = SPINNER[Math.floor(Date.now() / 200) % SPINNER.length];
+            const tokens = Math.ceil(e.text.length / 4);
+            return (
+              <Box key={i} flexDirection="column">
+                <Text color={theme.accent}>✽ <Text color={theme.muted}>{frame} Orchestrating… ({fmtElapsed(elapsed)} · ↓ {fmtTokens(tokens)} tokens · thinking)</Text></Text>
+                {e.text ? <Text color={color}>{e.text}</Text> : null}
+              </Box>
+            );
           }
           return <Text key={i} color={color}>{e.text}</Text>;
         })}
@@ -211,8 +250,8 @@ export function App({
       <Box paddingX={1}>
         <Text color={theme.muted}>model </Text><Text color={theme.accent}>{model}</Text>
         <Text color={theme.muted}>  ·  daemon </Text><Text color={stateColor[state]}>{state}</Text>
-        <Text color={theme.muted}>  ·  claude </Text><Text color={okDot(clientState.claude)}>{clientState.claude ? "✓" : "○"}</Text>
-        <Text color={theme.muted}> codex </Text><Text color={okDot(clientState.codex)}>{clientState.codex ? "✓" : "○"}</Text>
+        <Text color={theme.muted}>  ·  </Text><ClientBadge name="claude" status={status.claude} />
+        <Text color={theme.muted}>  </Text><ClientBadge name="codex" status={status.codex} />
         <Text color={theme.muted}>  ·  /help</Text>
       </Box>
     </Box>

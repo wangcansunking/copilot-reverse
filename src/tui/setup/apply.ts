@@ -12,7 +12,7 @@ export const CODEX_ENV_KEYS = ["OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODE
 
 // --- Claude Code: merge into settings.json `env` (non-destructive) ---
 
-function claudePath(scope: Scope, o: PlaceOpts): string {
+export function claudePath(scope: Scope, o: PlaceOpts): string {
   const home = o.home ?? homedir();
   const cwd = o.cwd ?? process.cwd();
   return scope === "global" ? join(home, ".claude", "settings.json") : join(cwd, ".claude", "settings.json");
@@ -49,7 +49,7 @@ export function resetClaude(scope: Scope, keys: string[], o: PlaceOpts = {}): Ap
 
 // --- Codex / OpenAI clients: merge into a .env file (non-destructive, line-wise) ---
 
-function codexPath(scope: Scope, o: PlaceOpts): string {
+export function codexPath(scope: Scope, o: PlaceOpts): string {
   const home = o.home ?? homedir();
   const cwd = o.cwd ?? process.cwd();
   return scope === "global" ? join(home, ".llm-maestro", "codex.env") : join(cwd, ".env");

@@ -47,13 +47,24 @@ export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, pri
 
   const actions = buildActions(cfg.client);
   const mcp = createSdkMcpServer({ name: "maestro", tools: sdkTools(actions) });
+  const maestroTools = ["get_status", "restart_worker", "run_doctor", "recent_requests"].map((t) => `mcp__maestro__${t}`);
 
   const response = queryFn({
     prompt,
     options: {
       model: cfg.model,
       mcpServers: { maestro: mcp },
-      systemPrompt: "You are maestro's built-in assistant. Use the maestro tools to inspect and control the local proxy. Be concise.",
+      // Keep the request small so a single turn never overflows a modest Copilot window:
+      //  - settingSources: [] -> do NOT load the cwd's CLAUDE.md / project memory / settings
+      //  - allowedTools restricted to the maestro tools -> no heavy built-in tool schemas
+      // This is the main fix for "the first question instantly fills the context".
+      settingSources: [],
+      allowedTools: maestroTools,
+      systemPrompt:
+        "You are maestro's built-in assistant for the local Copilot proxy. Be concise. " +
+        "When the user expresses an intent you have a tool for (check status, restart the worker, " +
+        "run health checks, list recent requests), CALL THE TOOL instead of explaining. For client " +
+        "setup (e.g. 'setup claude'/'setup codex'), tell them to run the /setup-claude or /setup-codex command.",
       permissionMode: "bypassPermissions",
       includePartialMessages: true,
     },

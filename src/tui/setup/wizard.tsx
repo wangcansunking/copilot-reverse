@@ -2,6 +2,7 @@ import React, { useEffect, useState } from "react";
 import { Box, Text, useInput } from "ink";
 import { Select } from "../components/select.js";
 import { theme } from "../theme.js";
+import { modelLabel } from "../screens/model.js";
 import type { Scope, ApplyResult } from "./apply.js";
 
 export type SetupClient = "claude" | "codex";
@@ -10,6 +11,7 @@ type Step = "loading" | "model" | "scope" | "applying" | "done" | "error";
 export interface WizardProps {
   client: SetupClient;
   loadModels: () => Promise<string[]>;
+  limits?: Record<string, number>;
   apply: (scope: Scope, model: string) => Promise<ApplyResult>;
   onDone: (result: ApplyResult, model: string) => void;
   onCancel: () => void;
@@ -20,7 +22,7 @@ function Dismiss({ onDismiss }: { onDismiss: () => void }) {
   return <Text color={theme.muted}>press any key to continue</Text>;
 }
 
-export function SetupWizard({ client, loadModels, apply, onDone, onCancel }: WizardProps) {
+export function SetupWizard({ client, loadModels, limits, apply, onDone, onCancel }: WizardProps) {
   const [step, setStep] = useState<Step>("loading");
   const [models, setModels] = useState<string[]>([]);
   const [model, setModel] = useState("");
@@ -47,7 +49,7 @@ export function SetupWizard({ client, loadModels, apply, onDone, onCancel }: Wiz
 
       {step === "model" && (
         <Select
-          items={models.map((m) => ({ label: m, value: m }))}
+          items={models.map((m) => ({ label: modelLabel(m, "", limits), value: m }))}
           onSubmit={(v) => { setModel(v.value); setStep("scope"); }}
           onCancel={onCancel}
         />

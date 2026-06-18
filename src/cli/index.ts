@@ -16,6 +16,7 @@ import { readChatModel, writeChatModel } from "../shared/prefs.js";
 import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
 import { fetchCopilotModels, fetchModelLimits } from "../providers/copilot/models.js";
 import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
+import { readClientStatus } from "../tui/setup/status.js";
 import type { SetupClient } from "../tui/setup/wizard.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
@@ -79,8 +80,13 @@ async function launchTui(): Promise<void> {
   );
 
   const tokenStore = new CopilotTokenStore(readGhToken(dataDir())!);
-  const loadModels = async () => fetchCopilotModels(await tokenStore.get());
-  // Pull each model's real context window in the background; until it lands we use the default.
+  const loadModels = async () => {
+    const token = await tokenStore.get();
+    const [ids, limits] = await Promise.all([fetchCopilotModels(token), fetchModelLimits(token)]);
+    Object.assign(modelLimits, limits); // so the picker shows windows and auto-compaction is sized
+    return ids;
+  };
+  // Pull each model's real context window in the background too, in case the picker never opens.
   void tokenStore.get().then((t) => fetchModelLimits(t)).then((m) => Object.assign(modelLimits, m)).catch(() => {});
   const setup = {
     apply: async (clientKind: SetupClient, scope: Scope, model: string) => {
@@ -99,8 +105,9 @@ async function launchTui(): Promise<void> {
       registry,
       title: "llm-maestro",
       initialModel: persistedModel ?? DEFAULT_MODEL,
-      clients: readClientSetup(dataDir()),
       statusSource: () => client.status(),
+      readStatus: () => readClientStatus(),
+      modelLimits,
       onChat,
       loadModels,
       setup,

@@ -20,7 +20,11 @@ export class CopilotTokenStore {
   async get(): Promise<string> {
     const skewMs = 60_000;
     if (this.cached && this.cached.expiresAtMs - skewMs > this.nowMs()) return this.cached.token;
-    const res = await this.fetchFn(COPILOT_TOKEN_URL, { headers: { authorization: `token ${this.ghToken}`, accept: "application/json" } });
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    let res: Response;
+    try { res = await this.fetchFn(COPILOT_TOKEN_URL, { headers: { authorization: `token ${this.ghToken}`, accept: "application/json" }, signal: ctrl.signal }); }
+    finally { clearTimeout(timer); }
     if (!res.ok) throw new CopilotAuthError(res.status);
     const data = (await res.json()) as CopilotTokenResponse;
     this.cached = { token: data.token, expiresAtMs: data.expires_at * 1000 };

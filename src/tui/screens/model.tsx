@@ -2,9 +2,17 @@ import React, { useEffect, useState } from "react";
 import { Box, Text } from "ink";
 import { Select } from "../components/select.js";
 import { theme } from "../theme.js";
+import { formatContextWindow } from "../../shared/format.js";
 
-export function ModelScreen({ loadModels, current, onPick, onCancel }: {
+// Label a model with its context window (e.g. "claude-opus-4-8  · 200K") and a (current) marker.
+export function modelLabel(m: string, current: string, limits?: Record<string, number>): string {
+  const win = formatContextWindow(limits?.[m]);
+  return `${m}${win ? `  · ${win}` : ""}${m === current ? "  (current)" : ""}`;
+}
+
+export function ModelScreen({ loadModels, limits, current, onPick, onCancel }: {
   loadModels: () => Promise<string[]>;
+  limits?: Record<string, number>;
   current: string;
   onPick: (model: string) => void;
   onCancel: () => void;
@@ -18,7 +26,7 @@ export function ModelScreen({ loadModels, current, onPick, onCancel }: {
         <Text color={theme.muted}>loading models from Copilot…</Text>
       ) : (
         <Select
-          items={models.map((m) => ({ label: m === current ? `${m}  (current)` : m, value: m }))}
+          items={models.map((m) => ({ label: modelLabel(m, current, limits), value: m }))}
           onSubmit={(v) => onPick(v.value)}
           onCancel={onCancel}
         />

@@ -19,6 +19,13 @@ describe("fetchCopilotModels", () => {
     expect(out).toContain("gpt-4o");
     expect(out.length).toBeGreaterThan(1);
   });
+  it("falls back (does not hang) when the endpoint stalls past the timeout", async () => {
+    // a fetch that only rejects when its AbortSignal fires — i.e. never resolves on its own
+    const hanging = ((_url: string, init?: { signal?: AbortSignal }) =>
+      new Promise((_resolve, reject) => init?.signal?.addEventListener("abort", () => reject(new Error("aborted"))))) as unknown as typeof fetch;
+    const out = await fetchCopilotModels("cop", hanging, 20);
+    expect(out).toContain("gpt-4o");
+  });
 });
 
 describe("fetchModelLimits", () => {
