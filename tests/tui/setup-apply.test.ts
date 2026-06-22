@@ -29,14 +29,16 @@ describe("fetchCopilotModels", () => {
 });
 
 describe("fetchModelLimits", () => {
-  it("maps model id -> max input/context tokens", async () => {
+  it("maps model id -> context window (prefers the headline window, e.g. 1M)", async () => {
     const f = vi.fn(async () => json({ data: [
       { id: "gpt-4o", capabilities: { limits: { max_prompt_tokens: 128000 } } },
       { id: "claude-opus-4-8", capabilities: { limits: { max_context_window_tokens: 200000 } } },
+      { id: "claude-opus-4.8", capabilities: { limits: { max_prompt_tokens: 936000, max_context_window_tokens: 1000000 } } },
     ] }));
     const map = await fetchModelLimits("cop", f as unknown as typeof fetch);
-    expect(map["gpt-4o"]).toBe(128000);
+    expect(map["gpt-4o"]).toBe(128000);          // falls back to prompt tokens when no ctx window
     expect(map["claude-opus-4-8"]).toBe(200000);
+    expect(map["claude-opus-4.8"]).toBe(1000000); // headline 1M window, not the 936K prompt budget
   });
   it("returns an empty map when the endpoint fails", async () => {
     const f = vi.fn(async () => json({}, 500));

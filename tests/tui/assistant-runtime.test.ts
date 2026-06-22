@@ -105,7 +105,7 @@ describe("assistant runtime (stubbed SDK transport, real /v1/messages)", () => {
     const cfg: AssistantConfig = { client: {} as any, workerBaseUrl: "http://127.0.0.1:1", apiKey: "k", model: "gpt-4o", maxInputTokens: 64000 };
     await runAssistantTurn(cfg, "hi", () => {}, capturingQuery);
     expect(seen.window).toBe("64000");
-    expect(seen.pct).toBe("85");
+    expect(seen.pct).toBe("80");
     expect(seen.attribution).toBe("0");
     expect(seen.nonessential).toBe("1");
   });

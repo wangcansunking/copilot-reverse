@@ -40,7 +40,8 @@ export async function fetchModelLimits(token: string, fetchFn: typeof fetch = fe
   if (!data) return {};
   const out: Record<string, number> = {};
   for (const m of data) {
-    const limit = m.capabilities?.limits?.max_prompt_tokens ?? m.capabilities?.limits?.max_context_window_tokens;
+    // Prefer the headline context window (so a 1M model shows as 1M); fall back to the prompt budget.
+    const limit = m.capabilities?.limits?.max_context_window_tokens ?? m.capabilities?.limits?.max_prompt_tokens;
     if (m.id && typeof limit === "number") out[m.id] = limit;
   }
   return out;

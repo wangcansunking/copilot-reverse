@@ -73,7 +73,9 @@ export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, pri
   // attribution header that breaks prompt caching on a non-Anthropic gateway.
   const contextWindow = cfg.modelLimits?.[cfg.model] ?? cfg.maxInputTokens;
   if (contextWindow) process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(contextWindow);
-  process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ?? "85";
+  // 80% keeps the compaction trigger under the model's input budget even when the window above is
+  // the full context window (e.g. 1M ctx vs ~936K prompt budget on the 1M Claude models).
+  process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE = process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE ?? "80";
   process.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1";
   process.env.CLAUDE_CODE_ATTRIBUTION_HEADER = "0";
 
