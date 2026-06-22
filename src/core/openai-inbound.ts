@@ -59,7 +59,15 @@ export function canonicalToOpenAIResponse(r: CanonicalResponse) {
 }
 
 export function canonicalChunkToOpenAISSE(chunk: CanonicalChunk, id: string, model: string): string {
-  if (chunk.done) return "data: [DONE]\n\n";
+  if (chunk.done) {
+    // Emit a final usage chunk (OpenAI stream_options.include_usage shape) before [DONE].
+    if (chunk.usage) {
+      const u = { prompt_tokens: chunk.usage.promptTokens, completion_tokens: chunk.usage.completionTokens, total_tokens: chunk.usage.promptTokens + chunk.usage.completionTokens };
+      const usageChunk = { id, object: "chat.completion.chunk", created: 0, model, choices: [], usage: u };
+      return `data: ${JSON.stringify(usageChunk)}\n\ndata: [DONE]\n\n`;
+    }
+    return "data: [DONE]\n\n";
+  }
   let delta: Record<string, unknown> = {};
   if (chunk.kind === "text") delta = { content: chunk.delta };
   else if (chunk.kind === "tool_use_start") delta = { tool_calls: [{ index: chunk.index, id: chunk.id, type: "function", function: { name: chunk.name, arguments: "" } }] };

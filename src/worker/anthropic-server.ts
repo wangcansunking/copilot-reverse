@@ -42,9 +42,10 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         const toolIndex = new Map<number, number>();        // Copilot tool index -> Anthropic block index
         const openedOrder: number[] = [];                   // Anthropic indices in allocation order
         let stopReason: "stop" | "length" | "tool_use" | "error" = "stop";
+        let usage: { promptTokens: number; completionTokens: number; cachedTokens?: number } | undefined;
 
         for await (const chunk of provider.stream(canon)) {
-          if (chunk.done) { stopReason = chunk.finishReason ?? "stop"; break; }
+          if (chunk.done) { stopReason = chunk.finishReason ?? "stop"; usage = chunk.usage; break; }
           if (chunk.kind === "text") {
             if (textIndex === undefined) {
               textIndex = next++;
@@ -67,7 +68,12 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
 
         // Close every opened block (ascending Anthropic index) before the terminal frames.
         for (const index of [...openedOrder].sort((a, b) => a - b)) res.write(frame("content_block_stop", { type: "content_block_stop", index }));
-        res.write(frame("message_delta", { type: "message_delta", delta: { stop_reason: stopReason === "tool_use" ? "tool_use" : stopReason === "length" ? "max_tokens" : "end_turn" }, usage: { output_tokens: 0 } }));
+        // Report real usage (agent-maestro shape): split cached tokens out of input so Claude Code's
+        // context bar is accurate. Falls back to zeros if Copilot didn't return usage.
+        const cached = usage?.cachedTokens ?? 0;
+        const inputTokens = Math.max(0, (usage?.promptTokens ?? 0) - cached);
+        const deltaUsage = { input_tokens: inputTokens, output_tokens: usage?.completionTokens ?? 0, cache_read_input_tokens: cached };
+        res.write(frame("message_delta", { type: "message_delta", delta: { stop_reason: stopReason === "tool_use" ? "tool_use" : stopReason === "length" ? "max_tokens" : "end_turn" }, usage: deltaUsage }));
         res.write(frame("message_stop", { type: "message_stop" }));
         res.end();
         metric(200);

@@ -28,6 +28,7 @@ function toWireMessages(messages: CanonicalMessage[]) {
 
 function buildBody(req: CanonicalRequest) {
   const body: any = { model: req.model, messages: toWireMessages(req.messages), stream: req.stream, temperature: req.temperature, max_tokens: req.maxTokens };
+  if (req.stream) body.stream_options = { include_usage: true }; // ask Copilot for usage in the final frame
   if (req.tools?.length) body.tools = req.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
   return body;
 }
@@ -70,6 +71,10 @@ export class CopilotAdapter implements ProviderAdapter {
     const decoder = new TextDecoder();
     const startedTools = new Set<number>();
     let buffer = "";
+    let finishReason: CanonicalResponse["finishReason"] = "stop";
+    let usage: { promptTokens: number; completionTokens: number; cachedTokens?: number } | undefined;
+    const mapFinish = (f: string | null | undefined): CanonicalResponse["finishReason"] =>
+      f === "tool_calls" ? "tool_use" : f === "length" ? "length" : "stop";
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -80,10 +85,15 @@ export class CopilotAdapter implements ProviderAdapter {
         const line = evt.split("\n").find((l) => l.startsWith("data: "));
         if (!line) continue;
         const payload = line.slice(6).trim();
-        if (payload === "[DONE]") { yield { kind: "done", done: true, finishReason: "stop" }; return; }
+        if (payload === "[DONE]") { yield { kind: "done", done: true, finishReason, usage }; return; }
         let json: any;
         try { json = JSON.parse(payload); } catch { continue; }
-        const delta = json.choices?.[0]?.delta;
+        // Copilot sends a final frame with empty choices carrying usage (stream_options.include_usage).
+        if (json.usage) usage = { promptTokens: json.usage.prompt_tokens ?? 0, completionTokens: json.usage.completion_tokens ?? 0, cachedTokens: json.usage.prompt_tokens_details?.cached_tokens ?? 0 };
+        const choice = json.choices?.[0];
+        if (!choice) continue;
+        if (choice.finish_reason) finishReason = mapFinish(choice.finish_reason);
+        const delta = choice.delta;
         if (!delta) continue;
         if (delta.content) yield { kind: "text", delta: delta.content, done: false };
         for (const tc of delta.tool_calls ?? []) {
@@ -93,7 +103,7 @@ export class CopilotAdapter implements ProviderAdapter {
         }
       }
     }
-    yield { kind: "done", done: true, finishReason: "stop" };
+    yield { kind: "done", done: true, finishReason, usage };
   }
 }
 function safeJson(s: string): unknown { try { return JSON.parse(s); } catch { return {}; } }

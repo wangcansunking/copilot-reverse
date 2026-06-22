@@ -33,7 +33,7 @@ export type CanonicalChunk =
   | { kind: "text"; delta: string; done: false }
   | { kind: "tool_use_start"; index: number; id: string; name: string; done: false }
   | { kind: "tool_use_delta"; index: number; argsDelta: string; done: false }
-  | { kind: "done"; done: true; finishReason?: CanonicalResponse["finishReason"] };
+  | { kind: "done"; done: true; finishReason?: CanonicalResponse["finishReason"]; usage?: { promptTokens: number; completionTokens: number; cachedTokens?: number } };
 
 export function textContent(s: string): ContentBlock[] {
   return [{ type: "text", text: s }];

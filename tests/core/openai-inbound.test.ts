@@ -40,6 +40,12 @@ describe("openai inbound", () => {
     expect(canonicalChunkToOpenAISSE({ kind: "done", done: true }, "id", "m")).toBe("data: [DONE]\n\n");
   });
 
+  it("emits a usage chunk before [DONE] when the done chunk carries usage", () => {
+    const out = canonicalChunkToOpenAISSE({ kind: "done", done: true, usage: { promptTokens: 12, completionTokens: 3 } }, "id", "m");
+    expect(out).toContain('"usage":{"prompt_tokens":12,"completion_tokens":3,"total_tokens":15}');
+    expect(out.trimEnd().endsWith("data: [DONE]")).toBe(true);
+  });
+
   it("normalizes array-of-text-block content (split system prompts) into a single text block", () => {
     const c = openaiRequestToCanonical({
       model: "gpt-4o",

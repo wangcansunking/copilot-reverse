@@ -33,6 +33,23 @@ describe("worker Anthropic endpoint", () => {
     expect(res.body.content[0].text).toBe("hello");
   });
 
+  it("reports real usage tokens in message_delta when the provider returns them", async () => {
+    const usageProvider: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c1", model: "m", content: [{ type: "text", text: "hi" }], finishReason: "stop", usage: { promptTokens: 100, completionTokens: 5 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        yield { kind: "text", delta: "hi", done: false };
+        yield { kind: "done", done: true, finishReason: "stop", usage: { promptTokens: 100, completionTokens: 5, cachedTokens: 20 } };
+      },
+    };
+    const res = await request(app(usageProvider)).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const delta = parseFrames(res.text).find((f) => f.event === "message_delta");
+    // input = prompt - cached (80), output = 5, cached split out (agent-maestro shape)
+    expect(delta!.data.usage.input_tokens).toBe(80);
+    expect(delta!.data.usage.output_tokens).toBe(5);
+    expect(delta!.data.usage.cache_read_input_tokens).toBe(20);
+  });
+
   it("gives each streamed response a unique message id (clients dedupe by id)", async () => {
     const send = () => request(app()).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
     const idOf = (text: string) => JSON.parse(text.split("\n\n")[0].split("\n").find((l) => l.startsWith("data: "))!.slice(6)).message.id as string;
