@@ -10,6 +10,13 @@ describe("Router", () => {
     expect(r.resolveModel("claude-opus-4-8")).toBe("gpt-4o");
     expect(r.resolveModel("whatever")).toBe("gpt-4o-mini");
   });
+  it("fuzzy-matches a near-miss model id to an available Copilot model", () => {
+    const r = new Router([fake], {});
+    r.setAvailableModels(["claude-opus-4.8", "gpt-4o"]);
+    expect(r.resolveModel("claude-opus-4-8-20251101")).toBe("claude-opus-4.8");
+    expect(r.resolveModel("gpt-4o")).toBe("gpt-4o"); // exact stays
+    expect(r.resolveModel("unknown-xyz")).toBe("unknown-xyz"); // no match -> passthrough
+  });
   it("returns the only provider", () => {
     expect(new Router([fake], { "*": "gpt-4o" }).pick("x").name).toBe("copilot");
   });
