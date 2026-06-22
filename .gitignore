@@ -4,3 +4,4 @@ dist
 coverage
 .vitest
 .playwright-mcp
+.claude
