@@ -62,4 +62,25 @@ describe("CopilotAdapter", () => {
     for await (const c of a.stream({ ...base, stream: true })) if (c.kind === "text") out += c.delta;
     expect(out).toBe("hello");
   });
+
+  it("captures usage + finish_reason from the final stream frame", async () => {
+    const sse =
+      'data: {"choices":[{"index":0,"delta":{"content":"hi"}}]}\n\n' +
+      'data: {"choices":[{"finish_reason":"length","index":0,"delta":{}}],"usage":{"prompt_tokens":40,"completion_tokens":8,"prompt_tokens_details":{"cached_tokens":5}}}\n\n' +
+      "data: [DONE]\n\n";
+    const f = vi.fn(async () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    let done: any;
+    for await (const c of a.stream({ ...base, stream: true })) if (c.done) done = c;
+    expect(done.finishReason).toBe("length");
+    expect(done.usage).toEqual({ promptTokens: 40, completionTokens: 8, cachedTokens: 5 });
+  });
+
+  it("requests stream_options.include_usage on streaming calls", async () => {
+    let body: any;
+    const f = vi.fn(async (_u: string, init: RequestInit) => { body = JSON.parse(init.body as string); return new Response("data: [DONE]\n\n", { status: 200, headers: { "content-type": "text/event-stream" } }); });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    for await (const _ of a.stream({ ...base, stream: true })) { /* drain */ }
+    expect(body.stream_options).toEqual({ include_usage: true });
+  });
 });

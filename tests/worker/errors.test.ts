@@ -12,4 +12,12 @@ describe("errorHint", () => {
   it("returns empty for unknown errors", () => {
     expect(errorHint("some random failure")).toBe("");
   });
+  it("matches several context-overflow phrasings", () => {
+    expect(errorHint("maximum context length is 8192")).toMatch(/context window/i);
+    expect(errorHint("too many tokens in the prompt")).toMatch(/context window/i);
+  });
+  it("matches several unsupported-model phrasings", () => {
+    expect(errorHint("model_not_found: nope")).toMatch(/\/model/);
+    expect(errorHint("invalid model specified")).toMatch(/\/model/);
+  });
 });

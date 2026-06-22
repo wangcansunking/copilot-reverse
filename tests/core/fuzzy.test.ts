@@ -16,4 +16,12 @@ describe("bestModelMatch", () => {
     expect(bestModelMatch("gemini-3.5-flash", available)).toBeNull();
     expect(bestModelMatch("totally-unknown-xyz", available)).toBeNull();
   });
+  it("matches sonnet date-suffixed ids and is dot/dash insensitive", () => {
+    expect(bestModelMatch("claude-sonnet-4-6-20250929", available)).toBe("claude-sonnet-4.6");
+    expect(bestModelMatch("gpt-5-5", available)).toBe("gpt-5.5");
+  });
+  it("does not cross-match different families", () => {
+    // 'claude-haiku-4-5' shares only 'claude' + '4' with opus/sonnet → below threshold
+    expect(bestModelMatch("claude-haiku-4-5", available)).toBeNull();
+  });
 });

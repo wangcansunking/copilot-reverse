@@ -22,4 +22,17 @@ describe("worker OpenAI endpoint", () => {
     expect(res.text).toContain('"content":"he"');
     expect(res.text).toContain("data: [DONE]");
   });
+  it("each streamed response gets a unique id (clients dedupe by id)", async () => {
+    const send = () => request(app()).post("/v1/chat/completions").send({ model: "x", stream: true, messages: [{ role: "user", content: "hi" }] });
+    const idOf = (text: string) => JSON.parse(text.split("\n\n").find((b) => b.startsWith("data: ") && b.includes('"id"'))!.slice(6)).id as string;
+    const [a, b] = await Promise.all([send(), send()]);
+    expect(idOf(a.text)).toMatch(/^chatcmpl-/);
+    expect(idOf(a.text)).not.toBe(idOf(b.text));
+  });
+  it("returns 502 with the upstream message when the provider fails", async () => {
+    const fail: ProviderAdapter = { name: "copilot", complete: async () => { throw new Error("boom: bad request"); }, async *stream() { throw new Error("x"); } };
+    const res = await request(createWorkerApp(new Router([fail], { "*": "gpt-4o" }), () => {})).post("/v1/chat/completions").send({ model: "x", messages: [{ role: "user", content: "hi" }] });
+    expect(res.status).toBe(502);
+    expect(res.body.error.message).toMatch(/boom: bad request/);
+  });
 });

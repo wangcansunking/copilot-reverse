@@ -17,4 +17,17 @@ describe("DaemonClient", () => {
     const f = vi.fn(async () => json({ checks: [{ name: "x", ok: true, detail: "d" }] }));
     expect((await new DaemonClient("http://x", f as unknown as typeof fetch).doctor())[0].ok).toBe(true);
   });
+  it("posts stop and start to the right paths", async () => {
+    const f = vi.fn(async () => json({ ok: true }));
+    const c = new DaemonClient("http://x", f as unknown as typeof fetch);
+    await c.stop();
+    await c.start();
+    expect(f.mock.calls[0][0]).toBe("http://x/api/stop");
+    expect(f.mock.calls[1][0]).toBe("http://x/api/start");
+  });
+  it("unwraps the requests array", async () => {
+    const f = vi.fn(async () => json({ requests: [{ ts: 1, endpoint: "/v1/messages", model: "m", status: 200, latencyMs: 4 }] }));
+    const reqs = await new DaemonClient("http://x", f as unknown as typeof fetch).requests();
+    expect(reqs[0].model).toBe("m");
+  });
 });
