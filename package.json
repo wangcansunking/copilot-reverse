@@ -10,7 +10,8 @@
   "files": [
     "dist",
     "README.md",
-    "GUIDE.md"
+    "GUIDE.md",
+    "images"
   ],
   "keywords": [
     "github-copilot",

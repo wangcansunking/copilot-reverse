@@ -29,6 +29,22 @@ npx copilot-reverse
 
 That's it. Codex users: run `/setup-codex` instead.
 
+Here's the app itself — a prompt, a live status bar, and slash-command autocomplete:
+
+```text
+ ✳ copilot-reverse                                                       worker: ready
+
+ Type a message to chat with the assistant, or /help for commands.
+╭─────────────────────────────────────────────────────────────────────────────────────╮
+│ › /setup                                                                              │
+╰─────────────────────────────────────────────────────────────────────────────────────╯
+  ❯ /setup-claude   print Claude Code config
+    /setup-codex    print Codex/OpenAI config
+    /setup-status   show configured endpoints
+    ↑↓ navigate · tab complete · enter run
+ model claude-opus-4.8  ·  daemon ready  ·  claude u:✓ p:○  codex u:✓ p:○  ·  /help
+```
+
 ---
 
 ## What can I do in the app?
@@ -53,6 +69,13 @@ Prefer commands? Type `/` to see them all. The essentials:
 | `/reset-claude` · `/reset-codex` | Undo setup, restore original config |
 | `/help` · `/quit` | List commands · exit |
 
+### The live dashboard
+
+`/dashboard` opens a self-refreshing web view of everything happening through the proxy — worker
+health, request volume, and (most useful) recent **errors with their real messages**:
+
+![copilot-reverse dashboard](images/dashboard.png)
+
 ---
 
 ## Connect your own tools
@@ -74,9 +97,10 @@ claude
 
 ## The status bar, decoded
 
-```
-✳ copilot-reverse                                   worker: ready
-model gpt-4o  ·  daemon ready  ·  claude u:✓ p:○  codex u:○ p:○  ·  /help
+The bottom line of the app (see the screenshot above) tells you everything at a glance:
+
+```text
+model claude-opus-4.8  ·  daemon ready  ·  claude u:✓ p:○  codex u:○ p:○  ·  /help
 ```
 
 - **worker / daemon** — green `ready` means the proxy is up and self-healing.

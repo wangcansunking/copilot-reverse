@@ -10,6 +10,8 @@ built-in assistant.
 > unofficial endpoints, for use with your own Copilot subscription only. It may
 > break if GitHub changes these endpoints.
 
+![copilot-reverse dashboard](images/dashboard.png)
+
 ## Quick start
 
 ```bash
