@@ -15,7 +15,7 @@ const port = Number(process.env.WORKER_PORT ?? cfg.workerPort);
 const host = process.env.BIND_HOST ?? cfg.bindHost;
 
 const gh = readGhToken(dataDir());
-if (!gh) { send({ type: "error", message: "no GitHub token; run `maestro` and /login first" }); process.exit(1); }
+if (!gh) { send({ type: "error", message: "no GitHub token; run `copilot-reverse` and /login first" }); process.exit(1); }
 
 const tokenStore = new CopilotTokenStore(gh);
 const router = new Router([new CopilotAdapter(tokenStore)], cfg.modelMap);

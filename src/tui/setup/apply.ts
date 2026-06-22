@@ -6,7 +6,7 @@ export type Scope = "global" | "project";
 export interface ApplyResult { path: string; changed: string[] }
 export interface PlaceOpts { home?: string; cwd?: string }
 
-// The env keys maestro writes for each client — so reset knows exactly what to remove.
+// The env keys copilot-reverse writes for each client — so reset knows exactly what to remove.
 export const CLAUDE_ENV_KEYS = [
   "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
@@ -37,7 +37,7 @@ export function applyClaude(scope: Scope, env: Record<string, string>, o: PlaceO
   return { path, changed };
 }
 
-// Inverse of applyClaude: drop maestro's keys from settings.json `env`, keep everything else.
+// Inverse of applyClaude: drop copilot-reverse's keys from settings.json `env`, keep everything else.
 export function resetClaude(scope: Scope, keys: string[], o: PlaceOpts = {}): ApplyResult {
   const path = claudePath(scope, o);
   if (!existsSync(path)) return { path, changed: [] };
@@ -56,7 +56,7 @@ export function resetClaude(scope: Scope, keys: string[], o: PlaceOpts = {}): Ap
 export function codexPath(scope: Scope, o: PlaceOpts): string {
   const home = o.home ?? homedir();
   const cwd = o.cwd ?? process.cwd();
-  return scope === "global" ? join(home, ".llm-maestro", "codex.env") : join(cwd, ".env");
+  return scope === "global" ? join(home, ".copilot-reverse", "codex.env") : join(cwd, ".env");
 }
 
 export function applyCodex(scope: Scope, env: Record<string, string>, o: PlaceOpts = {}): ApplyResult {
@@ -80,7 +80,7 @@ export function applyCodex(scope: Scope, env: Record<string, string>, o: PlaceOp
   return { path, changed };
 }
 
-// Inverse of applyCodex: drop maestro's KEY=value lines, keep every other line.
+// Inverse of applyCodex: drop copilot-reverse's KEY=value lines, keep every other line.
 export function resetCodex(scope: Scope, keys: string[], o: PlaceOpts = {}): ApplyResult {
   const path = codexPath(scope, o);
   if (!existsSync(path)) return { path, changed: [] };

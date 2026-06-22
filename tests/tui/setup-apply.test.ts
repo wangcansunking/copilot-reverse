@@ -83,11 +83,11 @@ describe("applyCodex", () => {
 });
 
 describe("resetClaude", () => {
-  it("removes maestro's env keys but preserves other settings and env keys", () => {
+  it("removes copilot-reverse's env keys but preserves other settings and env keys", () => {
     const cwd = mkdtempSync(join(tmpdir(), "proj-"));
     mkdirSync(join(cwd, ".claude"), { recursive: true });
-    const maestroEnv = Object.fromEntries(CLAUDE_ENV_KEYS.map((k) => [k, "x"]));
-    writeFileSync(join(cwd, ".claude", "settings.json"), JSON.stringify({ theme: "dark", env: { KEEP: "1", ...maestroEnv } }));
+    const copilotReverseEnv = Object.fromEntries(CLAUDE_ENV_KEYS.map((k) => [k, "x"]));
+    writeFileSync(join(cwd, ".claude", "settings.json"), JSON.stringify({ theme: "dark", env: { KEEP: "1", ...copilotReverseEnv } }));
     const r = resetClaude("project", CLAUDE_ENV_KEYS, { cwd });
     const s = JSON.parse(readFileSync(r.path, "utf8"));
     expect(s.theme).toBe("dark");                 // preserved
@@ -104,7 +104,7 @@ describe("resetClaude", () => {
 });
 
 describe("resetCodex", () => {
-  it("removes maestro's env lines but preserves other lines", () => {
+  it("removes copilot-reverse's env lines but preserves other lines", () => {
     const cwd = mkdtempSync(join(tmpdir(), "proj-"));
     writeFileSync(join(cwd, ".env"), "EXISTING=1\nOPENAI_BASE_URL=http://x/v1\nOPENAI_API_KEY=k\nOPENAI_MODEL=gpt-4o\n");
     const r = resetCodex("project", CODEX_ENV_KEYS, { cwd });

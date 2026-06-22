@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-// Whether the user has applied maestro config for each client. Surfaced in the TUI HUD;
+// Whether the user has applied copilot-reverse config for each client. Surfaced in the TUI HUD;
 // written by the /setup-* flow once it actually applies config.
 export interface ClientSetupState { claude: boolean; codex: boolean }
 

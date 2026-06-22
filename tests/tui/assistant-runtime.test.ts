@@ -51,7 +51,7 @@ describe("assistant runtime (stubbed SDK transport, real /v1/messages)", () => {
     openServer = server;
 
     // Fake query() stands in for the bundled Claude Code CLI: it issues the real
-    // streaming Anthropic request to maestro's own endpoint (cfg.workerBaseUrl),
+    // streaming Anthropic request to copilot-reverse's own endpoint (cfg.workerBaseUrl),
     // then yields a synthetic SDK assistant message carrying the streamed text.
     const fakeQuery = ((params: { options?: { model?: string } }) => {
       const baseUrl = process.env.ANTHROPIC_BASE_URL!;
@@ -75,7 +75,7 @@ describe("assistant runtime (stubbed SDK transport, real /v1/messages)", () => {
       return gen();
     }) as unknown as QueryFn;
 
-    const cfg: AssistantConfig = { client: {} as any, workerBaseUrl: url, apiKey: "maestro-local", model: "claude-opus-4-8" };
+    const cfg: AssistantConfig = { client: {} as any, workerBaseUrl: url, apiKey: "copilot-reverse-local", model: "claude-opus-4-8" };
     const printed: string[] = [];
     const onChat = makeOnChat(cfg, (c, p, print) => runAssistantTurn(c, p, print, fakeQuery));
     await onChat("how is the proxy?", (l) => printed.push(l));

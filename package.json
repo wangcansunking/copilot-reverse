@@ -1,10 +1,10 @@
 {
-  "name": "llm-maestro",
+  "name": "copilot-reverse",
   "version": "0.0.1",
   "description": "Interactive terminal app that exposes your GitHub Copilot subscription as local OpenAI- and Anthropic-compatible endpoints, with a self-healing daemon and a built-in assistant.",
   "type": "module",
   "license": "MIT",
-  "bin": { "maestro": "dist/cli/index.js" },
+  "bin": { "copilot-reverse": "dist/cli/index.js" },
   "files": ["dist", "README.md"],
   "keywords": ["github-copilot", "openai", "anthropic", "proxy", "cli", "tui", "ink", "claude", "llm"],
   "scripts": {

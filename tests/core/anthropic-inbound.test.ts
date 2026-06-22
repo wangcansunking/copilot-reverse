@@ -37,10 +37,10 @@ describe("anthropic inbound", () => {
   it("flattens an array-of-blocks system prompt (SDK sends cache_control blocks) into text", () => {
     const c = anthropicRequestToCanonical({
       model: "gpt-4o", max_tokens: 100,
-      system: [{ type: "text", text: "You are " }, { type: "text", text: "maestro." }] as any,
+      system: [{ type: "text", text: "You are " }, { type: "text", text: "copilot-reverse." }] as any,
       messages: [{ role: "user", content: "hi" }],
     });
-    expect(c.messages[0]).toEqual({ role: "system", content: [{ type: "text", text: "You are maestro." }] });
+    expect(c.messages[0]).toEqual({ role: "system", content: [{ type: "text", text: "You are copilot-reverse." }] });
   });
 
   it("drops Anthropic server-side tools that have no input_schema (prevents client hang)", () => {

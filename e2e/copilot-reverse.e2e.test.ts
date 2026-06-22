@@ -114,11 +114,11 @@ describe("E2E: TUI commands", () => {
 
   it("EP-08 /dashboard and /report open URLs in the browser", async () => {
     const opened: string[] = [];
-    const reg = buildRegistry(ctx() as any, endpoint, { dashboardUrl: "http://127.0.0.1:7890/", reportRepo: "octo/maestro", appVersion: "0.0.1", openUrl: (u) => opened.push(u) });
+    const reg = buildRegistry(ctx() as any, endpoint, { dashboardUrl: "http://127.0.0.1:7890/", reportRepo: "octo/copilot-reverse", appVersion: "0.0.1", openUrl: (u) => opened.push(u) });
     await reg.run("/dashboard");
     await reg.run("/report");
     expect(opened[0]).toBe("http://127.0.0.1:7890/");
-    expect(opened[1]).toMatch(/^https:\/\/github\.com\/octo\/maestro\/issues\/new\?/);
+    expect(opened[1]).toMatch(/^https:\/\/github\.com\/octo\/copilot-reverse\/issues\/new\?/);
   });
 
   it("EP-09 /reset removes the keys that setup wrote (round-trip)", async () => {

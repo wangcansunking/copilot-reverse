@@ -38,7 +38,7 @@ export function startSupervisor(): { stop: () => void } {
     const gh = readGhToken(dataDir());
     let auth: DoctorCheck;
     if (!gh) {
-      auth = { name: "github-auth", ok: false, detail: "not logged in — restart maestro to log in" };
+      auth = { name: "github-auth", ok: false, detail: "not logged in — restart copilot-reverse to log in" };
     } else {
       // Validate the token actually exchanges, not just that it exists on disk.
       try { await new CopilotTokenStore(gh).get(); auth = { name: "github-auth", ok: true, detail: "token valid" }; }

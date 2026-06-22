@@ -20,7 +20,7 @@ describe("readClientStatus", () => {
     expect(s.codex).toEqual({ user: true, project: false });
   });
 
-  it("ignores a non-maestro base url (a user's own Anthropic endpoint)", () => {
+  it("ignores a non-copilot-reverse base url (a user's own Anthropic endpoint)", () => {
     const home = tmp("home-"), cwd = tmp("proj-");
     mkdirSync(join(cwd, ".claude"), { recursive: true });
     writeFileSync(join(cwd, ".claude", "settings.json"), JSON.stringify({ env: { ANTHROPIC_BASE_URL: "https://api.anthropic.com" } }));

@@ -16,7 +16,7 @@ export interface ReportInput {
 // never request/response bodies — so there is no user prompt content to leak.
 export function buildIssueBody(i: ReportInput): string {
   const lines: string[] = [
-    "## maestro diagnostics",
+    "## copilot-reverse diagnostics",
     "",
     `- version: ${i.version}`,
     `- platform: ${i.platform}`,
@@ -41,7 +41,7 @@ export function buildIssueBody(i: ReportInput): string {
 
 export function buildIssueTitle(i: ReportInput): string {
   const first = i.errors[0]?.error;
-  return `maestro report: ${first ? first.slice(0, 70) : i.status.workerState}`;
+  return `copilot-reverse report: ${first ? first.slice(0, 70) : i.status.workerState}`;
 }
 
 export function buildIssueUrl(i: ReportInput): string {

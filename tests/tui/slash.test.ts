@@ -55,9 +55,9 @@ describe("slash commands", () => {
   });
   it("/report opens a prefilled GitHub issue when a repo is configured", async () => {
     const opened: string[] = [];
-    const reg = buildRegistry(ctx() as any, endpoint, { reportRepo: "octo/maestro", appVersion: "0.0.1", openUrl: (u) => opened.push(u) });
+    const reg = buildRegistry(ctx() as any, endpoint, { reportRepo: "octo/copilot-reverse", appVersion: "0.0.1", openUrl: (u) => opened.push(u) });
     await reg.run("/report");
-    expect(opened[0]).toMatch(/^https:\/\/github\.com\/octo\/maestro\/issues\/new\?/);
+    expect(opened[0]).toMatch(/^https:\/\/github\.com\/octo\/copilot-reverse\/issues\/new\?/);
   });
   it("/report guides the user to set a repo when unconfigured", async () => {
     const opened: string[] = [];

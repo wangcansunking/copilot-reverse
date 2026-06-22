@@ -7,7 +7,7 @@ import type { DaemonClient } from "../daemon-client.js";
 export interface AssistantConfig {
   client: DaemonClient;
   workerBaseUrl: string;   // e.g. http://127.0.0.1:7891  (Anthropic inbound)
-  apiKey: string;          // maestro server key (worker ignores/accepts in M1)
+  apiKey: string;          // copilot-reverse server key (worker ignores/accepts in M1)
   model: string;           // e.g. claude-opus-4-8 (router remaps to a Copilot model)
   maxInputTokens?: number; // conservative default context window; drives auto-compaction
   modelLimits?: Record<string, number>; // per-model real windows; preferred over maxInputTokens
@@ -32,7 +32,7 @@ function sdkTools(actions: AssistantActions, cfg: AssistantConfig) {
   const tools = [
     tool("get_status", "Get the proxy worker status and restart history", empty.shape, async () => ({ content: [{ type: "text", text: await actions.get_status({}) }] })),
     tool("restart_worker", "Restart the proxy worker", empty.shape, async () => ({ content: [{ type: "text", text: await actions.restart_worker({}) }] })),
-    tool("run_doctor", "Run maestro health checks", empty.shape, async () => ({ content: [{ type: "text", text: await actions.run_doctor({}) }] })),
+    tool("run_doctor", "Run copilot-reverse health checks", empty.shape, async () => ({ content: [{ type: "text", text: await actions.run_doctor({}) }] })),
     tool("recent_requests", "List recent proxied requests", empty.shape, async () => ({ content: [{ type: "text", text: await actions.recent_requests({}) }] })),
   ];
 
@@ -47,7 +47,7 @@ function sdkTools(actions: AssistantActions, cfg: AssistantConfig) {
   if (setupClient) {
     for (const client of ["claude", "codex"] as const) {
       const label = client === "claude" ? "Claude Code" : "Codex";
-      tools.push(tool(`setup_${client}`, `Configure ${label} to use the maestro proxy (writes its config). scope defaults to "global" (all projects); model defaults to the current chat model.`, setupShape, async (args: { scope?: "global" | "project"; model?: string }) => {
+      tools.push(tool(`setup_${client}`, `Configure ${label} to use the copilot-reverse proxy (writes its config). scope defaults to "global" (all projects); model defaults to the current chat model.`, setupShape, async (args: { scope?: "global" | "project"; model?: string }) => {
         const scope = args.scope ?? "global";
         const model = args.model ?? cfg.model;
         const r = await setupClient(client, scope, model);
@@ -62,7 +62,7 @@ function sdkTools(actions: AssistantActions, cfg: AssistantConfig) {
 // Runs one assistant turn, streaming assistant text to `print`. Pass an AbortController to make
 // the turn interruptible (esc) — aborting ends the stream.
 export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, print: (line: string) => void, queryFn: QueryFn = query, abortController?: AbortController): Promise<void> {
-  // Dogfood: route the agent SDK through maestro's own Anthropic endpoint -> Copilot.
+  // Dogfood: route the agent SDK through copilot-reverse's own Anthropic endpoint -> Copilot.
   process.env.ANTHROPIC_BASE_URL = cfg.workerBaseUrl;
   process.env.ANTHROPIC_API_KEY = cfg.apiKey;
 
@@ -80,23 +80,23 @@ export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, pri
   process.env.CLAUDE_CODE_ATTRIBUTION_HEADER = "0";
 
   const actions = buildActions(cfg.client);
-  const mcp = createSdkMcpServer({ name: "maestro", tools: sdkTools(actions, cfg) });
+  const mcp = createSdkMcpServer({ name: "copilotReverse", tools: sdkTools(actions, cfg) });
 
   const response = queryFn({
     prompt,
     options: {
       model: cfg.model,
-      mcpServers: { maestro: mcp },
+      mcpServers: { copilotReverse: mcp },
       // Keep the request small so a single turn never overflows a modest Copilot window:
       //  - tools: [] -> disable ALL built-in Claude Code tools (Bash/Task/Read/Edit/…), whose huge
       //    descriptions otherwise bloat every request and overflow the model -> Copilot 400. The
-      //    maestro MCP tools (via mcpServers) remain available. (`allowedTools` only gates
+      //    copilot-reverse MCP tools (via mcpServers) remain available. (`allowedTools` only gates
       //    permission; `tools` is what actually removes them from the request.)
       //  - settingSources: [] -> do NOT load the cwd's CLAUDE.md / project memory / settings.
       tools: [],
       settingSources: [],
       systemPrompt:
-        "You are maestro's built-in assistant for the local Copilot proxy. Be concise. " +
+        "You are copilot-reverse's built-in assistant for the local Copilot proxy. Be concise. " +
         "When the user expresses an intent you have a tool for, CALL THE TOOL instead of explaining. " +
         "Tools: get_status, restart_worker, run_doctor, recent_requests, list_models (show available " +
         "models + context windows), setup_claude / setup_codex (configure those clients to use the proxy). " +

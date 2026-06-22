@@ -20,10 +20,10 @@ export function withClaude1mSuffix(model: string, contextWindow?: number): strin
     : model;
 }
 
-// The full env maestro writes into Claude Code's settings.json. Beyond the endpoint, it tells
+// The full env copilot-reverse writes into Claude Code's settings.json. Beyond the endpoint, it tells
 // Claude Code the selected model's real context window (via the [1m] model suffix and
 // CLAUDE_CODE_AUTO_COMPACT_WINDOW) so the client stops assuming the default 200K. Mirrors agent-maestro.
-export function claudeMaestroEnv(base: string, apiKey: string, model: string, contextWindow?: number): Record<string, string> {
+export function claudeCopilotReverseEnv(base: string, apiKey: string, model: string, contextWindow?: number): Record<string, string> {
   return {
     ANTHROPIC_BASE_URL: base,
     ANTHROPIC_API_KEY: apiKey,

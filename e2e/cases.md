@@ -2,7 +2,7 @@
 
 End-to-end scenarios that wire the **real** worker + supervisor + TUI modules together the way
 the daemon does (worker metric sink → supervisor SQLite → control API), using a fake Copilot
-provider so no live network/token is needed. Spec: [`maestro.e2e.test.ts`](./maestro.e2e.test.ts).
+provider so no live network/token is needed. Spec: [`copilot-reverse.e2e.test.ts`](./copilot-reverse.e2e.test.ts).
 
 **Policy: every code update must keep all e2e cases green.** Run with `npm run test:e2e`
 (`npm test` also runs them — the suite is included in the default vitest run).
@@ -17,7 +17,7 @@ provider so no live network/token is needed. Spec: [`maestro.e2e.test.ts`](./mae
 | EP-06 | `GET /` on the supervisor | `200` HTML dashboard page |
 | EP-07 | `/logs` slash command | lists recent request errors with their messages |
 | EP-08 | `/dashboard` and `/report` slash commands | open the dashboard URL and a prefilled GitHub issue URL in the browser |
-| EP-09 | `/reset-claude` after `setup` wrote config | removes exactly the `ANTHROPIC_*` keys maestro added, preserving the rest |
+| EP-09 | `/reset-claude` after `setup` wrote config | removes exactly the `ANTHROPIC_*` keys copilot-reverse added, preserving the rest |
 
 ## What each case protects (regressions it would catch)
 

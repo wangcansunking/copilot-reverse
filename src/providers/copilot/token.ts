@@ -7,7 +7,7 @@ export class CopilotAuthError extends Error {
   constructor(public readonly status: number) {
     super(
       status === 401 || status === 403
-        ? "GitHub login expired — restart maestro (or run `maestro login`) to re-authenticate"
+        ? "GitHub login expired — restart copilot-reverse (or run `copilot-reverse login`) to re-authenticate"
         : `copilot token exchange failed: ${status}`,
     );
     this.name = "CopilotAuthError";

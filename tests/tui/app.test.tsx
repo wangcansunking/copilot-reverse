@@ -12,8 +12,8 @@ function reg() {
 
 describe("App", () => {
   it("renders a prompt and runs a slash command on submit", async () => {
-    const { stdin, lastFrame } = render(<App registry={reg()} title="maestro" />);
-    expect(lastFrame()).toContain("maestro");
+    const { stdin, lastFrame } = render(<App registry={reg()} title="copilot-reverse" />);
+    expect(lastFrame()).toContain("copilot-reverse");
     // let Ink's useInput subscribe to stdin before typing (avoids a write/subscribe race)
     await new Promise((r) => setTimeout(r, 30));
     stdin.write("/ping");
@@ -24,7 +24,7 @@ describe("App", () => {
   });
 
   it("shows the worker-state badge in the header", () => {
-    const { lastFrame } = render(<App registry={reg()} title="maestro" workerState="ready" />);
+    const { lastFrame } = render(<App registry={reg()} title="copilot-reverse" workerState="ready" />);
     expect(lastFrame()).toContain("worker: ready");
   });
 

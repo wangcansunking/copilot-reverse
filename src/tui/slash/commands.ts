@@ -46,8 +46,8 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
   reg.add({ name: "/setup-claude", describe: "print Claude Code config", run: async () => claudeCodeConfig(endpoint).instructions.split("\n") });
   reg.add({ name: "/setup-codex", describe: "print Codex/OpenAI config", run: async () => codexConfig(endpoint).instructions.split("\n") });
   reg.add({ name: "/setup-status", describe: "show configured endpoints", run: async () => [`OpenAI: http://${endpoint.host}:${endpoint.port}/v1`, `Anthropic: http://${endpoint.host}:${endpoint.port}`] });
-  reg.add({ name: "/reset-claude", describe: "restore Claude Code config (remove maestro's keys)", run: async () => opts.resetClient ? opts.resetClient("claude") : ["reset not available"] });
-  reg.add({ name: "/reset-codex", describe: "restore Codex/OpenAI config (remove maestro's keys)", run: async () => opts.resetClient ? opts.resetClient("codex") : ["reset not available"] });
+  reg.add({ name: "/reset-claude", describe: "restore Claude Code config (remove copilot-reverse's keys)", run: async () => opts.resetClient ? opts.resetClient("claude") : ["reset not available"] });
+  reg.add({ name: "/reset-codex", describe: "restore Codex/OpenAI config (remove copilot-reverse's keys)", run: async () => opts.resetClient ? opts.resetClient("codex") : ["reset not available"] });
   reg.add({ name: "/model", describe: "switch the chat model", run: async () => ["opening model picker…"] });
   reg.add({ name: "/config", describe: "view & change configuration", run: async () => ["opening config panel…"] });
   reg.add({ name: "/dashboard", describe: "open the web dashboard in your browser", run: async () => {
@@ -66,7 +66,7 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
     openUrl(url);
     return [`opening a pre-filled GitHub issue for ${repo} in your browser…`];
   } });
-  reg.add({ name: "/quit", describe: "exit maestro", run: async (_a, c) => { c.quit(); return ["bye"]; } });
+  reg.add({ name: "/quit", describe: "exit copilot-reverse", run: async (_a, c) => { c.quit(); return ["bye"]; } });
   reg.add({ name: "/help", describe: "list commands", run: async () => reg.list().map((c) => `${c.name.padEnd(14)} ${c.describe}`) });
   return reg;
 }

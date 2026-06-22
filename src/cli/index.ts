@@ -18,7 +18,7 @@ import { fetchCopilotModels, fetchModelLimits } from "../providers/copilot/model
 import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
 import { readClientStatus } from "../tui/setup/status.js";
 import type { SetupClient } from "../tui/setup/wizard.js";
-import { claudeMaestroEnv } from "../tui/setup/clients.js";
+import { claudeCopilotReverseEnv } from "../tui/setup/clients.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 
@@ -43,7 +43,7 @@ async function launchTui(): Promise<void> {
   // Run the daemon IN-PROCESS — no separate console window pops up. Reuse one if already running.
   let stopSupervisor: (() => void) | undefined;
   if (!(await probeSupervisor())) {
-    process.stdout.write("starting maestro…\n");
+    process.stdout.write("starting copilot-reverse…\n");
     stopSupervisor = startSupervisor().stop;
     for (let i = 0; i < 60 && !(await probeSupervisor()); i++) await delay(100);
   }
@@ -51,10 +51,10 @@ async function launchTui(): Promise<void> {
   const base = `http://${cfg.bindHost}:${cfg.supervisorPort}`;
   const client = new DaemonClient(base);
   const workerBase = `http://${cfg.bindHost}:${cfg.workerPort}`;
-  const endpoint = { host: cfg.bindHost, port: cfg.workerPort, apiKey: "maestro-local" };
+  const endpoint = { host: cfg.bindHost, port: cfg.workerPort, apiKey: "copilot-reverse-local" };
   let app: { unmount: () => void } | undefined;
   const quit = () => { stopSupervisor?.(); app?.unmount(); process.exit(0); };
-  // Restore a client's config: strip maestro's keys from BOTH scopes and clear the HUD flag.
+  // Restore a client's config: strip copilot-reverse's keys from BOTH scopes and clear the HUD flag.
   const resetClient = async (clientKind: SetupClient): Promise<string[]> => {
     const fn = clientKind === "claude" ? resetClaude : resetCodex;
     const keys = clientKind === "claude" ? CLAUDE_ENV_KEYS : CODEX_ENV_KEYS;
@@ -63,7 +63,7 @@ async function launchTui(): Promise<void> {
     const lines = results
       .filter((r) => r.changed.length)
       .map((r) => `removed ${r.changed.join(", ")} from ${r.path}`);
-    return lines.length ? lines : [`no maestro ${clientKind} config found to remove`];
+    return lines.length ? lines : [`no copilot-reverse ${clientKind} config found to remove`];
   };
 
   const registry = buildRegistry({ client, quit }, endpoint, {
@@ -90,8 +90,8 @@ async function launchTui(): Promise<void> {
   // assume the default 200K (which makes a 1M model read "context 100%" far too early).
   const applyClient = (clientKind: SetupClient, scope: Scope, model: string) => {
     const r = clientKind === "claude"
-      ? applyClaude(scope, claudeMaestroEnv(workerBase, "maestro-local", model, modelLimits[model]))
-      : applyCodex(scope, { OPENAI_BASE_URL: `${workerBase}/v1`, OPENAI_API_KEY: "maestro-local", OPENAI_MODEL: model });
+      ? applyClaude(scope, claudeCopilotReverseEnv(workerBase, "copilot-reverse-local", model, modelLimits[model]))
+      : applyCodex(scope, { OPENAI_BASE_URL: `${workerBase}/v1`, OPENAI_API_KEY: "copilot-reverse-local", OPENAI_MODEL: model });
     writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), [clientKind]: true });
     return r;
   };
@@ -99,7 +99,7 @@ async function launchTui(): Promise<void> {
 
   const onChat = makeOnChat(
     {
-      client, workerBaseUrl: workerBase, apiKey: "maestro-local", model: DEFAULT_MODEL,
+      client, workerBaseUrl: workerBase, apiKey: "copilot-reverse-local", model: DEFAULT_MODEL,
       maxInputTokens: DEFAULT_MAX_INPUT_TOKENS, modelLimits,
       listModels: loadModels,
       setupClient: async (c, s, m) => applyClient(c, s, m),
@@ -112,7 +112,7 @@ async function launchTui(): Promise<void> {
   app = render(
     React.createElement(App, {
       registry,
-      title: "llm-maestro",
+      title: "copilot-reverse",
       initialModel: persistedModel ?? DEFAULT_MODEL,
       statusSource: () => client.status(),
       readStatus: () => readClientStatus(),
@@ -134,7 +134,7 @@ async function launchTui(): Promise<void> {
 }
 
 const program = new Command();
-program.name("maestro").description("llm-maestro: interactive Copilot proxy").version("0.0.1");
+program.name("copilot-reverse").description("copilot-reverse: interactive Copilot proxy").version("0.0.1");
 program.command("login").description("GitHub device-code login").action(() => runDeviceLogin(dataDir()));
 program.action(() => { void launchTui(); });
 program.parseAsync(process.argv);

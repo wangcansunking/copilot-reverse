@@ -1,4 +1,4 @@
-# llm-maestro
+# copilot-reverse
 
 Interactive terminal app that turns your GitHub Copilot subscription into local
 OpenAI- and Anthropic-compatible endpoints, with a self-healing daemon and a
@@ -11,7 +11,7 @@ built-in assistant.
 ## Quick start
 
 ```bash
-npx llm-maestro      # device-code login, then the TUI launches
+npx copilot-reverse      # device-code login, then the TUI launches
 ```
 
 In the TUI: `/help`, `/doctor`, `/setup-claude`, `/setup-codex`, `/metrics`, or
@@ -23,8 +23,8 @@ Point clients at:
 
 ## Architecture (M1)
 
-- **TUI** (Ink) — the `maestro` process: REPL + slash commands + claude-agent-sdk
-  assistant (which dogfoods maestro's own Anthropic endpoint).
+- **TUI** (Ink) — the `copilot-reverse` process: REPL + slash commands + claude-agent-sdk
+  assistant (which dogfoods copilot-reverse's own Anthropic endpoint).
 - **Supervisor** (:7890) — control API + SQLite + self-healing worker supervision.
 - **Worker** (:7891) — OpenAI `/v1/chat/completions` + Anthropic `/v1/messages`
   → Copilot, with tool-use translation both ways.

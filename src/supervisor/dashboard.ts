@@ -7,7 +7,7 @@ export function dashboardHtml(): string {
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>llm-maestro dashboard</title>
+<title>copilot-reverse dashboard</title>
 <style>
   :root { color-scheme: dark; }
   body { margin: 0; font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #0b0e14; color: #c7d0e0; }
@@ -31,7 +31,7 @@ export function dashboardHtml(): string {
 </head>
 <body>
 <header>
-  <h1>✳ llm-maestro</h1>
+  <h1>✳ copilot-reverse</h1>
   <span class="muted">worker <span id="state" class="badge">…</span></span>
   <span class="muted" id="updated"></span>
 </header>

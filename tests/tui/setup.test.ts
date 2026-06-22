@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { claudeCodeConfig, codexConfig, claudeMaestroEnv, withClaude1mSuffix } from "../../src/tui/setup/clients.js";
+import { claudeCodeConfig, codexConfig, claudeCopilotReverseEnv, withClaude1mSuffix } from "../../src/tui/setup/clients.js";
 
 describe("withClaude1mSuffix", () => {
   it("appends [1m] for a ~1M model so Claude Code uses its 1M window", () => {
@@ -13,16 +13,16 @@ describe("withClaude1mSuffix", () => {
   });
 });
 
-describe("claudeMaestroEnv", () => {
+describe("claudeCopilotReverseEnv", () => {
   it("writes the [1m] model + window so Claude Code knows it's a 1M model", () => {
-    const env = claudeMaestroEnv("http://127.0.0.1:7891", "k", "claude-opus-4.8", 1_000_000);
+    const env = claudeCopilotReverseEnv("http://127.0.0.1:7891", "k", "claude-opus-4.8", 1_000_000);
     expect(env.ANTHROPIC_MODEL).toBe("claude-opus-4.8[1m]");
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
     expect(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe("80");
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe("0");
   });
   it("omits the window/suffix when it's unknown", () => {
-    const env = claudeMaestroEnv("http://x", "k", "gpt-4o");
+    const env = claudeCopilotReverseEnv("http://x", "k", "gpt-4o");
     expect(env.ANTHROPIC_MODEL).toBe("gpt-4o");
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
   });
