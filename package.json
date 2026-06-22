@@ -4,18 +4,36 @@
   "description": "Interactive terminal app that exposes your GitHub Copilot subscription as local OpenAI- and Anthropic-compatible endpoints, with a self-healing daemon and a built-in assistant.",
   "type": "module",
   "license": "MIT",
-  "bin": { "copilot-reverse": "dist/cli/index.js" },
-  "files": ["dist", "README.md"],
-  "keywords": ["github-copilot", "openai", "anthropic", "proxy", "cli", "tui", "ink", "claude", "llm"],
+  "bin": {
+    "copilot-reverse": "dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "keywords": [
+    "github-copilot",
+    "openai",
+    "anthropic",
+    "proxy",
+    "cli",
+    "tui",
+    "ink",
+    "claude",
+    "llm"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "vitest run e2e/copilot-reverse.e2e.test.ts tests/e2e",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "dev": "tsx src/cli/index.ts",
     "prepublishOnly": "npm run build && npm run test"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.1.0",
     "better-sqlite3": "^12.11.1",
@@ -31,6 +49,7 @@
     "@types/node": "^20.0.0",
     "@types/react": "^18.3.0",
     "@types/supertest": "^6.0.0",
+    "@vitest/coverage-v8": "^2.1.9",
     "ink-testing-library": "^4.0.0",
     "supertest": "^7.0.0",
     "tsx": "^4.0.0",
