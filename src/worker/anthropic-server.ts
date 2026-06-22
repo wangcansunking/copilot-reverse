@@ -3,6 +3,7 @@ import type { Router } from "./router.js";
 import type { MetricSink } from "./server.js";
 import { anthropicRequestToCanonical, canonicalToAnthropicResponse } from "../core/anthropic-inbound.js";
 import { estimateTokens } from "../core/tokens.js";
+import { errorHint } from "./errors.js";
 import { CopilotAuthError } from "../providers/copilot/token.js";
 
 const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
@@ -71,7 +72,9 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         metric(200);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const raw = err instanceof Error ? err.message : String(err);
+      const hint = errorHint(raw);
+      const message = hint ? `${raw}\n${hint}` : raw;
       const status = err instanceof CopilotAuthError ? 401 : 502;
       const errorType = status === 401 ? "authentication_error" : "api_error";
       if (!res.headersSent) {

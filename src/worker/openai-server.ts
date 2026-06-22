@@ -2,6 +2,7 @@ import { type Express } from "express";
 import type { Router } from "./router.js";
 import type { MetricSink } from "./server.js";
 import { openaiRequestToCanonical, canonicalToOpenAIResponse, canonicalChunkToOpenAISSE } from "../core/openai-inbound.js";
+import { errorHint } from "./errors.js";
 import { CopilotAuthError } from "../providers/copilot/token.js";
 
 export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink): void {
@@ -24,7 +25,9 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
         metric(200);
       }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
+      const raw = err instanceof Error ? err.message : String(err);
+      const hint = errorHint(raw);
+      const message = hint ? `${raw}\n${hint}` : raw;
       const status = err instanceof CopilotAuthError ? 401 : 502;
       if (!res.headersSent) {
         res.status(status).json({ error: { message } });
