@@ -16,6 +16,27 @@ describe("CopilotAdapter", () => {
     const init = f.mock.calls[0][1] as RequestInit;
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer cop");
   });
+  it("expands parallel tool_results into one OpenAI tool message each (matched tool_call_ids)", async () => {
+    let body: any;
+    const f = vi.fn(async (_url: string, init: RequestInit) => {
+      body = JSON.parse(init.body as string);
+      return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    await a.complete({
+      model: "gpt-4o", stream: false, maxTokens: 10,
+      messages: [
+        { role: "user", content: [{ type: "text", text: "go" }] },
+        { role: "assistant", content: [{ type: "tool_use", id: "A", name: "f", input: {} }, { type: "tool_use", id: "B", name: "g", input: {} }] },
+        { role: "tool", content: [{ type: "tool_result", toolUseId: "A", content: "ra" }, { type: "tool_result", toolUseId: "B", content: "rb" }] },
+      ],
+    });
+    const toolMsgs = body.messages.filter((m: any) => m.role === "tool");
+    // both tool_use ids must have a matching tool_result message — not just the first
+    expect(toolMsgs.map((m: any) => m.tool_call_id)).toEqual(["A", "B"]);
+    expect(toolMsgs.map((m: any) => m.content)).toEqual(["ra", "rb"]);
+  });
+
   it("streams text deltas", async () => {
     const sse = 'data: {"choices":[{"delta":{"content":"he"}}]}\n\n' + 'data: {"choices":[{"delta":{"content":"llo"}}]}\n\n' + "data: [DONE]\n\n";
     const f = vi.fn(async () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }));

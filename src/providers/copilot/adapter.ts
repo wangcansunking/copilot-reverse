@@ -6,15 +6,23 @@ interface TokenSource { get(): Promise<string> }
 
 // Canonical messages -> OpenAI wire messages (Copilot is OpenAI-shaped).
 function toWireMessages(messages: CanonicalMessage[]) {
-  return messages.map((m) => {
+  const out: any[] = [];
+  for (const m of messages) {
+    const toolResults = m.content.filter((b): b is Extract<ContentBlock, { type: "tool_result" }> => b.type === "tool_result");
+    // EACH tool_result becomes its own OpenAI `tool` message. Anthropic packs parallel results
+    // into one user message; emitting only the first (the old bug) left later tool_use ids without
+    // a matching tool_result -> Claude/Copilot 400 "tool_use ids ... without tool_result blocks".
+    if (toolResults.length) {
+      for (const tr of toolResults) out.push({ role: "tool", tool_call_id: tr.toolUseId, content: tr.content });
+      continue;
+    }
     const text = m.content.filter((b) => b.type === "text").map((b) => (b as any).text).join("");
     const toolUses = m.content.filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use");
-    const toolResult = m.content.find((b): b is Extract<ContentBlock, { type: "tool_result" }> => b.type === "tool_result");
-    if (m.role === "tool" && toolResult) return { role: "tool", tool_call_id: toolResult.toolUseId, content: toolResult.content };
-    const out: any = { role: m.role, content: text || null };
-    if (toolUses.length) out.tool_calls = toolUses.map((t) => ({ id: t.id, type: "function", function: { name: t.name, arguments: JSON.stringify(t.input) } }));
-    return out;
-  });
+    const msg: any = { role: m.role, content: text || null };
+    if (toolUses.length) msg.tool_calls = toolUses.map((t) => ({ id: t.id, type: "function", function: { name: t.name, arguments: JSON.stringify(t.input) } }));
+    out.push(msg);
+  }
+  return out;
 }
 
 function buildBody(req: CanonicalRequest) {
