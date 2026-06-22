@@ -33,6 +33,15 @@ describe("worker Anthropic endpoint", () => {
     expect(res.body.content[0].text).toBe("hello");
   });
 
+  it("gives each streamed response a unique message id (clients dedupe by id)", async () => {
+    const send = () => request(app()).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const idOf = (text: string) => JSON.parse(text.split("\n\n")[0].split("\n").find((l) => l.startsWith("data: "))!.slice(6)).message.id as string;
+    const [a, b] = await Promise.all([send(), send()]);
+    const idA = idOf(a.text), idB = idOf(b.text);
+    expect(idA).toMatch(/^msg_/);
+    expect(idA).not.toBe(idB); // must NOT be a constant like msg_<model>
+  });
+
   it("SSE message stream begins with message_start", async () => {
     const res = await request(app()).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
     expect(res.text).toContain("message_start");

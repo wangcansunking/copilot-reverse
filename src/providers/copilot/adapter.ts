@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { ProviderAdapter } from "../types.js";
 import type { CanonicalRequest, CanonicalResponse, CanonicalChunk, CanonicalMessage, ContentBlock } from "../../core/canonical.js";
 
@@ -55,7 +56,7 @@ export class CopilotAdapter implements ProviderAdapter {
     if (choice.message.content) content.push({ type: "text", text: choice.message.content });
     for (const tc of choice.message.tool_calls ?? []) content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input: safeJson(tc.function.arguments) });
     return {
-      id: data.id ?? "cmpl", model: req.model, content,
+      id: data.id ?? `cmpl-${randomUUID().replace(/-/g, "")}`, model: req.model, content,
       finishReason: choice.finish_reason === "tool_calls" ? "tool_use" : choice.finish_reason === "length" ? "length" : "stop",
       usage: { promptTokens: data.usage?.prompt_tokens ?? 0, completionTokens: data.usage?.completion_tokens ?? 0 },
     };

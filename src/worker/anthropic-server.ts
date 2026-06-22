@@ -1,4 +1,5 @@
 import { type Express } from "express";
+import { randomUUID } from "node:crypto";
 import type { Router } from "./router.js";
 import type { MetricSink } from "./server.js";
 import { anthropicRequestToCanonical, canonicalToAnthropicResponse } from "../core/anthropic-inbound.js";
@@ -24,7 +25,10 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
       if (canon.stream) {
         res.setHeader("content-type", "text/event-stream");
         res.setHeader("cache-control", "no-cache");
-        const id = `msg_${canon.model}`;
+        // MUST be unique per message — Anthropic ids are unique and clients (Claude Code) key
+        // their message store on it. A constant id made every answer overwrite/dedupe to the
+        // first one, so different questions appeared to return the same content.
+        const id = `msg_${randomUUID().replace(/-/g, "")}`;
         res.write(frame("message_start", { type: "message_start", message: { id, type: "message", role: "assistant", model: canon.model, content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } }));
 
         // D3 (interface-freeze §5.4) + mixed text+tool fix (architect, 2026-06-17): the endpoint owns

@@ -1,4 +1,5 @@
 import { type Express } from "express";
+import { randomUUID } from "node:crypto";
 import type { Router } from "./router.js";
 import type { MetricSink } from "./server.js";
 import { openaiRequestToCanonical, canonicalToOpenAIResponse, canonicalChunkToOpenAISSE } from "../core/openai-inbound.js";
@@ -16,7 +17,7 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
       if (canon.stream) {
         res.setHeader("content-type", "text/event-stream");
         res.setHeader("cache-control", "no-cache");
-        const id = `chatcmpl-${canon.model}`;
+        const id = `chatcmpl-${randomUUID().replace(/-/g, "")}`; // unique per response, not constant
         for await (const chunk of provider.stream(canon)) res.write(canonicalChunkToOpenAISSE(chunk, id, canon.model));
         res.end();
         metric(200);
