@@ -18,8 +18,14 @@ function toWireMessages(messages: CanonicalMessage[]) {
       continue;
     }
     const text = m.content.filter((b) => b.type === "text").map((b) => (b as any).text).join("");
+    const images = m.content.filter((b): b is Extract<ContentBlock, { type: "image" }> => b.type === "image");
     const toolUses = m.content.filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use");
-    const msg: any = { role: m.role, content: text || null };
+    // With images, content becomes an OpenAI multipart array (text part + image_url parts); otherwise a string.
+    let msgContent: any = text || null;
+    if (images.length) {
+      msgContent = [...(text ? [{ type: "text", text }] : []), ...images.map((img) => ({ type: "image_url", image_url: { url: img.dataUrl } }))];
+    }
+    const msg: any = { role: m.role, content: msgContent };
     if (toolUses.length) msg.tool_calls = toolUses.map((t) => ({ id: t.id, type: "function", function: { name: t.name, arguments: JSON.stringify(t.input) } }));
     out.push(msg);
   }

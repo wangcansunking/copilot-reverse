@@ -16,6 +16,23 @@ describe("CopilotAdapter", () => {
     const init = f.mock.calls[0][1] as RequestInit;
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer cop");
   });
+  it("sends a canonical image block as an OpenAI image_url part on the wire", async () => {
+    let body: any;
+    const f = vi.fn(async (_url: string, init: RequestInit) => {
+      body = JSON.parse(init.body as string);
+      return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "a cat" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    await a.complete({
+      model: "gpt-4o", stream: false, maxTokens: 10,
+      messages: [{ role: "user", content: [{ type: "text", text: "what is this?" }, { type: "image", dataUrl: "data:image/png;base64,XYZ" }] }],
+    });
+    expect(body.messages[0].content).toEqual([
+      { type: "text", text: "what is this?" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,XYZ" } },
+    ]);
+  });
+
   it("expands parallel tool_results into one OpenAI tool message each (matched tool_call_ids)", async () => {
     let body: any;
     const f = vi.fn(async (_url: string, init: RequestInit) => {

@@ -43,6 +43,21 @@ describe("anthropic inbound", () => {
     expect(c.messages[0]).toEqual({ role: "system", content: [{ type: "text", text: "You are copilot-reverse." }] });
   });
 
+  it("converts an Anthropic image block (base64 + url) to a canonical image block", () => {
+    const c = anthropicRequestToCanonical({
+      model: "claude-opus-4-8", max_tokens: 100,
+      messages: [{ role: "user", content: [
+        { type: "text", text: "what is this?" },
+        { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } } as any,
+        { type: "image", source: { type: "url", url: "https://x/y.jpg" } } as any,
+      ] }],
+    });
+    const blocks = c.messages[0].content;
+    expect(blocks[0]).toEqual({ type: "text", text: "what is this?" });
+    expect(blocks[1]).toEqual({ type: "image", dataUrl: "data:image/png;base64,AAAA" });
+    expect(blocks[2]).toEqual({ type: "image", dataUrl: "https://x/y.jpg" });
+  });
+
   it("drops Anthropic server-side tools that have no input_schema (prevents client hang)", () => {
     const c = anthropicRequestToCanonical({
       model: "claude-opus-4-8", max_tokens: 100,

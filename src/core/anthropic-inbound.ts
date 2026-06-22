@@ -1,6 +1,7 @@
 import type { CanonicalRequest, CanonicalResponse, CanonicalMessage, ContentBlock } from "./canonical.js";
 
-interface AnthropicBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown }
+interface AnthropicImageSource { type: "base64" | "url"; media_type?: string; data?: string; url?: string }
+interface AnthropicBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; source?: AnthropicImageSource }
 interface AnthropicMsg { role: "user" | "assistant"; content: string | AnthropicBlock[] }
 interface AnthropicTool { name: string; description?: string; input_schema: Record<string, unknown> }
 interface AnthropicRequest {
@@ -22,6 +23,13 @@ function blocksToCanonical(content: string | AnthropicBlock[]): ContentBlock[] {
   const out: ContentBlock[] = [];
   for (const b of content) {
     if (b.type === "text" && b.text != null) out.push({ type: "text", text: b.text });
+    else if (b.type === "image" && b.source) {
+      // Anthropic image: base64 (media_type + data) or a url source. Normalize to a data URL.
+      const dataUrl = b.source.type === "url" && b.source.url
+        ? b.source.url
+        : `data:${b.source.media_type ?? "image/png"};base64,${b.source.data ?? ""}`;
+      out.push({ type: "image", dataUrl });
+    }
     else if (b.type === "tool_use") out.push({ type: "tool_use", id: b.id!, name: b.name!, input: b.input });
     else if (b.type === "tool_result") out.push({ type: "tool_result", toolUseId: b.tool_use_id!, content: typeof b.content === "string" ? b.content : JSON.stringify(b.content) });
   }

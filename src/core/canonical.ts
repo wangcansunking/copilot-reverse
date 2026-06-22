@@ -1,7 +1,8 @@
 export interface TextBlock { type: "text"; text: string }
+export interface ImageBlock { type: "image"; dataUrl: string } // full data URI, e.g. data:image/png;base64,...
 export interface ToolUseBlock { type: "tool_use"; id: string; name: string; input: unknown }
 export interface ToolResultBlock { type: "tool_result"; toolUseId: string; content: string }
-export type ContentBlock = TextBlock | ToolUseBlock | ToolResultBlock;
+export type ContentBlock = TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock;
 
 export interface CanonicalMessage {
   role: "system" | "user" | "assistant" | "tool";

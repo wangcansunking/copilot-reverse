@@ -53,4 +53,18 @@ describe("openai inbound", () => {
     });
     expect(c.messages[0]).toEqual({ role: "system", content: [{ type: "text", text: "You are helpful" }] });
   });
+
+  it("extracts image_url parts as canonical image blocks (vision)", () => {
+    const c = openaiRequestToCanonical({
+      model: "gpt-4o",
+      messages: [{ role: "user", content: [
+        { type: "text", text: "describe" },
+        { type: "image_url", image_url: { url: "data:image/png;base64,ZZZ" } },
+      ] } as any],
+    });
+    expect(c.messages[0].content).toEqual([
+      { type: "text", text: "describe" },
+      { type: "image", dataUrl: "data:image/png;base64,ZZZ" },
+    ]);
+  });
 });
