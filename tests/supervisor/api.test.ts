@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import request from "supertest";
 import { createControlApp } from "../../src/supervisor/api.js";
 import { openDb, recordRestart, recordRequest } from "../../src/supervisor/db.js";
+import { EventBus } from "../../src/supervisor/events.js";
 
 function fixture() {
   const db = openDb(":memory:");
@@ -38,5 +39,85 @@ describe("control api", () => {
   it("recent requests", async () => {
     const res = await request(fixture().app).get("/api/requests");
     expect(res.body.requests[0].model).toBe("gpt-4o");
+  });
+  it("stop and start actions are wired", async () => {
+    const fx = fixture();
+    await request(fx.app).post("/api/stop");
+    await request(fx.app).post("/api/start");
+    expect(fx.calls).toEqual(["stop", "start"]);
+  });
+  it("serves the dashboard html at /", async () => {
+    const res = await request(fixture().app).get("/");
+    expect(res.headers["content-type"]).toMatch(/html/);
+    expect(res.text).toMatch(/<!doctype html>/i);
+  });
+});
+
+describe("control api /api/events (SSE)", () => {
+  // Drive the app on a real port and read the SSE stream with fetch — supertest's buffering
+  // doesn't play well with never-ending event-streams.
+  async function withServer(deps: Parameters<typeof createControlApp>[0], fn: (base: string) => Promise<void>) {
+    const app = createControlApp(deps);
+    const server = app.listen(0, "127.0.0.1");
+    await new Promise((r) => server.once("listening", r));
+    const addr = server.address();
+    const port = typeof addr === "object" && addr ? addr.port : 0;
+    try { await fn(`http://127.0.0.1:${port}`); }
+    finally { server.close(); }
+  }
+
+  it("streams an initial hello then live bus events to a connected client", async () => {
+    const bus = new EventBus();
+    await withServer(
+      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], subscribe: (send) => bus.subscribe(send) },
+      async (base) => {
+        const ctrl = new AbortController();
+        const res = await fetch(`${base}/api/events`, { signal: ctrl.signal });
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let body = "";
+        setTimeout(() => bus.emit("metric", { ts: 1, model: "gpt-4o", status: 200 }), 30);
+        while (!body.includes("event: metric")) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          body += decoder.decode(value, { stream: true });
+        }
+        ctrl.abort();
+        expect(body).toContain("event: hello");
+        expect(body).toContain('"state":"ready"');
+        expect(body).toContain("event: metric");
+        expect(body).toContain('"model":"gpt-4o"');
+      },
+    );
+  });
+
+  it("unsubscribes the listener when the client disconnects", async () => {
+    const bus = new EventBus();
+    await withServer(
+      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], subscribe: (send) => bus.subscribe(send) },
+      async (base) => {
+        const ctrl = new AbortController();
+        const res = await fetch(`${base}/api/events`, { signal: ctrl.signal });
+        const reader = res.body!.getReader();
+        await reader.read();   // receive the hello frame (one subscriber now attached)
+        ctrl.abort();          // disconnect
+        await new Promise((r) => setTimeout(r, 50)); // let the server observe 'close'
+        expect(() => bus.emit("metric", { x: 1 })).not.toThrow();
+      },
+    );
+  });
+});
+
+describe("EventBus", () => {
+  it("delivers to all subscribers and stops after unsubscribe", () => {
+    const bus = new EventBus();
+    const a: string[] = [], b: string[] = [];
+    const offA = bus.subscribe((e) => a.push(e));
+    bus.subscribe((e) => b.push(e));
+    bus.emit("one", {});
+    offA();
+    bus.emit("two", {});
+    expect(a).toEqual(["one"]);       // A unsubscribed before "two"
+    expect(b).toEqual(["one", "two"]); // B still receiving
   });
 });

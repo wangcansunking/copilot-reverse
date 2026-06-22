@@ -65,5 +65,13 @@ export class WorkerMonitor {
     if (this.child && !this.child.killed) { this.child.removeAllListeners("exit"); this.child.kill(); }
     this.spawn();
   }
-  stop(): void { this.stopped = true; this.child?.send?.({ type: "shutdown" }); this.child?.kill(); }
+  stop(): void {
+    this.stopped = true;
+    const child = this.child;
+    if (!child || child.killed) return;
+    // The IPC channel may already be torn down (e.g. right after a manual restart) — sending then
+    // throws ERR_IPC_CHANNEL_CLOSED. Guard the graceful shutdown and fall back to a hard kill.
+    try { if (child.connected) child.send({ type: "shutdown" }); } catch { /* channel already closed */ }
+    child.kill();
+  }
 }
