@@ -4,6 +4,8 @@ Interactive terminal app that turns your GitHub Copilot subscription into local
 OpenAI- and Anthropic-compatible endpoints, with a self-healing daemon and a
 built-in assistant.
 
+> **New here? Read the [User Guide](GUIDE.md) — a 60-second start, no jargon.**
+
 > **Disclaimer:** The GitHub Copilot integration uses community-documented,
 > unofficial endpoints, for use with your own Copilot subscription only. It may
 > break if GitHub changes these endpoints.
