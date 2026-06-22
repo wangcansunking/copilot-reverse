@@ -17,6 +17,7 @@ import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/tok
 import { fetchCopilotModels, fetchModelLimits } from "../providers/copilot/models.js";
 import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
 import { readClientStatus } from "../tui/setup/status.js";
+import { applyCodexToml } from "../tui/setup/codex-toml.js";
 import type { SetupClient } from "../tui/setup/wizard.js";
 import { claudeCopilotReverseEnv } from "../tui/setup/clients.js";
 import { dataDir } from "../shared/paths.js";
@@ -87,12 +88,18 @@ async function launchTui(): Promise<void> {
 
   // Apply a client's config (shared by the /setup wizard and the assistant's setup_* tools).
   // For Claude Code we also write the selected model's real context window so the client doesn't
-  // assume the default 200K (which makes a 1M model read "context 100%" far too early).
+  // assume the default 200K (which makes a 1M model read "context 100%" far too early). For Codex
+  // we write BOTH a .env (legacy) and ~/.codex/config.toml (the native Codex config, with the
+  // model's context window) so either Codex setup style works.
   const applyClient = (clientKind: SetupClient, scope: Scope, model: string) => {
-    const r = clientKind === "claude"
-      ? applyClaude(scope, claudeCopilotReverseEnv(workerBase, "copilot-reverse-local", model, modelLimits[model]))
-      : applyCodex(scope, { OPENAI_BASE_URL: `${workerBase}/v1`, OPENAI_API_KEY: "copilot-reverse-local", OPENAI_MODEL: model });
-    writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), [clientKind]: true });
+    if (clientKind === "claude") {
+      const r = applyClaude(scope, claudeCopilotReverseEnv(workerBase, "copilot-reverse-local", model, modelLimits[model]));
+      writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), claude: true });
+      return r;
+    }
+    const r = applyCodex(scope, { OPENAI_BASE_URL: `${workerBase}/v1`, OPENAI_API_KEY: "copilot-reverse-local", OPENAI_MODEL: model });
+    applyCodexToml({ baseUrl: `${workerBase}/v1`, model, contextWindow: modelLimits[model] });
+    writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), codex: true });
     return r;
   };
   const setup = { apply: async (clientKind: SetupClient, scope: Scope, model: string) => applyClient(clientKind, scope, model) };
