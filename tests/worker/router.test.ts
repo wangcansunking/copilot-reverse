@@ -17,6 +17,11 @@ describe("Router", () => {
     expect(r.resolveModel("gpt-4o")).toBe("gpt-4o"); // exact stays
     expect(r.resolveModel("unknown-xyz")).toBe("unknown-xyz"); // no match -> passthrough
   });
+  it("strips Claude Code's [1m] suffix before forwarding to Copilot", () => {
+    const r = new Router([fake], {});
+    r.setAvailableModels(["claude-opus-4.8", "gpt-4o"]);
+    expect(r.resolveModel("claude-opus-4.8[1m]")).toBe("claude-opus-4.8");
+  });
   it("returns the only provider", () => {
     expect(new Router([fake], { "*": "gpt-4o" }).pick("x").name).toBe("copilot");
   });

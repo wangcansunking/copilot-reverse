@@ -8,6 +8,9 @@ export class Router {
   // The live Copilot model list, used for fuzzy matching (set once fetched at worker startup).
   setAvailableModels(ids: string[]): void { this.available = ids; }
   resolveModel(requested: string): string {
+    // Claude Code appends [1m] to signal its 1M context window; Copilot doesn't know that id, so
+    // strip it back to the real model before mapping/forwarding.
+    requested = requested.endsWith("[1m]") ? requested.slice(0, -4) : requested;
     const mapped = this.modelMap[requested];
     if (mapped) return mapped;
     // Fuzzy-match a near-miss id (e.g. claude-opus-4-8-20251101 -> claude-opus-4.8) to a real model.

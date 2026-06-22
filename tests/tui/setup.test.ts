@@ -1,16 +1,29 @@
 import { describe, it, expect } from "vitest";
-import { claudeCodeConfig, codexConfig, claudeMaestroEnv } from "../../src/tui/setup/clients.js";
+import { claudeCodeConfig, codexConfig, claudeMaestroEnv, withClaude1mSuffix } from "../../src/tui/setup/clients.js";
+
+describe("withClaude1mSuffix", () => {
+  it("appends [1m] for a ~1M model so Claude Code uses its 1M window", () => {
+    expect(withClaude1mSuffix("claude-opus-4.8", 1_000_000)).toBe("claude-opus-4.8[1m]");
+    expect(withClaude1mSuffix("claude-opus-4.8", 936_000)).toBe("claude-opus-4.8[1m]");
+  });
+  it("leaves sub-1M and unknown models alone, and doesn't double-append", () => {
+    expect(withClaude1mSuffix("claude-opus-4.5", 200_000)).toBe("claude-opus-4.5");
+    expect(withClaude1mSuffix("gpt-4o")).toBe("gpt-4o");
+    expect(withClaude1mSuffix("claude-opus-4.8[1m]", 1_000_000)).toBe("claude-opus-4.8[1m]");
+  });
+});
 
 describe("claudeMaestroEnv", () => {
-  it("writes the model's context window so Claude Code knows it's a 1M model", () => {
+  it("writes the [1m] model + window so Claude Code knows it's a 1M model", () => {
     const env = claudeMaestroEnv("http://127.0.0.1:7891", "k", "claude-opus-4.8", 1_000_000);
-    expect(env.ANTHROPIC_MODEL).toBe("claude-opus-4.8");
+    expect(env.ANTHROPIC_MODEL).toBe("claude-opus-4.8[1m]");
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
     expect(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe("80");
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe("0");
   });
-  it("omits the window when it's unknown", () => {
+  it("omits the window/suffix when it's unknown", () => {
     const env = claudeMaestroEnv("http://x", "k", "gpt-4o");
+    expect(env.ANTHROPIC_MODEL).toBe("gpt-4o");
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
   });
 });

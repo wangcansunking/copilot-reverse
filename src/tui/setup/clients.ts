@@ -8,15 +8,26 @@ export function claudeCodeConfig(e: Endpoint): ClientSetup {
     instructions: `Set these env vars for Claude Code:\n  ANTHROPIC_BASE_URL=${base}\n  ANTHROPIC_API_KEY=${e.apiKey}`,
   };
 }
+export const ONE_M_SUFFIX = "[1m]";
+
+// Claude Code switches to its 1M context window only when ANTHROPIC_MODEL ends with `[1m]` — that
+// suffix is its built-in signal for a 1M model. Mirror agent-maestro: append it for models whose
+// window is in the ~1M band (800K..1.5M). Without it Claude Code assumes 200K -> "context 100%"
+// and /compact fails. The proxy strips the suffix again before forwarding to Copilot.
+export function withClaude1mSuffix(model: string, contextWindow?: number): string {
+  return contextWindow && contextWindow > 800_000 && contextWindow < 1_500_000 && !model.endsWith(ONE_M_SUFFIX)
+    ? `${model}${ONE_M_SUFFIX}`
+    : model;
+}
+
 // The full env maestro writes into Claude Code's settings.json. Beyond the endpoint, it tells
-// Claude Code the selected model's real context window (CLAUDE_CODE_AUTO_COMPACT_WINDOW) so the
-// client stops assuming the default 200K and compacts at the right point — without this a 1M
-// model (e.g. claude-opus-4.8) shows "context 100%" far too early. Mirrors agent-maestro.
+// Claude Code the selected model's real context window (via the [1m] model suffix and
+// CLAUDE_CODE_AUTO_COMPACT_WINDOW) so the client stops assuming the default 200K. Mirrors agent-maestro.
 export function claudeMaestroEnv(base: string, apiKey: string, model: string, contextWindow?: number): Record<string, string> {
   return {
     ANTHROPIC_BASE_URL: base,
     ANTHROPIC_API_KEY: apiKey,
-    ANTHROPIC_MODEL: model,
+    ANTHROPIC_MODEL: withClaude1mSuffix(model, contextWindow),
     ...(contextWindow ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow) } : {}),
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80",
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
