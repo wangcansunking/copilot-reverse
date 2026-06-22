@@ -29,7 +29,11 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         // their message store on it. A constant id made every answer overwrite/dedupe to the
         // first one, so different questions appeared to return the same content.
         const id = `msg_${randomUUID().replace(/-/g, "")}`;
-        res.write(frame("message_start", { type: "message_start", message: { id, type: "message", role: "assistant", model: canon.model, content: [], stop_reason: null, usage: { input_tokens: 0, output_tokens: 0 } } }));
+        // Claude Code reads input_tokens from message_start to size the context bar, but the real
+        // usage only arrives in the final frame. Seed message_start with an ESTIMATE so the bar
+        // isn't stuck at 0%; the terminal message_delta then reports the exact count.
+        const estInput = estimateTokens(canon);
+        res.write(frame("message_start", { type: "message_start", message: { id, type: "message", role: "assistant", model: canon.model, content: [], stop_reason: null, usage: { input_tokens: estInput, output_tokens: 0, cache_read_input_tokens: 0 } } }));
 
         // D3 (interface-freeze §5.4) + mixed text+tool fix (architect, 2026-06-17): the endpoint owns
         // open/stop bookkeeping with DYNAMIC SEQUENTIAL allocation. We do NOT pre-open an index-0 text block,
@@ -71,7 +75,7 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         // Report real usage (agent-maestro shape): split cached tokens out of input so Claude Code's
         // context bar is accurate. Falls back to zeros if Copilot didn't return usage.
         const cached = usage?.cachedTokens ?? 0;
-        const inputTokens = Math.max(0, (usage?.promptTokens ?? 0) - cached);
+        const inputTokens = Math.max(0, (usage?.promptTokens ?? estInput) - cached); // fall back to the estimate
         const deltaUsage = { input_tokens: inputTokens, output_tokens: usage?.completionTokens ?? 0, cache_read_input_tokens: cached };
         res.write(frame("message_delta", { type: "message_delta", delta: { stop_reason: stopReason === "tool_use" ? "tool_use" : stopReason === "length" ? "max_tokens" : "end_turn" }, usage: deltaUsage }));
         res.write(frame("message_stop", { type: "message_stop" }));

@@ -59,6 +59,12 @@ describe("worker Anthropic endpoint", () => {
     expect(idA).not.toBe(idB); // must NOT be a constant like msg_<model>
   });
 
+  it("seeds message_start with an estimated input_tokens so the context bar isn't stuck at 0", async () => {
+    const res = await request(app()).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "a reasonably long prompt about many things" }] });
+    const start = parseFrames(res.text).find((f) => f.event === "message_start");
+    expect(start!.data.message.usage.input_tokens).toBeGreaterThan(0);
+  });
+
   it("SSE message stream begins with message_start", async () => {
     const res = await request(app()).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
     expect(res.text).toContain("message_start");
