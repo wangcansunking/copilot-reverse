@@ -17,6 +17,16 @@ describe("makeOnChat", () => {
     expect(printed.join("\n")).toMatch(/assistant error: boom/);
   });
 
+  it("steers the user to /login when the error looks like an expired GitHub login", async () => {
+    const runner = vi.fn(async () => { throw new Error("API Error: 401 authentication_error: GitHub login expired"); });
+    const printed: string[] = [];
+    const onChat = makeOnChat({ client: {} as any, workerBaseUrl: "http://x", apiKey: "k", model: "m" }, runner as any);
+    await onChat("hi", (l) => printed.push(l));
+    const out = printed.join("\n");
+    expect(out).toMatch(/\/login/);
+    expect(out).not.toMatch(/\/doctor/); // auth path replaces the generic hint
+  });
+
   it("gives up (and aborts) when a turn exceeds the timeout", async () => {
     // a runner that never resolves on its own — only the timeout can end it
     const runner = vi.fn((_c: any, _p: string, _print: any, abort?: AbortController) =>

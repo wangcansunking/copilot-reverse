@@ -18,8 +18,14 @@ export function makeOnChat(cfg: AssistantConfig, runner: TurnRunner, timeoutMs =
     } catch (err) {
       if (timedOut) { print(`⎿ no response after ${Math.round(timeoutMs / 1000)}s — gave up (try again or pick a different model)`); return; }
       if (ctrl.signal.aborted) { print("⎿ interrupted"); return; }
-      print(`assistant error: ${err instanceof Error ? err.message : String(err)}`);
-      print("\n  ↳ next: retry · /model to switch model · /doctor to check health · /report to file it");
+      const message = err instanceof Error ? err.message : String(err);
+      print(`assistant error: ${message}`);
+      // Detect an expired/revoked GitHub login anywhere in the error and steer the user to re-auth.
+      if (/login expired|authentication_error|unauthorized|\b401\b|\b403\b|token exchange failed/i.test(message)) {
+        print("\n  ↳ your GitHub login looks expired — run /login to sign in again");
+      } else {
+        print("\n  ↳ next: retry · /model to switch model · /doctor to check health · /report to file it");
+      }
     }
   };
 }

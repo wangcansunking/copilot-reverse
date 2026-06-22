@@ -20,4 +20,10 @@ describe("errorHint", () => {
     expect(errorHint("model_not_found: nope")).toMatch(/\/model/);
     expect(errorHint("invalid model specified")).toMatch(/\/model/);
   });
+  it("detects an expired/revoked login and points to /login", () => {
+    expect(errorHint("GitHub login expired — restart copilot-reverse to re-authenticate")).toMatch(/\/login/);
+    expect(errorHint("authentication_error: token expired")).toMatch(/\/login/);
+    expect(errorHint("copilot token exchange failed: 401")).toMatch(/\/login/);
+    expect(errorHint("403 Forbidden")).toMatch(/\/login/);
+  });
 });

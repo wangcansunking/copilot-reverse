@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createWorkerApp } from "../src/worker/server.js";
 import { Router } from "../src/worker/router.js";
+import { CopilotAuthError } from "../src/providers/copilot/token.js";
 import { createControlApp } from "../src/supervisor/api.js";
 import { openDb, recordRequest, recentRequests } from "../src/supervisor/db.js";
 import { buildRegistry } from "../src/tui/slash/commands.js";
@@ -144,6 +145,18 @@ describe("E2E: streaming correctness (this session's fixes)", () => {
     const res = await request(worker).post("/v1/chat/completions").send({ model: "gpt-4o", stream: true, messages: [{ role: "user", content: "hi" }] });
     expect(res.text).toContain("context_length_exceeded");
     expect(res.text).toContain('"error"');
+  });
+
+  it("EP-14b an expired token (401) surfaces a /login hint in the error body", async () => {
+    const authFail: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => { throw new CopilotAuthError(401); },
+      async *stream(): AsyncIterable<CanonicalChunk> { throw new CopilotAuthError(401); },
+    };
+    const { worker } = wired(authFail);
+    const res = await request(worker).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 20, messages: [{ role: "user", content: "hi" }] });
+    expect(res.status).toBe(401);
+    expect(res.body.error.message).toMatch(/\/login/);
   });
 });
 
