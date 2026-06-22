@@ -48,7 +48,6 @@ export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, pri
 
   const actions = buildActions(cfg.client);
   const mcp = createSdkMcpServer({ name: "maestro", tools: sdkTools(actions) });
-  const maestroTools = ["get_status", "restart_worker", "run_doctor", "recent_requests"].map((t) => `mcp__maestro__${t}`);
 
   const response = queryFn({
     prompt,
@@ -56,11 +55,13 @@ export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, pri
       model: cfg.model,
       mcpServers: { maestro: mcp },
       // Keep the request small so a single turn never overflows a modest Copilot window:
-      //  - settingSources: [] -> do NOT load the cwd's CLAUDE.md / project memory / settings
-      //  - allowedTools restricted to the maestro tools -> no heavy built-in tool schemas
-      // This is the main fix for "the first question instantly fills the context".
+      //  - tools: [] -> disable ALL built-in Claude Code tools (Bash/Task/Read/Edit/…), whose huge
+      //    descriptions otherwise bloat every request and overflow the model -> Copilot 400. The
+      //    maestro MCP tools (via mcpServers) remain available. (`allowedTools` only gates
+      //    permission; `tools` is what actually removes them from the request.)
+      //  - settingSources: [] -> do NOT load the cwd's CLAUDE.md / project memory / settings.
+      tools: [],
       settingSources: [],
-      allowedTools: maestroTools,
       systemPrompt:
         "You are maestro's built-in assistant for the local Copilot proxy. Be concise. " +
         "When the user expresses an intent you have a tool for (check status, restart the worker, " +

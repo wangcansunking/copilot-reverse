@@ -5,7 +5,16 @@ interface AnthropicMsg { role: "user" | "assistant"; content: string | Anthropic
 interface AnthropicTool { name: string; description?: string; input_schema: Record<string, unknown> }
 interface AnthropicRequest {
   model: string; max_tokens: number; stream?: boolean; temperature?: number;
-  system?: string; tools?: AnthropicTool[]; messages: AnthropicMsg[];
+  system?: string | AnthropicBlock[]; tools?: AnthropicTool[]; messages: AnthropicMsg[];
+}
+
+// The Anthropic `system` field may be a plain string or an array of text blocks (the Claude Code
+// SDK sends blocks with cache_control). Flatten either shape to a string — otherwise it stringifies
+// to "[object Object]" and the model gets garbage instructions.
+function systemText(system: string | AnthropicBlock[] | undefined): string {
+  if (!system) return "";
+  if (typeof system === "string") return system;
+  return system.filter((b) => b.type === "text" && b.text != null).map((b) => b.text).join("");
 }
 
 function blocksToCanonical(content: string | AnthropicBlock[]): ContentBlock[] {
@@ -21,7 +30,8 @@ function blocksToCanonical(content: string | AnthropicBlock[]): ContentBlock[] {
 
 export function anthropicRequestToCanonical(req: AnthropicRequest): CanonicalRequest {
   const messages: CanonicalMessage[] = [];
-  if (req.system) messages.push({ role: "system", content: [{ type: "text", text: req.system }] });
+  const sys = systemText(req.system);
+  if (sys) messages.push({ role: "system", content: [{ type: "text", text: sys }] });
   for (const m of req.messages) {
     const content = blocksToCanonical(m.content);
     const isToolResult = content.some((b) => b.type === "tool_result");
