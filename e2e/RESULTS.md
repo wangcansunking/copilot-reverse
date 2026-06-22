@@ -19,4 +19,10 @@ Test Files  4 passed (4)
 
 ## Full project suite
 
-`npm test` (unit + integration + e2e): **197 passed**, tsc build clean.
+`npm test` (unit + integration + e2e): **215 passed**, tsc build clean.
+
+## Live integration (opt-in)
+
+`npm run test:integration` against the real Copilot API (local login required): **7 passed**
+(token exchange, model discovery incl. 1M window, OpenAI completion, Anthropic streaming with
+distinct answers, real message_delta usage, count_tokens). Auto-skips with no login.

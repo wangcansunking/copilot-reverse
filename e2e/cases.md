@@ -48,4 +48,13 @@ provider so no live network/token is needed. Spec: [`copilot-reverse.e2e.test.ts
 - **EP-17** — vision passthrough (images not dropped).
 - **EP-18/EP-19/EP-20** — tool-call translation in both directions.
 - **EP-24/EP-25/EP-26** — the full setup→status→reset lifecycle for both clients.
+
+## Live integration tests (opt-in, real Copilot)
+
+[`copilot-live.integration.test.ts`](./copilot-live.integration.test.ts) hits the REAL Copilot
+endpoints end-to-end (GitHub token exchange → worker → adapter → api.githubcopilot.com). It is
+**not** part of `npm test` — run it with `npm run test:integration`. Every case auto-skips when no
+GitHub login is on disk (so CI stays hermetic). Coverage: token exchange, model discovery (incl. a
+real 1M-window model), OpenAI completion, Anthropic streaming with **different questions → different
+answers** (the unique-id regression guard), real `message_delta` usage, and count_tokens.
 - **EP-07/EP-08/EP-09** — TUI command wiring: logs/error visibility, dashboard/report, config reset.

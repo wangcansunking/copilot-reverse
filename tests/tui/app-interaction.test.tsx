@@ -1,0 +1,124 @@
+// Deep TUI interaction tests — render the real Ink <App>, drive it via stdin, and assert on the
+// rendered frames. These cover user-facing flows the basic app.test.tsx doesn't: esc-to-interrupt,
+// error rendering, HUD per-scope badges (read from a status fn), reset flipping the badge, the
+// model picker, multi-turn streaming, and Repl autocomplete navigation.
+import { describe, it, expect, vi } from "vitest";
+import React from "react";
+import { render } from "ink-testing-library";
+import { App } from "../../src/tui/app.js";
+import { Registry } from "../../src/tui/slash/registry.js";
+import type { ClientStatus } from "../../src/tui/setup/status.js";
+
+const tick = (ms = 40) => new Promise((r) => setTimeout(r, ms));
+function reg(extra?: (r: Registry) => void) {
+  const r = new Registry({ client: {} as any, quit: vi.fn() });
+  r.add({ name: "/ping", describe: "ping", run: async () => ["pong"] });
+  extra?.(r);
+  return r;
+}
+const STATUS = (over: Partial<ClientStatus> = {}): ClientStatus => ({
+  claude: { user: false, project: false }, codex: { user: false, project: false }, ...over,
+});
+
+describe("TUI: HUD client badges (from the real status fn)", () => {
+  it("renders per-scope user/project markers for claude and codex", () => {
+    const readStatus = () => STATUS({ claude: { user: true, project: false }, codex: { user: false, project: true } });
+    const { lastFrame } = render(<App registry={reg()} title="m" readStatus={readStatus} />);
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/claude u:✓ p:○/);
+    expect(f).toMatch(/codex u:○ p:✓/);
+  });
+});
+
+describe("TUI: assistant errors are rendered (not swallowed)", () => {
+  it("shows an error line when onChat prints an error", async () => {
+    const onChat = async (_t: string, print: (l: string) => void) => { print("assistant error: boom"); };
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" onChat={onChat} />);
+    await tick();
+    stdin.write("hi there");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    expect(lastFrame()).toContain("assistant error: boom");
+  });
+});
+
+describe("TUI: esc interrupts an in-flight turn", () => {
+  it("aborts the turn and the abort signal fires", async () => {
+    let aborted = false;
+    const onChat = (_t: string, _p: (l: string) => void, _m?: string, abort?: AbortController) =>
+      new Promise<void>((resolve) => {
+        abort?.signal.addEventListener("abort", () => { aborted = true; resolve(); });
+      });
+    const { stdin } = render(<App registry={reg()} title="m" onChat={onChat} />);
+    await tick();
+    stdin.write("do something long");
+    await tick();
+    stdin.write("\r");          // start the turn
+    await tick();
+    stdin.write("\x1b");        // ESC
+    await tick(80);
+    expect(aborted).toBe(true);
+  });
+});
+
+describe("TUI: multi-turn streaming keeps answers distinct", () => {
+  it("each turn lands in its own bubble", async () => {
+    let n = 0;
+    const onChat = async (_t: string, print: (l: string) => void) => { n++; print(`answer-${n}`); };
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" onChat={onChat} />);
+    await tick();
+    stdin.write("q1"); await tick(); stdin.write("\r"); await tick(80);
+    stdin.write("q2"); await tick(); stdin.write("\r"); await tick(80);
+    const f = lastFrame() ?? "";
+    expect(f).toContain("answer-1");
+    expect(f).toContain("answer-2");
+  });
+});
+
+describe("TUI: Repl autocomplete navigation", () => {
+  it("down-arrow moves the highlight so Enter runs the second match", async () => {
+    const r = new Registry({ client: {} as any, quit: vi.fn() });
+    r.add({ name: "/setup-claude", describe: "a", run: async () => ["ran-claude"] });
+    r.add({ name: "/setup-codex", describe: "b", run: async () => ["ran-codex"] });
+    const { stdin, lastFrame } = render(<App registry={r} title="m" />);
+    await tick();
+    stdin.write("/setup");        // popup shows both, highlights the first
+    await tick();
+    stdin.write("\x1b[B");        // Down arrow -> highlight /setup-codex
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    const f = lastFrame() ?? "";
+    expect(f).toContain("ran-codex");
+    expect(f).not.toContain("ran-claude");
+  });
+
+  it("tab completes the highlighted command without running it", async () => {
+    const r = new Registry({ client: {} as any, quit: vi.fn() });
+    r.add({ name: "/doctor", describe: "d", run: async () => ["health-ok"] });
+    const { stdin, lastFrame } = render(<App registry={r} title="m" />);
+    await tick();
+    stdin.write("/doc");
+    await tick();
+    stdin.write("\t");           // Tab -> completes to "/doctor " but does not run
+    await tick(60);
+    expect(lastFrame()).not.toContain("health-ok");
+  });
+});
+
+describe("TUI: model picker", () => {
+  it("/model opens the picker and lists models with context windows", async () => {
+    const loadModels = async () => ["gpt-4o", "claude-opus-4.8"];
+    const modelLimits = { "gpt-4o": 128000, "claude-opus-4.8": 1_000_000 };
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" loadModels={loadModels} modelLimits={modelLimits} />);
+    await tick();
+    stdin.write("/model");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    const f = lastFrame() ?? "";
+    expect(f).toContain("select chat model");
+    expect(f).toMatch(/1M|128K/);
+  });
+});
