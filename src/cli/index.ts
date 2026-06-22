@@ -74,11 +74,6 @@ async function launchTui(): Promise<void> {
   });
   // Filled in below once we have a token; the assistant prefers a model's real window over the default.
   const modelLimits: Record<string, number> = {};
-  const onChat = makeOnChat(
-    { client, workerBaseUrl: workerBase, apiKey: "maestro-local", model: DEFAULT_MODEL, maxInputTokens: DEFAULT_MAX_INPUT_TOKENS, modelLimits },
-    (c, p, print, abort) => runAssistantTurn(c, p, print, undefined, abort),
-  );
-
   const tokenStore = new CopilotTokenStore(readGhToken(dataDir())!);
   const loadModels = async () => {
     const token = await tokenStore.get();
@@ -88,15 +83,26 @@ async function launchTui(): Promise<void> {
   };
   // Pull each model's real context window in the background too, in case the picker never opens.
   void tokenStore.get().then((t) => fetchModelLimits(t)).then((m) => Object.assign(modelLimits, m)).catch(() => {});
-  const setup = {
-    apply: async (clientKind: SetupClient, scope: Scope, model: string) => {
-      const r = clientKind === "claude"
-        ? applyClaude(scope, { ANTHROPIC_BASE_URL: workerBase, ANTHROPIC_API_KEY: "maestro-local", ANTHROPIC_MODEL: model })
-        : applyCodex(scope, { OPENAI_BASE_URL: `${workerBase}/v1`, OPENAI_API_KEY: "maestro-local", OPENAI_MODEL: model });
-      writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), [clientKind]: true });
-      return r;
-    },
+
+  // Apply a client's config (shared by the /setup wizard and the assistant's setup_* tools).
+  const applyClient = (clientKind: SetupClient, scope: Scope, model: string) => {
+    const r = clientKind === "claude"
+      ? applyClaude(scope, { ANTHROPIC_BASE_URL: workerBase, ANTHROPIC_API_KEY: "maestro-local", ANTHROPIC_MODEL: model })
+      : applyCodex(scope, { OPENAI_BASE_URL: `${workerBase}/v1`, OPENAI_API_KEY: "maestro-local", OPENAI_MODEL: model });
+    writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), [clientKind]: true });
+    return r;
   };
+  const setup = { apply: async (clientKind: SetupClient, scope: Scope, model: string) => applyClient(clientKind, scope, model) };
+
+  const onChat = makeOnChat(
+    {
+      client, workerBaseUrl: workerBase, apiKey: "maestro-local", model: DEFAULT_MODEL,
+      maxInputTokens: DEFAULT_MAX_INPUT_TOKENS, modelLimits,
+      listModels: loadModels,
+      setupClient: async (c, s, m) => applyClient(c, s, m),
+    },
+    (c, p, print, abort) => runAssistantTurn(c, p, print, undefined, abort),
+  );
 
   const persistedModel = readChatModel(dataDir());
 

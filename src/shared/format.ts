@@ -15,3 +15,12 @@ export function formatContextWindow(n: number | undefined): string {
   if (n >= 1000) return `${Math.round(n / 1000)}K`;
   return String(n);
 }
+
+// Bulleted model list with context windows — used by the assistant's list_models tool.
+export function formatModelList(ids: string[], limits?: Record<string, number>): string {
+  if (!ids.length) return "(no models found)";
+  return ids.map((id) => {
+    const w = formatContextWindow(limits?.[id]);
+    return `- ${id}${w ? ` (${w})` : ""}`;
+  }).join("\n");
+}

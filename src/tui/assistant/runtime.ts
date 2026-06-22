@@ -1,6 +1,7 @@
 import { query, tool, createSdkMcpServer } from "@anthropic-ai/claude-agent-sdk";
 import { z } from "zod";
 import { buildActions, type AssistantActions } from "./tools.js";
+import { formatModelList } from "../../shared/format.js";
 import type { DaemonClient } from "../daemon-client.js";
 
 export interface AssistantConfig {
@@ -10,6 +11,9 @@ export interface AssistantConfig {
   model: string;           // e.g. claude-opus-4-8 (router remaps to a Copilot model)
   maxInputTokens?: number; // conservative default context window; drives auto-compaction
   modelLimits?: Record<string, number>; // per-model real windows; preferred over maxInputTokens
+  // Optional capabilities exposed to the assistant as tools (wired in production, omitted in tests).
+  listModels?: () => Promise<string[]>;
+  setupClient?: (client: "claude" | "codex", scope: "global" | "project", model: string) => Promise<{ path: string; changed: string[] }>;
 }
 
 // Injectable seam for the SDK's query(); production uses the real one (default).
@@ -19,13 +23,40 @@ export type QueryFn = typeof query;
 
 const empty = z.object({});
 
-function sdkTools(actions: AssistantActions) {
-  return [
+const setupShape = z.object({
+  scope: z.enum(["global", "project"]).optional(),
+  model: z.string().optional(),
+}).shape;
+
+function sdkTools(actions: AssistantActions, cfg: AssistantConfig) {
+  const tools = [
     tool("get_status", "Get the proxy worker status and restart history", empty.shape, async () => ({ content: [{ type: "text", text: await actions.get_status({}) }] })),
     tool("restart_worker", "Restart the proxy worker", empty.shape, async () => ({ content: [{ type: "text", text: await actions.restart_worker({}) }] })),
     tool("run_doctor", "Run maestro health checks", empty.shape, async () => ({ content: [{ type: "text", text: await actions.run_doctor({}) }] })),
     tool("recent_requests", "List recent proxied requests", empty.shape, async () => ({ content: [{ type: "text", text: await actions.recent_requests({}) }] })),
   ];
+
+  const listModels = cfg.listModels;
+  if (listModels) {
+    tools.push(tool("list_models", "List the Copilot models available through the proxy, with their context windows", empty.shape, async () => ({
+      content: [{ type: "text", text: formatModelList(await listModels(), cfg.modelLimits) }],
+    })));
+  }
+
+  const setupClient = cfg.setupClient;
+  if (setupClient) {
+    for (const client of ["claude", "codex"] as const) {
+      const label = client === "claude" ? "Claude Code" : "Codex";
+      tools.push(tool(`setup_${client}`, `Configure ${label} to use the maestro proxy (writes its config). scope defaults to "global" (all projects); model defaults to the current chat model.`, setupShape, async (args: { scope?: "global" | "project"; model?: string }) => {
+        const scope = args.scope ?? "global";
+        const model = args.model ?? cfg.model;
+        const r = await setupClient(client, scope, model);
+        return { content: [{ type: "text", text: `configured ${label} (${scope}) with model ${model} — wrote ${r.path}; keys: ${r.changed.join(", ") || "(no change)"}` }] };
+      }) as unknown as (typeof tools)[number]);
+    }
+  }
+
+  return tools;
 }
 
 // Runs one assistant turn, streaming assistant text to `print`. Pass an AbortController to make
@@ -47,7 +78,7 @@ export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, pri
   process.env.CLAUDE_CODE_ATTRIBUTION_HEADER = "0";
 
   const actions = buildActions(cfg.client);
-  const mcp = createSdkMcpServer({ name: "maestro", tools: sdkTools(actions) });
+  const mcp = createSdkMcpServer({ name: "maestro", tools: sdkTools(actions, cfg) });
 
   const response = queryFn({
     prompt,
@@ -64,9 +95,10 @@ export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, pri
       settingSources: [],
       systemPrompt:
         "You are maestro's built-in assistant for the local Copilot proxy. Be concise. " +
-        "When the user expresses an intent you have a tool for (check status, restart the worker, " +
-        "run health checks, list recent requests), CALL THE TOOL instead of explaining. For client " +
-        "setup (e.g. 'setup claude'/'setup codex'), tell them to run the /setup-claude or /setup-codex command.",
+        "When the user expresses an intent you have a tool for, CALL THE TOOL instead of explaining. " +
+        "Tools: get_status, restart_worker, run_doctor, recent_requests, list_models (show available " +
+        "models + context windows), setup_claude / setup_codex (configure those clients to use the proxy). " +
+        "E.g. 'list models' -> call list_models; 'set up claude' -> call setup_claude.",
       permissionMode: "bypassPermissions",
       includePartialMessages: true,
       ...(abortController ? { abortController } : {}),

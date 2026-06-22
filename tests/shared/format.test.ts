@@ -1,5 +1,14 @@
 import { describe, it, expect } from "vitest";
-import { formatContextWindow, loadingVerb, LOADING_VERBS } from "../../src/shared/format.js";
+import { formatContextWindow, loadingVerb, LOADING_VERBS, formatModelList } from "../../src/shared/format.js";
+
+describe("formatModelList", () => {
+  it("lists ids with their context windows, omitting unknown ones", () => {
+    expect(formatModelList(["gpt-4o", "mystery"], { "gpt-4o": 128000 })).toBe("- gpt-4o (128K)\n- mystery");
+  });
+  it("handles the empty case", () => {
+    expect(formatModelList([])).toBe("(no models found)");
+  });
+});
 
 describe("loadingVerb", () => {
   it("holds a verb for a 3s window, then rotates to the next", () => {
