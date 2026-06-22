@@ -67,6 +67,7 @@ Prefer commands? Type `/` to see them all. The essentials:
 | `/dashboard` | Open a live web dashboard in your browser |
 | `/report` | File a pre-filled bug report (diagnostics only — no prompts) |
 | `/reset-claude` · `/reset-codex` | Undo setup, restore original config |
+| `/login` · `/logout` | Sign in to GitHub (device-code) · sign out (remove token) |
 | `/help` · `/quit` | List commands · exit |
 
 ### The live dashboard
@@ -115,7 +116,16 @@ Re-run `/setup-claude` and pick a **1M** model (e.g. `claude-opus-4.8 (1M)`). co
 the right context-window hint so the client stops assuming a small window. Then restart Claude Code.
 
 **"GitHub login expired"**
-Your Copilot session lapsed. Restart copilot-reverse — it'll prompt you to log in again.
+Your Copilot session lapsed. You don't need to restart anything — when a chat fails, copilot-reverse
+detects it and tells you right there:
+
+```text
+assistant error: 401 authentication_error: GitHub login expired
+  ↳ your GitHub login looks expired — run /login to sign in again
+```
+
+Just type **`/login`**, complete the device-code prompt, and you're back — the worker reloads the new
+token automatically. (Switching accounts? `/logout` first, then `/login`.)
 
 **A request failed and I don't know why**
 Type `/logs` (or ask *"why did that fail?"*). Every failure is captured with its real upstream
