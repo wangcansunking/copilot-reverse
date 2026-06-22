@@ -16,4 +16,26 @@ describe("makeOnChat", () => {
     await onChat("hi", (l) => printed.push(l));
     expect(printed.join("\n")).toMatch(/assistant error: boom/);
   });
+
+  it("gives up (and aborts) when a turn exceeds the timeout", async () => {
+    // a runner that never resolves on its own — only the timeout can end it
+    const runner = vi.fn((_c: any, _p: string, _print: any, abort?: AbortController) =>
+      new Promise<void>((_resolve, reject) => abort?.signal.addEventListener("abort", () => reject(new Error("aborted")))));
+    const printed: string[] = [];
+    const onChat = makeOnChat({ client: {} as any, workerBaseUrl: "http://x", apiKey: "k", model: "m" }, runner as any, 20);
+    await onChat("hi", (l) => printed.push(l));
+    expect(printed.join("\n")).toMatch(/no response after .*gave up/);
+  });
+
+  it("reports a user interrupt distinctly from an error", async () => {
+    const runner = vi.fn((_c: any, _p: string, _print: any, abort?: AbortController) =>
+      new Promise<void>((_resolve, reject) => abort?.signal.addEventListener("abort", () => reject(new Error("aborted")))));
+    const printed: string[] = [];
+    const ctrl = new AbortController();
+    const onChat = makeOnChat({ client: {} as any, workerBaseUrl: "http://x", apiKey: "k", model: "m" }, runner as any);
+    const p = onChat("hi", (l) => printed.push(l), undefined, ctrl);
+    ctrl.abort();
+    await p;
+    expect(printed.join("\n")).toMatch(/interrupted/);
+  });
 });

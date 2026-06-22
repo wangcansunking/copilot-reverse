@@ -1,5 +1,16 @@
 import { describe, it, expect } from "vitest";
-import { formatContextWindow } from "../../src/shared/format.js";
+import { formatContextWindow, loadingVerb, LOADING_VERBS } from "../../src/shared/format.js";
+
+describe("loadingVerb", () => {
+  it("holds a verb for a 3s window, then rotates to the next", () => {
+    expect(loadingVerb(0)).toBe(loadingVerb(2999));
+    expect(loadingVerb(0)).not.toBe(loadingVerb(3000));
+    expect(loadingVerb(3000)).toBe(LOADING_VERBS[1]);
+  });
+  it("wraps around the verb list", () => {
+    expect(loadingVerb(LOADING_VERBS.length * 3000)).toBe(LOADING_VERBS[0]);
+  });
+});
 
 describe("formatContextWindow", () => {
   it("renders 1M, K, and raw values", () => {

@@ -122,6 +122,19 @@ describe("assistant runtime (stubbed SDK transport, real /v1/messages)", () => {
     expect(window).toBe("64000"); // real per-model limit wins over the conservative default
   });
 
+  it("passes the AbortController into the query so the turn is interruptible", async () => {
+    let seen: AbortController | undefined;
+    const capturingQuery = ((params: { options?: { abortController?: AbortController } }) => {
+      seen = params.options?.abortController;
+      async function* gen(): AsyncGenerator<never> { /* no messages */ }
+      return gen();
+    }) as unknown as QueryFn;
+    const cfg: AssistantConfig = { client: {} as any, workerBaseUrl: "http://127.0.0.1:1", apiKey: "k", model: "m" };
+    const ctrl = new AbortController();
+    await runAssistantTurn(cfg, "hi", () => {}, capturingQuery, ctrl);
+    expect(seen).toBe(ctrl);
+  });
+
   it("surfaces an error line when the SDK ends with a result error instead of swallowing it", async () => {
     const errResultQuery = (() => {
       async function* gen(): AsyncGenerator<any> {

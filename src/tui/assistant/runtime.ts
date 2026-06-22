@@ -28,8 +28,9 @@ function sdkTools(actions: AssistantActions) {
   ];
 }
 
-// Runs one assistant turn, streaming assistant text to `print`.
-export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, print: (line: string) => void, queryFn: QueryFn = query): Promise<void> {
+// Runs one assistant turn, streaming assistant text to `print`. Pass an AbortController to make
+// the turn interruptible (esc) — aborting ends the stream.
+export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, print: (line: string) => void, queryFn: QueryFn = query, abortController?: AbortController): Promise<void> {
   // Dogfood: route the agent SDK through maestro's own Anthropic endpoint -> Copilot.
   process.env.ANTHROPIC_BASE_URL = cfg.workerBaseUrl;
   process.env.ANTHROPIC_API_KEY = cfg.apiKey;
@@ -67,6 +68,7 @@ export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, pri
         "setup (e.g. 'setup claude'/'setup codex'), tell them to run the /setup-claude or /setup-codex command.",
       permissionMode: "bypassPermissions",
       includePartialMessages: true,
+      ...(abortController ? { abortController } : {}),
     },
   });
 

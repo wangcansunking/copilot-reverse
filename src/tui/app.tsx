@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from "react";
-import { Box, Text } from "ink";
+import React, { useEffect, useRef, useState } from "react";
+import { Box, Text, useInput } from "ink";
+import { loadingVerb } from "../shared/format.js";
 import { Repl, type CommandHint } from "./repl.js";
 import { SetupWizard, type SetupClient } from "./setup/wizard.js";
 import { ModelScreen } from "./screens/model.js";
@@ -40,7 +41,7 @@ export interface AppProps {
   statusSource?: () => Promise<StatusResponse>;
   readStatus?: () => ClientStatus;            // reads the real config files (per user/project scope)
   modelLimits?: Record<string, number>;       // model id -> context window, shown in the picker
-  onChat?: (text: string, print: (line: string) => void, model?: string) => Promise<void>;
+  onChat?: (text: string, print: (line: string) => void, model?: string, abort?: AbortController) => Promise<void>;
   loadModels?: () => Promise<string[]>;
   setup?: { apply: (client: SetupClient, scope: Scope, model: string) => Promise<ApplyResult> };
   info?: ConfigInfo;
@@ -111,8 +112,12 @@ export function App({
   const [model, setModel] = useState(initialModel);
   const [screen, setScreen] = useState<Screen>(pickModelOnStart && loadModels ? { kind: "model" } : null);
   const [, setNow] = useState(0); // ticks the live loading line while the assistant streams
+  const abortRef = useRef<AbortController | null>(null); // current turn's interrupt handle
   const add = (e: Entry) => setEntries((p) => [...p, e].slice(-100));
   const refreshStatus = () => { if (readStatus) setStatus(readStatus()); };
+
+  // esc interrupts an in-flight assistant turn (the Repl doesn't use esc, so this is unambiguous).
+  useInput((_input, key) => { if (key.escape) abortRef.current?.abort(); });
 
   useEffect(() => {
     if (!statusSource && !readStatus) return;
@@ -169,9 +174,12 @@ export function App({
           }
           return copy;
         });
+      const ctrl = new AbortController();
+      abortRef.current = ctrl;
       try {
-        await onChat(line, append, model);
+        await onChat(line, append, model, ctrl);
       } finally {
+        abortRef.current = null;
         setEntries((p) => p.map((e) => (e.type === "assistant" && e.streaming ? { ...e, streaming: false } : e)));
       }
     } else {
@@ -236,7 +244,7 @@ export function App({
             const tokens = Math.ceil(e.text.length / 4);
             return (
               <Box key={i} flexDirection="column">
-                <Text color={theme.accent}>✽ <Text color={theme.muted}>{frame} Orchestrating… ({fmtElapsed(elapsed)} · ↓ {fmtTokens(tokens)} tokens · thinking)</Text></Text>
+                <Text color={theme.accent}>✽ <Text color={theme.muted}>{frame} {loadingVerb(elapsed)}… (esc to interrupt · {fmtElapsed(elapsed)} · ↓ {fmtTokens(tokens)} tokens · thinking)</Text></Text>
                 {e.text ? <Text color={color}>{e.text}</Text> : null}
               </Box>
             );

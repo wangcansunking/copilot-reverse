@@ -26,6 +26,13 @@ function headers(token: string) {
   return { authorization: `Bearer ${token}`, "content-type": "application/json", "editor-version": "vscode/1.95.0", "copilot-integration-id": "vscode-chat" };
 }
 
+// Copilot puts the real reason (bad model, oversized prompt, unsupported tool, …) in the body —
+// surface it instead of a bare status code so failures are diagnosable.
+async function errorDetail(res: Response): Promise<string> {
+  try { const t = (await res.text()).trim(); return t ? ` — ${t.slice(0, 400)}` : ""; }
+  catch { return ""; }
+}
+
 export class CopilotAdapter implements ProviderAdapter {
   readonly name = "copilot";
   constructor(private tokenStore: TokenSource, private fetchFn: typeof fetch = fetch) {}
@@ -33,7 +40,7 @@ export class CopilotAdapter implements ProviderAdapter {
   async complete(req: CanonicalRequest): Promise<CanonicalResponse> {
     const token = await this.tokenStore.get();
     const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: false })) });
-    if (!res.ok) throw new Error(`copilot completion failed: ${res.status}`);
+    if (!res.ok) throw new Error(`copilot completion failed: ${res.status}${await errorDetail(res)}`);
     const data = (await res.json()) as any;
     const choice = data.choices[0];
     const content: ContentBlock[] = [];
@@ -49,7 +56,7 @@ export class CopilotAdapter implements ProviderAdapter {
   async *stream(req: CanonicalRequest): AsyncIterable<CanonicalChunk> {
     const token = await this.tokenStore.get();
     const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: true })) });
-    if (!res.ok || !res.body) throw new Error(`copilot stream failed: ${res.status}`);
+    if (!res.ok || !res.body) throw new Error(`copilot stream failed: ${res.status}${await errorDetail(res)}`);
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     const startedTools = new Set<number>();

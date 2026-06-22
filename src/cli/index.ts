@@ -76,7 +76,7 @@ async function launchTui(): Promise<void> {
   const modelLimits: Record<string, number> = {};
   const onChat = makeOnChat(
     { client, workerBaseUrl: workerBase, apiKey: "maestro-local", model: DEFAULT_MODEL, maxInputTokens: DEFAULT_MAX_INPUT_TOKENS, modelLimits },
-    runAssistantTurn,
+    (c, p, print, abort) => runAssistantTurn(c, p, print, undefined, abort),
   );
 
   const tokenStore = new CopilotTokenStore(readGhToken(dataDir())!);
