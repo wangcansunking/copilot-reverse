@@ -7,7 +7,11 @@ export interface ApplyResult { path: string; changed: string[] }
 export interface PlaceOpts { home?: string; cwd?: string }
 
 // The env keys maestro writes for each client — so reset knows exactly what to remove.
-export const CLAUDE_ENV_KEYS = ["ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL"];
+export const CLAUDE_ENV_KEYS = [
+  "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
+  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_ATTRIBUTION_HEADER",
+];
 export const CODEX_ENV_KEYS = ["OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL"];
 
 // --- Claude Code: merge into settings.json `env` (non-destructive) ---

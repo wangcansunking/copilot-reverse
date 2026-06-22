@@ -85,15 +85,15 @@ describe("applyCodex", () => {
 describe("resetClaude", () => {
   it("removes maestro's env keys but preserves other settings and env keys", () => {
     const cwd = mkdtempSync(join(tmpdir(), "proj-"));
-    applyClaude("project", { ANTHROPIC_BASE_URL: "http://x", ANTHROPIC_API_KEY: "k", ANTHROPIC_MODEL: "gpt-4o" }, { cwd });
     mkdirSync(join(cwd, ".claude"), { recursive: true });
-    writeFileSync(join(cwd, ".claude", "settings.json"), JSON.stringify({ theme: "dark", env: { KEEP: "1", ANTHROPIC_BASE_URL: "http://x", ANTHROPIC_API_KEY: "k", ANTHROPIC_MODEL: "gpt-4o" } }));
+    const maestroEnv = Object.fromEntries(CLAUDE_ENV_KEYS.map((k) => [k, "x"]));
+    writeFileSync(join(cwd, ".claude", "settings.json"), JSON.stringify({ theme: "dark", env: { KEEP: "1", ...maestroEnv } }));
     const r = resetClaude("project", CLAUDE_ENV_KEYS, { cwd });
     const s = JSON.parse(readFileSync(r.path, "utf8"));
     expect(s.theme).toBe("dark");                 // preserved
     expect(s.env.KEEP).toBe("1");                 // preserved
     expect(s.env.ANTHROPIC_BASE_URL).toBeUndefined();
-    expect(s.env.ANTHROPIC_MODEL).toBeUndefined();
+    expect(s.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
     expect(r.changed.sort()).toEqual([...CLAUDE_ENV_KEYS].sort());
   });
   it("is a no-op when settings.json does not exist", () => {

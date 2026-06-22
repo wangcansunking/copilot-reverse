@@ -18,6 +18,7 @@ import { fetchCopilotModels, fetchModelLimits } from "../providers/copilot/model
 import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
 import { readClientStatus } from "../tui/setup/status.js";
 import type { SetupClient } from "../tui/setup/wizard.js";
+import { claudeMaestroEnv } from "../tui/setup/clients.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 
@@ -85,9 +86,11 @@ async function launchTui(): Promise<void> {
   void tokenStore.get().then((t) => fetchModelLimits(t)).then((m) => Object.assign(modelLimits, m)).catch(() => {});
 
   // Apply a client's config (shared by the /setup wizard and the assistant's setup_* tools).
+  // For Claude Code we also write the selected model's real context window so the client doesn't
+  // assume the default 200K (which makes a 1M model read "context 100%" far too early).
   const applyClient = (clientKind: SetupClient, scope: Scope, model: string) => {
     const r = clientKind === "claude"
-      ? applyClaude(scope, { ANTHROPIC_BASE_URL: workerBase, ANTHROPIC_API_KEY: "maestro-local", ANTHROPIC_MODEL: model })
+      ? applyClaude(scope, claudeMaestroEnv(workerBase, "maestro-local", model, modelLimits[model]))
       : applyCodex(scope, { OPENAI_BASE_URL: `${workerBase}/v1`, OPENAI_API_KEY: "maestro-local", OPENAI_MODEL: model });
     writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), [clientKind]: true });
     return r;
