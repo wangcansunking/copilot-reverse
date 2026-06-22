@@ -11,6 +11,8 @@ export interface RegistryOpts {
   platform?: string;
   openUrl?: (url: string) => void;  // injectable for tests
   resetClient?: (client: "claude" | "codex") => Promise<string[]>; // restore client config
+  login?: () => Promise<string[]>;  // re-run GitHub device-code login
+  logout?: () => Promise<string[]>; // clear the stored GitHub token
 }
 
 export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: RegistryOpts = {}): Registry {
@@ -48,6 +50,8 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
   reg.add({ name: "/setup-status", describe: "show configured endpoints", run: async () => [`OpenAI: http://${endpoint.host}:${endpoint.port}/v1`, `Anthropic: http://${endpoint.host}:${endpoint.port}`] });
   reg.add({ name: "/reset-claude", describe: "restore Claude Code config (remove copilot-reverse's keys)", run: async () => opts.resetClient ? opts.resetClient("claude") : ["reset not available"] });
   reg.add({ name: "/reset-codex", describe: "restore Codex/OpenAI config (remove copilot-reverse's keys)", run: async () => opts.resetClient ? opts.resetClient("codex") : ["reset not available"] });
+  reg.add({ name: "/login", describe: "sign in to GitHub (device-code)", run: async () => opts.login ? opts.login() : ["login not available"] });
+  reg.add({ name: "/logout", describe: "sign out — remove the stored GitHub token", run: async () => opts.logout ? opts.logout() : ["logout not available"] });
   reg.add({ name: "/model", describe: "switch the chat model", run: async () => ["opening model picker…"] });
   reg.add({ name: "/config", describe: "view & change configuration", run: async () => ["opening config panel…"] });
   reg.add({ name: "/dashboard", describe: "open the web dashboard in your browser", run: async () => {

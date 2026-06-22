@@ -10,7 +10,7 @@ import { probeSupervisor } from "../daemon/lifecycle.js";
 import { startSupervisor } from "../supervisor/index.js";
 import { runAssistantTurn } from "../tui/assistant/runtime.js";
 import { makeOnChat } from "../tui/assistant/on-chat.js";
-import { readGhToken } from "../shared/creds.js";
+import { readGhToken, clearGhToken } from "../shared/creds.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
 import { readChatModel, writeChatModel } from "../shared/prefs.js";
 import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
@@ -73,6 +73,20 @@ async function launchTui(): Promise<void> {
     appVersion: "0.0.1",
     platform: `${process.platform} node-${process.version}`,
     resetClient,
+    // Re-run device-code login, then restart the worker so it picks up the new token.
+    login: async () => {
+      const lines: string[] = [];
+      await runDeviceLogin(dataDir(), fetch, (m) => lines.push(m));
+      await client.restart().catch(() => {});
+      lines.push("worker restarting with the new token");
+      return lines;
+    },
+    // Clear the stored token and restart the worker (it will report unauthenticated until re-login).
+    logout: async () => {
+      clearGhToken(dataDir());
+      await client.restart().catch(() => {});
+      return ["signed out — GitHub token removed", "run /login to sign in again"];
+    },
   });
   // Filled in below once we have a token; the assistant prefers a model's real window over the default.
   const modelLimits: Record<string, number> = {};

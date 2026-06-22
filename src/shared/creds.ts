@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 // M1: plaintext token in the data dir (0600). Encryption-at-rest is M2.
@@ -10,4 +10,8 @@ export function writeGhToken(token: string, dir: string): void {
 export function readGhToken(dir: string): string | null {
   if (!existsSync(file(dir))) return null;
   return (JSON.parse(readFileSync(file(dir), "utf8")) as { ghToken?: string }).ghToken ?? null;
+}
+// Remove the stored token (logout). No-op if there's nothing to remove.
+export function clearGhToken(dir: string): void {
+  rmSync(file(dir), { force: true });
 }

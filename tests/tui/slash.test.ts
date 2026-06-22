@@ -79,4 +79,23 @@ describe("slash commands", () => {
     await reg.run("/reset-codex");
     expect(calls).toEqual(["codex"]);
   });
+  it("/login invokes the login handler", async () => {
+    let called = false;
+    const reg = buildRegistry(ctx() as any, endpoint, { login: async () => { called = true; return ["enter code: ABCD-1234"]; } });
+    const out = await reg.run("/login");
+    expect(called).toBe(true);
+    expect(out.join("\n")).toMatch(/ABCD-1234/);
+  });
+  it("/logout invokes the logout handler", async () => {
+    let called = false;
+    const reg = buildRegistry(ctx() as any, endpoint, { logout: async () => { called = true; return ["signed out"]; } });
+    const out = await reg.run("/logout");
+    expect(called).toBe(true);
+    expect(out.join("\n")).toMatch(/signed out/);
+  });
+  it("/login and /logout degrade gracefully when no handler is wired", async () => {
+    const reg = buildRegistry(ctx() as any, endpoint);
+    expect((await reg.run("/login")).join("\n")).toMatch(/not available/);
+    expect((await reg.run("/logout")).join("\n")).toMatch(/not available/);
+  });
 });
