@@ -4,6 +4,14 @@
   "description": "Interactive terminal app that exposes your GitHub Copilot subscription as local OpenAI- and Anthropic-compatible endpoints, with a self-healing daemon and a built-in assistant.",
   "type": "module",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wangcansunking/copilot-reverse.git"
+  },
+  "homepage": "https://github.com/wangcansunking/copilot-reverse#readme",
+  "bugs": {
+    "url": "https://github.com/wangcansunking/copilot-reverse/issues"
+  },
   "bin": {
     "copilot-reverse": "dist/cli/index.js"
   },
