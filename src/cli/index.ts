@@ -22,6 +22,7 @@ import type { SetupClient } from "../tui/setup/wizard.js";
 import { claudeCopilotReverseEnv } from "../tui/setup/clients.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
+import { APP_VERSION } from "../version.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEFAULT_MODEL = "gpt-4o"; // a valid Copilot model id; pass-through routing uses it as-is
@@ -74,7 +75,7 @@ async function launchTui(): Promise<void> {
   const registry = buildRegistry({ client, quit }, endpoint, {
     dashboardUrl: `http://${cfg.bindHost}:${cfg.supervisorPort}/`,
     reportRepo: cfg.reportRepo,
-    appVersion: "0.1.0",
+    appVersion: APP_VERSION,
     platform: `${process.platform} node-${process.version}`,
     resetClient,
     // Re-run device-code login, then restart the worker so it picks up the new token.
@@ -159,7 +160,7 @@ async function launchTui(): Promise<void> {
 }
 
 const program = new Command();
-program.name("copilot-reverse").description("copilot-reverse: interactive Copilot proxy").version("0.1.0");
+program.name("copilot-reverse").description("copilot-reverse: interactive Copilot proxy").version(APP_VERSION);
 program.command("login").description("GitHub device-code login").action(() => runDeviceLogin(dataDir()));
 program.action(() => { void launchTui(); });
 program.parseAsync(process.argv);
