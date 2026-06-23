@@ -83,4 +83,54 @@ describe("CopilotAdapter", () => {
     for await (const _ of a.stream({ ...base, stream: true })) { /* drain */ }
     expect(body.stream_options).toEqual({ include_usage: true });
   });
+
+  // --- Inline tool-call recovery: some models emit a tool call as TEXT XML instead of native
+  // tool_calls. The adapter must recover it into structured tool chunks when the request has tools.
+  // Tags are built via concatenation so no literal close-tag appears in this source file.
+  const O = (t: string, a = "") => `<${t}${a}>`;
+  const C = (t: string) => `</${t}>`;
+  const degraded = O("function_calls") + O("invoke", ' name="Bash"') + O("parameter", ' name="command"') + "ls -la" + C("parameter") + C("invoke") + C("function_calls");
+  const sseOf = (content: string) => `data: ${JSON.stringify({ choices: [{ delta: { content } }] })}\n\n` + "data: [DONE]\n\n";
+  const withTools: CanonicalRequest = { ...base, stream: true, tools: [{ name: "Bash", description: "run a shell command", parameters: { type: "object", properties: { command: { type: "string" } } } }] };
+
+  it("recovers an inline tool call emitted as text into structured tool chunks (request has tools)", async () => {
+    const f = vi.fn(async () => new Response(sseOf("let me check. " + degraded + " done"), { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    const chunks: any[] = [];
+    for await (const c of a.stream(withTools)) chunks.push(c);
+    const start = chunks.find((c) => c.kind === "tool_use_start");
+    const delta = chunks.find((c) => c.kind === "tool_use_delta");
+    expect(start).toMatchObject({ name: "Bash" });
+    expect(JSON.parse(delta.argsDelta)).toEqual({ command: "ls -la" });
+    // surrounding prose still flows as text, tool call no longer leaks as text
+    const text = chunks.filter((c) => c.kind === "text").map((c) => c.delta).join("");
+    expect(text).toBe("let me check.  done");
+    expect(text).not.toContain("invoke");
+    // a text-emitted tool call must still report tool_use as the finish reason
+    expect(chunks.find((c) => c.done)?.finishReason).toBe("tool_use");
+  });
+
+  it("recovers a tool call split across multiple SSE content deltas", async () => {
+    const mid = Math.floor(degraded.length / 2);
+    const sse =
+      `data: ${JSON.stringify({ choices: [{ delta: { content: degraded.slice(0, mid) } }] })}\n\n` +
+      `data: ${JSON.stringify({ choices: [{ delta: { content: degraded.slice(mid) } }] })}\n\n` +
+      "data: [DONE]\n\n";
+    const f = vi.fn(async () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    const chunks: any[] = [];
+    for await (const c of a.stream(withTools)) chunks.push(c);
+    expect(chunks.find((c) => c.kind === "tool_use_start")).toMatchObject({ name: "Bash" });
+    expect(JSON.parse(chunks.find((c) => c.kind === "tool_use_delta").argsDelta)).toEqual({ command: "ls -la" });
+  });
+
+  it("does NOT recover when the request has no tools (degraded-looking text passes through)", async () => {
+    const f = vi.fn(async () => new Response(sseOf("here is the format: " + degraded), { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    const chunks: any[] = [];
+    for await (const c of a.stream({ ...base, stream: true })) chunks.push(c); // base has no tools
+    expect(chunks.some((c) => c.kind === "tool_use_start")).toBe(false);
+    const text = chunks.filter((c) => c.kind === "text").map((c) => c.delta).join("");
+    expect(text).toContain("invoke"); // raw text preserved verbatim, nothing eaten
+  });
 });

@@ -1,0 +1,115 @@
+name: Release
+
+# Auto-publish on merge to master, driven by changeset files in .changes/.
+# No changeset present -> the `release` job is skipped -> nothing is published.
+# The release commit/tag is pushed with the default GITHUB_TOKEN, which does NOT
+# re-trigger workflows, so there is no publish loop.
+on:
+  push:
+    branches: [master]
+
+# Serialize releases; never cancel a half-finished publish.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  detect:
+    runs-on: ubuntu-latest
+    outputs:
+      has: ${{ steps.status.outputs.has }}
+      bump: ${{ steps.status.outputs.bump }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 1 }
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - id: status
+        run: node scripts/changesets.mjs status --github-output
+
+  release:
+    needs: detect
+    if: ${{ needs.detect.outputs.has == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # push the release commit + tag back to master
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true # keep GITHUB_TOKEN for the push
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: "https://registry.npmjs.org"
+          cache: npm
+
+      - name: Configure git identity
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Bump version (no tag yet)
+        id: bump
+        run: |
+          NEW=$(npm version "${{ needs.detect.outputs.bump }}" --no-git-tag-version)
+          echo "version=${NEW#v}" >> "$GITHUB_OUTPUT"
+          echo "Bumped to $NEW"
+
+      - name: Regenerate src/version.ts
+        run: node scripts/gen-version.mjs
+
+      - name: Build + test (gate before publish)
+        run: |
+          npm run build
+          npm test
+
+      # Idempotent: if this version is already on npm (e.g. a prior run published but
+      # failed to push), skip publish so a re-run can still land the commit/tag.
+      - name: Publish to npm (idempotent)
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          if npm view "copilot-reverse@$VERSION" version >/dev/null 2>&1; then
+            echo "copilot-reverse@$VERSION already on npm — skipping publish"
+          else
+            npm publish --access public
+          fi
+
+      - name: Update CHANGELOG + consume changesets
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          DATE=$(date +%Y-%m-%d)
+          BODIES=$(node scripts/changesets.mjs bodies)
+          {
+            echo "## v$VERSION — $DATE"
+            echo ""
+            echo "$BODIES"
+            echo ""
+            if [ -f CHANGELOG.md ]; then cat CHANGELOG.md; fi
+          } > CHANGELOG.next.md
+          mv CHANGELOG.next.md CHANGELOG.md
+          node scripts/changesets.mjs consume
+
+      - name: Commit, tag, push (with rebase retry)
+        run: |
+          VERSION="${{ steps.bump.outputs.version }}"
+          git add package.json package-lock.json src/version.ts CHANGELOG.md
+          git add -A .changes
+          git commit -m "release: v$VERSION"
+          git tag "v$VERSION"
+          for i in 1 2 3; do
+            git pull --rebase origin master \
+              && git push origin HEAD:master \
+              && git push origin "v$VERSION" \
+              && exit 0
+            echo "push attempt $i failed; retrying after rebase…"
+            sleep 3
+          done
+          echo "::error::failed to push release after 3 attempts"
+          exit 1

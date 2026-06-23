@@ -30,6 +30,12 @@ jobs:
       - name: Typecheck + build
         run: npm run build
 
+      - name: Check src/version.ts is in sync with package.json
+        run: |
+          node scripts/gen-version.mjs
+          git diff --exit-code src/version.ts \
+            || (echo "::error::src/version.ts is stale — run 'node scripts/gen-version.mjs' and commit" && exit 1)
+
       - name: Run tests
         run: npm test
 

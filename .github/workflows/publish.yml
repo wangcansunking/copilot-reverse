@@ -1,10 +1,10 @@
-name: Publish
+name: Publish (manual break-glass)
 
-# Publish to npm when a version tag is pushed, e.g. `git tag v0.0.1 && git push --tags`.
+# Normal releases are automated by release.yml (changeset-driven, on push to master).
+# This workflow is a manual fallback: trigger it from the Actions tab to build, test, and
+# publish the CURRENT package.json version to npm — e.g. if an automated release half-failed.
 on:
-  push:
-    tags:
-      - "v*"
+  workflow_dispatch:
 
 jobs:
   publish:
@@ -29,17 +29,13 @@ jobs:
           npm run build
           npm test
 
-      - name: Verify tag matches package.json version
-        run: |
-          PKG_VERSION="v$(node -p "require('./package.json').version")"
-          TAG="${GITHUB_REF_NAME}"
-          echo "package.json: $PKG_VERSION   tag: $TAG"
-          if [ "$PKG_VERSION" != "$TAG" ]; then
-            echo "::error::Tag $TAG does not match package.json version $PKG_VERSION"
-            exit 1
-          fi
-
-      - name: Publish to npm
-        run: npm publish --access public
+      - name: Publish current version to npm (idempotent)
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          if npm view "copilot-reverse@$VERSION" version >/dev/null 2>&1; then
+            echo "copilot-reverse@$VERSION already on npm — nothing to do"
+          else
+            npm publish --access public
+          fi

@@ -32,12 +32,14 @@
     "llm"
   ],
   "scripts": {
+    "prebuild": "node scripts/gen-version.mjs",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
     "test:e2e": "vitest run e2e/copilot-reverse.e2e.test.ts tests/e2e",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "dev": "tsx src/cli/index.ts",
+    "changeset": "node scripts/changesets.mjs new",
     "prepublishOnly": "npm run build && npm run test"
   },
   "engines": {

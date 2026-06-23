@@ -3,6 +3,11 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-23** — Added `ToolCallExtractor` (recovers text-emitted `<function_calls>`/`<invoke>`
+  tool calls into structured tool chunks) plus changeset-driven auto-release (build-time version
+  injection, release workflow). Full suite green: `npm test` → **236 passed** (47 files), e2e all
+  green, tsc build clean.
+
 - **Date:** 2026-06-22 22:14 CST
 - **Runner:** vitest 2.1.9 · Node v25.6.0
 - **Command:** `npm run test:e2e`

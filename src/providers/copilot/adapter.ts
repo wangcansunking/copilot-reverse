@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ProviderAdapter } from "../types.js";
 import type { CanonicalRequest, CanonicalResponse, CanonicalChunk, CanonicalMessage, ContentBlock } from "../../core/canonical.js";
+import { ToolCallExtractor, type ExtractEvent } from "../../core/tool-xml.js";
 
 const CHAT_URL = "https://api.githubcopilot.com/chat/completions";
 interface TokenSource { get(): Promise<string> }
@@ -81,6 +82,24 @@ export class CopilotAdapter implements ProviderAdapter {
     let usage: { promptTokens: number; completionTokens: number; cachedTokens?: number } | undefined;
     const mapFinish = (f: string | null | undefined): CanonicalResponse["finishReason"] =>
       f === "tool_calls" ? "tool_use" : f === "length" ? "length" : "stop";
+
+    // Some models emit a tool call as inline XML text instead of native tool_calls (more likely on
+    // long/tool-heavy turns). When the request has tools, route assistant text through an extractor
+    // that recovers those blocks into structured tool calls; otherwise text passes straight through.
+    const extractor = req.tools?.length ? new ToolCallExtractor() : undefined;
+    let extractedTool = false;
+    let extIdx = 100; // separate index space so recovered tools never collide with native tool_calls
+    const toChunks = (events: ExtractEvent[]): CanonicalChunk[] => {
+      const out: CanonicalChunk[] = [];
+      for (const ev of events) {
+        if (ev.kind === "text") { if (ev.text) out.push({ kind: "text", delta: ev.text, done: false }); continue; }
+        const index = extIdx++;
+        extractedTool = true;
+        out.push({ kind: "tool_use_start", index, id: ev.tool.id, name: ev.tool.name, done: false });
+        out.push({ kind: "tool_use_delta", index, argsDelta: JSON.stringify(ev.tool.input), done: false });
+      }
+      return out;
+    };
     for (;;) {
       const { value, done } = await reader.read();
       if (done) break;
@@ -91,7 +110,12 @@ export class CopilotAdapter implements ProviderAdapter {
         const line = evt.split("\n").find((l) => l.startsWith("data: "));
         if (!line) continue;
         const payload = line.slice(6).trim();
-        if (payload === "[DONE]") { yield { kind: "done", done: true, finishReason, usage }; return; }
+        if (payload === "[DONE]") {
+          if (extractor) for (const ch of toChunks(extractor.flush())) yield ch;
+          if (extractedTool && finishReason === "stop") finishReason = "tool_use";
+          yield { kind: "done", done: true, finishReason, usage };
+          return;
+        }
         let json: any;
         try { json = JSON.parse(payload); } catch { continue; }
         // Copilot sends a final frame with empty choices carrying usage (stream_options.include_usage).
@@ -101,7 +125,10 @@ export class CopilotAdapter implements ProviderAdapter {
         if (choice.finish_reason) finishReason = mapFinish(choice.finish_reason);
         const delta = choice.delta;
         if (!delta) continue;
-        if (delta.content) yield { kind: "text", delta: delta.content, done: false };
+        if (delta.content) {
+          if (extractor) { for (const ch of toChunks(extractor.feed(delta.content))) yield ch; }
+          else yield { kind: "text", delta: delta.content, done: false };
+        }
         for (const tc of delta.tool_calls ?? []) {
           const idx = tc.index ?? 0;
           if (!startedTools.has(idx) && tc.function?.name) { startedTools.add(idx); yield { kind: "tool_use_start", index: idx, id: tc.id ?? `call_${idx}`, name: tc.function.name, done: false }; }
@@ -109,6 +136,8 @@ export class CopilotAdapter implements ProviderAdapter {
         }
       }
     }
+    if (extractor) for (const ch of toChunks(extractor.flush())) yield ch;
+    if (extractedTool && finishReason === "stop") finishReason = "tool_use";
     yield { kind: "done", done: true, finishReason, usage };
   }
 }
