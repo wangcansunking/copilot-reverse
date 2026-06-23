@@ -74,7 +74,7 @@ async function launchTui(): Promise<void> {
   const registry = buildRegistry({ client, quit }, endpoint, {
     dashboardUrl: `http://${cfg.bindHost}:${cfg.supervisorPort}/`,
     reportRepo: cfg.reportRepo,
-    appVersion: "0.0.2",
+    appVersion: "0.1.0",
     platform: `${process.platform} node-${process.version}`,
     resetClient,
     // Re-run device-code login, then restart the worker so it picks up the new token.
@@ -159,7 +159,7 @@ async function launchTui(): Promise<void> {
 }
 
 const program = new Command();
-program.name("copilot-reverse").description("copilot-reverse: interactive Copilot proxy").version("0.0.2");
+program.name("copilot-reverse").description("copilot-reverse: interactive Copilot proxy").version("0.1.0");
 program.command("login").description("GitHub device-code login").action(() => runDeviceLogin(dataDir()));
 program.action(() => { void launchTui(); });
 program.parseAsync(process.argv);
