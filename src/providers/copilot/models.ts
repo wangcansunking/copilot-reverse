@@ -1,6 +1,6 @@
 // Live model list from Copilot. Falls back to a curated list if the endpoint is unavailable.
 const MODELS_URL = "https://api.githubcopilot.com/models";
-const FALLBACK = ["gpt-4o", "gpt-4o-mini", "claude-sonnet-4-6", "claude-opus-4-8", "o3-mini"];
+export const FALLBACK_MODELS = ["gpt-4o", "gpt-4o-mini", "claude-sonnet-4-6", "claude-opus-4-8", "o3-mini"];
 
 const HEADERS = (token: string) => ({
   authorization: `Bearer ${token}`,
@@ -28,9 +28,9 @@ async function getModels(token: string, fetchFn: typeof fetch, timeoutMs: number
 
 export async function fetchCopilotModels(token: string, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string[]> {
   const data = await getModels(token, fetchFn, timeoutMs);
-  if (!data) return FALLBACK;
+  if (!data) return FALLBACK_MODELS;
   const ids = [...new Set(data.map((m) => m.id).filter((x): x is string => Boolean(x)))];
-  return ids.length ? ids : FALLBACK;
+  return ids.length ? ids : FALLBACK_MODELS;
 }
 
 // Map of model id -> its real input/context window, used to size auto-compaction per model and

@@ -29,14 +29,14 @@ describe("claudeCopilotReverseEnv", () => {
 });
 
 describe("client setup", () => {
-  it("claude code points ANTHROPIC_BASE_URL at the worker", () => {
+  it("claude code points ANTHROPIC_BASE_URL at the worker's /anthropic prefix", () => {
     const c = claudeCodeConfig({ host: "127.0.0.1", port: 7891, apiKey: "k" });
-    expect(c.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:7891");
+    expect(c.env.ANTHROPIC_BASE_URL).toBe("http://127.0.0.1:7891/anthropic");
     expect(c.env.ANTHROPIC_API_KEY).toBe("k");
     expect(c.instructions).toMatch(/ANTHROPIC_BASE_URL/);
   });
-  it("codex points at the OpenAI endpoint", () => {
+  it("codex points at the worker's /openai prefix", () => {
     const c = codexConfig({ host: "127.0.0.1", port: 7891, apiKey: "k" });
-    expect(c.env.OPENAI_BASE_URL).toBe("http://127.0.0.1:7891/v1");
+    expect(c.env.OPENAI_BASE_URL).toBe("http://127.0.0.1:7891/openai");
   });
 });

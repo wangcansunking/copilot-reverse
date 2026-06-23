@@ -52,6 +52,10 @@ async function launchTui(): Promise<void> {
   const base = `http://${cfg.bindHost}:${cfg.supervisorPort}`;
   const client = new DaemonClient(base);
   const workerBase = `http://${cfg.bindHost}:${cfg.workerPort}`;
+  // Per-protocol base URLs the worker now serves under: OpenAI clients -> /openai/*,
+  // Anthropic clients (and the assistant's own dogfood SDK) -> /anthropic/*.
+  const openaiBase = `${workerBase}/openai`;
+  const anthropicBase = `${workerBase}/anthropic`;
   const endpoint = { host: cfg.bindHost, port: cfg.workerPort, apiKey: "copilot-reverse-local" };
   let app: { unmount: () => void } | undefined;
   const quit = () => { stopSupervisor?.(); app?.unmount(); process.exit(0); };
@@ -107,12 +111,12 @@ async function launchTui(): Promise<void> {
   // model's context window) so either Codex setup style works.
   const applyClient = (clientKind: SetupClient, scope: Scope, model: string) => {
     if (clientKind === "claude") {
-      const r = applyClaude(scope, claudeCopilotReverseEnv(workerBase, "copilot-reverse-local", model, modelLimits[model]));
+      const r = applyClaude(scope, claudeCopilotReverseEnv(anthropicBase, "copilot-reverse-local", model, modelLimits[model]));
       writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), claude: true });
       return r;
     }
-    const r = applyCodex(scope, { OPENAI_BASE_URL: `${workerBase}/v1`, OPENAI_API_KEY: "copilot-reverse-local", OPENAI_MODEL: model });
-    applyCodexToml({ baseUrl: `${workerBase}/v1`, model, contextWindow: modelLimits[model] });
+    const r = applyCodex(scope, { OPENAI_BASE_URL: openaiBase, OPENAI_API_KEY: "copilot-reverse-local", OPENAI_MODEL: model });
+    applyCodexToml({ baseUrl: openaiBase, model, contextWindow: modelLimits[model] });
     writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), codex: true });
     return r;
   };
@@ -120,7 +124,7 @@ async function launchTui(): Promise<void> {
 
   const onChat = makeOnChat(
     {
-      client, workerBaseUrl: workerBase, apiKey: "copilot-reverse-local", model: DEFAULT_MODEL,
+      client, workerBaseUrl: anthropicBase, apiKey: "copilot-reverse-local", model: DEFAULT_MODEL,
       maxInputTokens: DEFAULT_MAX_INPUT_TOKENS, modelLimits,
       listModels: loadModels,
       setupClient: async (c, s, m) => applyClient(c, s, m),
@@ -142,8 +146,8 @@ async function launchTui(): Promise<void> {
       loadModels,
       setup,
       info: {
-        openai: `${workerBase}/v1`,
-        anthropic: workerBase,
+        openai: openaiBase,
+        anthropic: anthropicBase,
         supervisorPort: cfg.supervisorPort,
         workerPort: cfg.workerPort,
         dataDir: dataDir(),

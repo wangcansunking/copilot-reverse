@@ -40,7 +40,7 @@ describe("slash commands", () => {
   });
   it("/setup-claude prints ANTHROPIC_BASE_URL", async () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/setup-claude");
-    expect(out.join("\n")).toMatch(/ANTHROPIC_BASE_URL=http:\/\/127\.0\.0\.1:7891/);
+    expect(out.join("\n")).toMatch(/ANTHROPIC_BASE_URL=http:\/\/127\.0\.0\.1:7891\/anthropic/);
   });
   it("/metrics shows empty-state when no requests", async () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/metrics");

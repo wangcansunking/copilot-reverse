@@ -68,7 +68,7 @@ describe("LIVE: model discovery", () => {
 
 describe("LIVE: OpenAI endpoint", () => {
   liveIt("returns a real completion for a deterministic prompt", async () => {
-    const res = await request(liveWorker()).post("/v1/chat/completions")
+    const res = await request(liveWorker()).post("/openai/chat/completions")
       .send({ model: "gpt-4o", max_tokens: 10, messages: [{ role: "user", content: "Reply with exactly: PONG" }] });
     expect(res.status).toBe(200);
     expect(res.body.choices[0].message.content.toUpperCase()).toContain("PONG");
@@ -78,7 +78,7 @@ describe("LIVE: OpenAI endpoint", () => {
 describe("LIVE: Anthropic endpoint", () => {
   liveIt("different questions return DIFFERENT answers (no dedupe regression)", async () => {
     const ask = async (q: string) => {
-      const res = await request(liveWorker()).post("/v1/messages")
+      const res = await request(liveWorker()).post("/anthropic/v1/messages")
         .send({ model: "gpt-4o", max_tokens: 20, stream: true, messages: [{ role: "user", content: q }] });
       return anthropicText(res.text).toLowerCase();
     };
@@ -92,7 +92,7 @@ describe("LIVE: Anthropic endpoint", () => {
   }, 40_000);
 
   liveIt("streams real usage in message_delta", async () => {
-    const res = await request(liveWorker()).post("/v1/messages")
+    const res = await request(liveWorker()).post("/anthropic/v1/messages")
       .send({ model: "gpt-4o", max_tokens: 15, stream: true, messages: [{ role: "user", content: "name two colors" }] });
     const delta = res.text.split("\n\n").map((b) => b.split("\n").find((l) => l.startsWith("data: "))?.slice(6))
       .filter((d): d is string => !!d).map((d) => { try { return JSON.parse(d); } catch { return null; } })
@@ -104,7 +104,7 @@ describe("LIVE: Anthropic endpoint", () => {
 
 describe("LIVE: count_tokens", () => {
   liveIt("estimates a positive input_tokens for a real prompt", async () => {
-    const res = await request(liveWorker()).post("/v1/messages/count_tokens")
+    const res = await request(liveWorker()).post("/anthropic/v1/messages/count_tokens")
       .send({ model: "gpt-4o", messages: [{ role: "user", content: "how many tokens is this prompt" }] });
     expect(res.status).toBe(200);
     expect(res.body.input_tokens).toBeGreaterThan(0);

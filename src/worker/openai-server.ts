@@ -7,12 +7,18 @@ import { errorHint } from "./errors.js";
 import { CopilotAuthError } from "../providers/copilot/token.js";
 
 export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink): void {
-  app.post("/v1/chat/completions", async (req, res) => {
+  // Model discovery — OpenAI list shape. Clients (LiteLLM-style gateways, "test connection" probes)
+  // GET this before chatting; without it they 404 and refuse to connect.
+  app.get("/openai/models", (_req, res) => {
+    res.json({ object: "list", data: router.listModels().map((id) => ({ id, object: "model", owned_by: "copilot-reverse" })) });
+  });
+
+  app.post("/openai/chat/completions", async (req, res) => {
     const start = Date.now();
     const canon = openaiRequestToCanonical(req.body);
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
-    const metric = (status: number, error?: string) => onMetric({ endpoint: "/v1/chat/completions", model: canon.model, status, latencyMs: Date.now() - start, error });
+    const metric = (status: number, error?: string) => onMetric({ endpoint: "/openai/chat/completions", model: canon.model, status, latencyMs: Date.now() - start, error });
     try {
       if (canon.stream) {
         res.setHeader("content-type", "text/event-stream");

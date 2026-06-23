@@ -47,7 +47,7 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
   } });
   reg.add({ name: "/setup-claude", describe: "print Claude Code config", run: async () => claudeCodeConfig(endpoint).instructions.split("\n") });
   reg.add({ name: "/setup-codex", describe: "print Codex/OpenAI config", run: async () => codexConfig(endpoint).instructions.split("\n") });
-  reg.add({ name: "/setup-status", describe: "show configured endpoints", run: async () => [`OpenAI: http://${endpoint.host}:${endpoint.port}/v1`, `Anthropic: http://${endpoint.host}:${endpoint.port}`] });
+  reg.add({ name: "/setup-status", describe: "show configured endpoints", run: async () => [`OpenAI: http://${endpoint.host}:${endpoint.port}/openai`, `Anthropic: http://${endpoint.host}:${endpoint.port}/anthropic`] });
   reg.add({ name: "/reset-claude", describe: "restore Claude Code config (remove copilot-reverse's keys)", run: async () => opts.resetClient ? opts.resetClient("claude") : ["reset not available"] });
   reg.add({ name: "/reset-codex", describe: "restore Codex/OpenAI config (remove copilot-reverse's keys)", run: async () => opts.resetClient ? opts.resetClient("codex") : ["reset not available"] });
   reg.add({ name: "/login", describe: "sign in to GitHub (device-code)", run: async () => opts.login ? opts.login() : ["login not available"] });

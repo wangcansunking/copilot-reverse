@@ -27,7 +27,7 @@ function parseFrames(body: string): { event: string; data: any }[] {
 
 describe("worker Anthropic endpoint", () => {
   it("non-stream message", async () => {
-    const res = await request(app()).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, messages: [{ role: "user", content: "hi" }] });
+    const res = await request(app()).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, messages: [{ role: "user", content: "hi" }] });
     expect(res.status).toBe(200);
     expect(res.body.type).toBe("message");
     expect(res.body.content[0].text).toBe("hello");
@@ -42,7 +42,7 @@ describe("worker Anthropic endpoint", () => {
         yield { kind: "done", done: true, finishReason: "stop", usage: { promptTokens: 100, completionTokens: 5, cachedTokens: 20 } };
       },
     };
-    const res = await request(app(usageProvider)).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const res = await request(app(usageProvider)).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
     const delta = parseFrames(res.text).find((f) => f.event === "message_delta");
     // input = prompt - cached (80), output = 5, cached split out (agent-maestro shape)
     expect(delta!.data.usage.input_tokens).toBe(80);
@@ -51,7 +51,7 @@ describe("worker Anthropic endpoint", () => {
   });
 
   it("gives each streamed response a unique message id (clients dedupe by id)", async () => {
-    const send = () => request(app()).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const send = () => request(app()).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
     const idOf = (text: string) => JSON.parse(text.split("\n\n")[0].split("\n").find((l) => l.startsWith("data: "))!.slice(6)).message.id as string;
     const [a, b] = await Promise.all([send(), send()]);
     const idA = idOf(a.text), idB = idOf(b.text);
@@ -60,20 +60,20 @@ describe("worker Anthropic endpoint", () => {
   });
 
   it("seeds message_start with an estimated input_tokens so the context bar isn't stuck at 0", async () => {
-    const res = await request(app()).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "a reasonably long prompt about many things" }] });
+    const res = await request(app()).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "a reasonably long prompt about many things" }] });
     const start = parseFrames(res.text).find((f) => f.event === "message_start");
     expect(start!.data.message.usage.input_tokens).toBeGreaterThan(0);
   });
 
   it("SSE message stream begins with message_start", async () => {
-    const res = await request(app()).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const res = await request(app()).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
     expect(res.text).toContain("message_start");
     expect(res.text).toContain('"text":"he"');
     expect(res.text).toContain("message_stop");
   });
 
   it("text stream opens index-0 text block lazily and closes it before message_stop", async () => {
-    const res = await request(app()).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const res = await request(app()).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
     const frames = parseFrames(res.text);
     const events = frames.map((f) => f.event);
     // exactly one content_block_start at index 0 of type text
@@ -98,7 +98,7 @@ describe("worker Anthropic endpoint", () => {
         yield { kind: "done", done: true, finishReason: "tool_use" };
       },
     };
-    const res = await request(app(toolProvider)).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "go" }] });
+    const res = await request(app(toolProvider)).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "go" }] });
     const frames = parseFrames(res.text);
     const events = frames.map((f) => f.event);
 
@@ -142,7 +142,7 @@ describe("worker Anthropic endpoint", () => {
         yield { kind: "done", done: true, finishReason: "tool_use" };
       },
     };
-    const res = await request(app(mixedProvider)).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "go" }] });
+    const res = await request(app(mixedProvider)).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "go" }] });
     const frames = parseFrames(res.text);
     const events = frames.map((f) => f.event);
 
@@ -178,7 +178,7 @@ describe("worker Anthropic endpoint", () => {
   });
 
   it("count_tokens returns a positive input_tokens estimate", async () => {
-    const res = await request(app()).post("/v1/messages/count_tokens").send({ model: "claude-opus-4-8", messages: [{ role: "user", content: "hello world this is a longer prompt" }] });
+    const res = await request(app()).post("/anthropic/v1/messages/count_tokens").send({ model: "claude-opus-4-8", messages: [{ role: "user", content: "hello world this is a longer prompt" }] });
     expect(res.status).toBe(200);
     expect(typeof res.body.input_tokens).toBe("number");
     expect(res.body.input_tokens).toBeGreaterThan(0);
@@ -193,7 +193,7 @@ describe("worker Anthropic endpoint", () => {
         throw new Error("context_length_exceeded: prompt is too long");
       },
     };
-    const res = await request(app(failing)).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const res = await request(app(failing)).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
     const frames = parseFrames(res.text);
     const events = frames.map((f) => f.event);
     // the stream must surface the failure as an Anthropic `error` event, not just stop
@@ -215,7 +215,7 @@ describe("worker Anthropic endpoint", () => {
     const metrics: { status: number; error?: string }[] = [];
     const sink = (m: { status: number; error?: string }) => { metrics.push(m); };
     const a = createWorkerApp(new Router([failing], { "*": "gpt-4o" }), sink);
-    await request(a).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
+    await request(a).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
     expect(metrics.at(-1)?.status).toBe(502);
     expect(metrics.at(-1)?.error).toMatch(/context_length_exceeded/);
   });
@@ -233,7 +233,7 @@ describe("worker Anthropic endpoint", () => {
         yield { kind: "done", done: true, finishReason: "tool_use" };
       },
     };
-    const res = await request(app(multiProvider)).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "go" }] });
+    const res = await request(app(multiProvider)).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "go" }] });
     const frames = parseFrames(res.text);
 
     const starts = frames.filter((f) => f.event === "content_block_start");
@@ -255,5 +255,15 @@ describe("worker Anthropic endpoint", () => {
     const events = frames.map((f) => f.event);
     expect(events.lastIndexOf("content_block_stop")).toBeLessThan(events.indexOf("message_delta"));
     expect(events[events.length - 1]).toBe("message_stop");
+  });
+
+  it("GET /anthropic/v1/models returns the model list in Anthropic list shape (fixes the connection-test 404)", async () => {
+    const res = await request(app()).get("/anthropic/v1/models");
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.data)).toBe(true);
+    expect(res.body.data.length).toBeGreaterThan(0);
+    expect(res.body.data[0]).toMatchObject({ type: "model" });
+    expect(typeof res.body.data[0].id).toBe("string");
+    expect(res.body.has_more).toBe(false);
   });
 });

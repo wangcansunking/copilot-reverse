@@ -35,7 +35,7 @@ function parseFrames(sse: string): Frame[] {
 
 describe("Anthropic mixed text+tool streaming (§5.4 / D3 regression)", () => {
   it("text and tool_use occupy DISTINCT block indices (no index-0 collision)", async () => {
-    const res = await request(app()).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "status?" }] });
+    const res = await request(app()).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "status?" }] });
     const frames = parseFrames(res.text);
 
     const starts = frames.filter((f) => f.event === "content_block_start");

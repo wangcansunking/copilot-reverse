@@ -58,7 +58,7 @@ function openaiChunks(body: string): any[] {
 describe("E2E: proxy", () => {
   it("EP-01 Anthropic streaming yields message_start..delta..message_stop", async () => {
     const { worker } = wired(ok);
-    const res = await request(worker).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const res = await request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
     expect(res.text).toContain("message_start");
     expect(res.text).toContain('"text":"ok"');
     expect(res.text).toContain("message_stop");
@@ -66,20 +66,20 @@ describe("E2E: proxy", () => {
 
   it("EP-02 OpenAI completion returns assistant content", async () => {
     const { worker } = wired(ok);
-    const res = await request(worker).post("/v1/chat/completions").send({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] });
+    const res = await request(worker).post("/openai/chat/completions").send({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] });
     expect(res.body.choices[0].message.content).toBe("ok");
   });
 
   it("EP-03 count_tokens returns a positive estimate", async () => {
     const { worker } = wired(ok);
-    const res = await request(worker).post("/v1/messages/count_tokens").send({ model: "claude-opus-4-8", messages: [{ role: "user", content: "count me" }] });
+    const res = await request(worker).post("/anthropic/v1/messages/count_tokens").send({ model: "claude-opus-4-8", messages: [{ role: "user", content: "count me" }] });
     expect(res.status).toBe(200);
     expect(res.body.input_tokens).toBeGreaterThan(0);
   });
 
   it("EP-04 a request carrying an Anthropic server-side tool still completes (no hang)", async () => {
     const { worker } = wired(ok);
-    const res = await request(worker).post("/v1/messages").send({
+    const res = await request(worker).post("/anthropic/v1/messages").send({
       model: "claude-opus-4-8", max_tokens: 50,
       messages: [{ role: "user", content: "hi" }],
       tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
@@ -92,7 +92,7 @@ describe("E2E: proxy", () => {
 describe("E2E: streaming correctness (this session's fixes)", () => {
   it("EP-10 each streamed Anthropic response gets a UNIQUE message id (no dedupe-to-first)", async () => {
     const { worker } = wired(ok);
-    const send = () => request(worker).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const send = () => request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
     const idOf = (text: string) => frames(text).find((f) => f.event === "message_start")!.data.message.id as string;
     const [a, b] = await Promise.all([send(), send()]);
     const idA = idOf(a.text), idB = idOf(b.text);
@@ -102,7 +102,7 @@ describe("E2E: streaming correctness (this session's fixes)", () => {
 
   it("EP-11 message_start carries a non-zero input_tokens estimate (context bar not stuck at 0)", async () => {
     const { worker } = wired(ok);
-    const res = await request(worker).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "a moderately long prompt here" }] });
+    const res = await request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "a moderately long prompt here" }] });
     const start = frames(res.text).find((f) => f.event === "message_start");
     expect(start!.data.message.usage.input_tokens).toBeGreaterThan(0);
   });
@@ -117,7 +117,7 @@ describe("E2E: streaming correctness (this session's fixes)", () => {
       },
     };
     const { worker } = wired(usageProvider);
-    const res = await request(worker).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const res = await request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
     const delta = frames(res.text).find((f) => f.event === "message_delta");
     expect(delta!.data.usage.input_tokens).toBe(70);
     expect(delta!.data.usage.output_tokens).toBe(7);
@@ -134,7 +134,7 @@ describe("E2E: streaming correctness (this session's fixes)", () => {
       },
     };
     const { worker } = wired(usageProvider);
-    const res = await request(worker).post("/v1/chat/completions").send({ model: "gpt-4o", stream: true, messages: [{ role: "user", content: "hi" }] });
+    const res = await request(worker).post("/openai/chat/completions").send({ model: "gpt-4o", stream: true, messages: [{ role: "user", content: "hi" }] });
     expect(res.text).toContain("data: [DONE]");
     const usageChunk = openaiChunks(res.text).find((c) => c.usage);
     expect(usageChunk.usage.total_tokens).toBe(11);
@@ -142,7 +142,7 @@ describe("E2E: streaming correctness (this session's fixes)", () => {
 
   it("EP-14 a mid-stream OpenAI failure emits an error chunk, not a silent close", async () => {
     const { worker } = wired(failing);
-    const res = await request(worker).post("/v1/chat/completions").send({ model: "gpt-4o", stream: true, messages: [{ role: "user", content: "hi" }] });
+    const res = await request(worker).post("/openai/chat/completions").send({ model: "gpt-4o", stream: true, messages: [{ role: "user", content: "hi" }] });
     expect(res.text).toContain("context_length_exceeded");
     expect(res.text).toContain('"error"');
   });
@@ -154,7 +154,7 @@ describe("E2E: streaming correctness (this session's fixes)", () => {
       async *stream(): AsyncIterable<CanonicalChunk> { throw new CopilotAuthError(401); },
     };
     const { worker } = wired(authFail);
-    const res = await request(worker).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 20, messages: [{ role: "user", content: "hi" }] });
+    const res = await request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 20, messages: [{ role: "user", content: "hi" }] });
     expect(res.status).toBe(401);
     expect(res.body.error.message).toMatch(/\/login/);
   });
@@ -166,7 +166,7 @@ describe("E2E: model resolution & 1M", () => {
     const router = new Router([ok], {});
     router.setAvailableModels(["claude-opus-4.8", "gpt-4o"]);
     const worker = createWorkerApp(router, (m) => recordRequest(db, { ts: Date.now(), ...m }));
-    await request(worker).post("/v1/messages").send({ model: "claude-opus-4-8-20251101", max_tokens: 10, messages: [{ role: "user", content: "hi" }] });
+    await request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8-20251101", max_tokens: 10, messages: [{ role: "user", content: "hi" }] });
     expect(recentRequests(db, 1)[0].model).toBe("claude-opus-4.8");
   });
 
@@ -175,7 +175,7 @@ describe("E2E: model resolution & 1M", () => {
     const router = new Router([ok], {});
     router.setAvailableModels(["claude-opus-4.8"]);
     const worker = createWorkerApp(router, (m) => recordRequest(db, { ts: Date.now(), ...m }));
-    await request(worker).post("/v1/messages").send({ model: "claude-opus-4.8[1m]", max_tokens: 10, messages: [{ role: "user", content: "hi" }] });
+    await request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4.8[1m]", max_tokens: 10, messages: [{ role: "user", content: "hi" }] });
     expect(recentRequests(db, 1)[0].model).toBe("claude-opus-4.8");
   });
 });
@@ -189,7 +189,7 @@ describe("E2E: vision", () => {
       async *stream() { yield { kind: "done", done: true, finishReason: "stop" } as const; },
     };
     const { worker } = wired(visionProvider);
-    const res = await request(worker).post("/v1/messages").send({
+    const res = await request(worker).post("/anthropic/v1/messages").send({
       model: "claude-opus-4-8", max_tokens: 50,
       messages: [{ role: "user", content: [
         { type: "text", text: "what is this?" },
@@ -215,7 +215,7 @@ describe("E2E: tool calls", () => {
 
   it("EP-18 mixed text+tool stream: text@0, tool@1, stop_reason=tool_use", async () => {
     const { worker } = wired(toolProvider);
-    const res = await request(worker).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "go" }] });
+    const res = await request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "go" }] });
     const f = frames(res.text);
     const starts = f.filter((x) => x.event === "content_block_start");
     expect(starts.find((s) => s.data.content_block.type === "text")!.data.index).toBe(0);
@@ -225,7 +225,7 @@ describe("E2E: tool calls", () => {
 
   it("EP-19 a non-stream tool_use response maps to Anthropic tool_use content", async () => {
     const { worker } = wired(toolProvider);
-    const res = await request(worker).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, messages: [{ role: "user", content: "go" }] });
+    const res = await request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, messages: [{ role: "user", content: "go" }] });
     expect(res.body.stop_reason).toBe("tool_use");
     expect(res.body.content.find((b: any) => b.type === "tool_use").name).toBe("now");
   });
@@ -238,7 +238,7 @@ describe("E2E: tool calls", () => {
       async *stream() { yield { kind: "done", done: true, finishReason: "stop" } as const; },
     };
     const { worker } = wired(echo);
-    await request(worker).post("/v1/chat/completions").send({
+    await request(worker).post("/openai/chat/completions").send({
       model: "gpt-4o",
       messages: [
         { role: "user", content: "what time?" },
@@ -254,7 +254,7 @@ describe("E2E: tool calls", () => {
 describe("E2E: persistence & control API", () => {
   it("EP-21 a failed request's error message persists in the request_log and is queryable", async () => {
     const { worker, control } = wired(failing);
-    await request(worker).post("/v1/chat/completions").send({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] });
+    await request(worker).post("/openai/chat/completions").send({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] });
     const res = await request(control).get("/api/requests");
     const failed = res.body.requests.find((r: any) => r.status >= 400);
     expect(failed.error).toMatch(/context_length_exceeded/);
@@ -311,7 +311,7 @@ describe("E2E: setup lifecycle (Claude + Codex)", () => {
 describe("E2E: error capture & dashboard", () => {
   it("EP-05 a failed stream surfaces an error frame AND lands in the control API + dashboard data", async () => {
     const { worker, control } = wired(failing);
-    const res = await request(worker).post("/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const res = await request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, messages: [{ role: "user", content: "hi" }] });
     expect(res.text).toContain("event: error");
     expect(res.text).toContain("context_length_exceeded");
     // the supervisor recorded the failure with its message

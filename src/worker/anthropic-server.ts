@@ -10,17 +10,23 @@ import { CopilotAuthError } from "../providers/copilot/token.js";
 const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 
 export function mountAnthropic(app: Express, router: Router, onMetric: MetricSink): void {
+  // Model discovery — Anthropic list shape. Claude Desktop / Anthropic-protocol clients GET this
+  // before chatting; without it they 404 on the connection test.
+  app.get("/anthropic/v1/models", (_req, res) => {
+    res.json({ data: router.listModels().map((id) => ({ type: "model", id, display_name: id })), has_more: false });
+  });
+
   // Anthropic clients (Claude Code) call this to size the prompt and decide when to auto-compact.
-  app.post("/v1/messages/count_tokens", (req, res) => {
+  app.post("/anthropic/v1/messages/count_tokens", (req, res) => {
     res.json({ input_tokens: estimateTokens(anthropicRequestToCanonical(req.body)) });
   });
 
-  app.post("/v1/messages", async (req, res) => {
+  app.post("/anthropic/v1/messages", async (req, res) => {
     const start = Date.now();
     const canon = anthropicRequestToCanonical(req.body);
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
-    const metric = (status: number, error?: string) => onMetric({ endpoint: "/v1/messages", model: canon.model, status, latencyMs: Date.now() - start, error });
+    const metric = (status: number, error?: string) => onMetric({ endpoint: "/anthropic/v1/messages", model: canon.model, status, latencyMs: Date.now() - start, error });
     try {
       if (canon.stream) {
         res.setHeader("content-type", "text/event-stream");

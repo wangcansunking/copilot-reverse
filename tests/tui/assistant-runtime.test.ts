@@ -75,7 +75,7 @@ describe("assistant runtime (stubbed SDK transport, real /v1/messages)", () => {
       return gen();
     }) as unknown as QueryFn;
 
-    const cfg: AssistantConfig = { client: {} as any, workerBaseUrl: url, apiKey: "copilot-reverse-local", model: "claude-opus-4-8" };
+    const cfg: AssistantConfig = { client: {} as any, workerBaseUrl: `${url}/anthropic`, apiKey: "copilot-reverse-local", model: "claude-opus-4-8" };
     const printed: string[] = [];
     const onChat = makeOnChat(cfg, (c, p, print) => runAssistantTurn(c, p, print, fakeQuery));
     await onChat("how is the proxy?", (l) => printed.push(l));

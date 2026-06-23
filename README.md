@@ -87,13 +87,13 @@ health, request volume, and (most useful) recent **errors with their real messag
 
 Already have something that speaks OpenAI or Anthropic? Point it here:
 
-- **OpenAI-compatible:** `http://127.0.0.1:7891/v1`
-- **Anthropic-compatible:** `http://127.0.0.1:7891`
+- **OpenAI-compatible:** `http://127.0.0.1:7891/openai`
+- **Anthropic-compatible:** `http://127.0.0.1:7891/anthropic`
 
 Any API key value works locally (it's your machine). Example:
 
 ```bash
-export ANTHROPIC_BASE_URL=http://127.0.0.1:7891
+export ANTHROPIC_BASE_URL=http://127.0.0.1:7891/anthropic
 export ANTHROPIC_API_KEY=local
 claude
 ```
@@ -159,8 +159,8 @@ Three processes, one terminal app:
 - **TUI** (Ink) — the `copilot-reverse` process: REPL + slash commands + a claude-agent-sdk
   assistant (which dogfoods copilot-reverse's own Anthropic endpoint).
 - **Supervisor** (:7890) — control API + SQLite + self-healing worker supervision.
-- **Worker** (:7891) — OpenAI `/v1/chat/completions` + Anthropic `/v1/messages` → Copilot,
-  with tool-use translation both ways.
+- **Worker** (:7891) — OpenAI `/openai/chat/completions` + Anthropic `/anthropic/v1/messages` → Copilot,
+  with tool-use translation both ways. Each protocol also serves a `…/models` discovery endpoint.
 
 ## Development
 
