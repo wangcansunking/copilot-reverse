@@ -117,6 +117,7 @@ export function App({
   const [screen, setScreen] = useState<Screen>(pickModelOnStart && loadModels ? { kind: "model" } : null);
   const [, setNow] = useState(0); // ticks the live loading line while the assistant streams
   const abortRef = useRef<AbortController | null>(null); // current turn's interrupt handle
+  const loginInFlight = useRef(false); // guards against starting a second device-login flow
   const add = (e: Entry) => setEntries((p) => [...p, e].slice(-100));
   const refreshStatus = () => { if (readStatus) setStatus(readStatus()); };
 
@@ -157,10 +158,14 @@ export function App({
     if (t === "/login" && login) {
       // Show the verification URL + code right away, then resolve a completion card once the user
       // authorizes. Done as a special case (not a registry command) because the slash registry only
-      // renders a command's final return value — it can't surface the code mid-poll.
+      // renders a command's final return value — it can't surface the code mid-poll. Guarded so a
+      // double Enter doesn't start two device-code flows (polling a superseded code 401s).
+      if (loginInFlight.current) { add({ type: "card", title: "/login", tone: "info", lines: ["already waiting for authorization…"] }); return; }
+      loginInFlight.current = true;
       void login((lines) => add({ type: "card", title: "/login", tone: "info", lines }))
         .then((lines) => add({ type: "card", title: "/login", tone: "ok", lines }))
-        .catch((e) => add({ type: "card", title: "/login", tone: "error", lines: [`login failed: ${String(e)}`] }));
+        .catch((e) => add({ type: "card", title: "/login", tone: "error", lines: [`login failed: ${e instanceof Error ? e.message : String(e)}`] }))
+        .finally(() => { loginInFlight.current = false; });
       return;
     }
     if (setup && loadModels && (t === "/setup-claude" || t === "/setup-codex")) {

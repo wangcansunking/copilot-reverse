@@ -7,7 +7,9 @@ and update this file (paste the summary).
   blocking token poll, so the Repl showed nothing and the user could never authorize. Split device
   login into `beginDeviceLogin` (returns the code immediately) + `complete()` (polls), and gave the
   TUI a non-blocking `/login` branch that renders the verification URL + code first, then a
-  completion card. Full suite green: `npm test` → **238 passed** (47 files), `npm run test:e2e` →
+  completion card. Also hardened the failure path: auth errors (e.g. `incorrect_device_code`) render
+  a clean error card instead of crashing the process, and a double Enter no longer starts two
+  device-code flows. Full suite green: `npm test` → **240 passed** (47 files), `npm run test:e2e` →
   **31 passed** (4 files), tsc build clean.
 
 - **2026-06-23** — Added `ToolCallExtractor` (recovers text-emitted `<function_calls>`/`<invoke>`
