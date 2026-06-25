@@ -2,10 +2,20 @@ import type { AssistantConfig } from "./runtime.js";
 
 type TurnRunner = (cfg: AssistantConfig, prompt: string, print: (l: string) => void, abort?: AbortController) => Promise<void>;
 
+// Optional pre-flight check run before each turn. Returns a message to show (and block the turn) when
+// the user can't chat yet — e.g. signed out or an expired Copilot login — or null to proceed.
+type Precheck = () => Promise<string | null>;
+
 const DEFAULT_TURN_TIMEOUT_MS = 120_000; // 2 minutes — a turn that hasn't replied by then is given up on
 
-export function makeOnChat(cfg: AssistantConfig, runner: TurnRunner, timeoutMs = DEFAULT_TURN_TIMEOUT_MS) {
+export function makeOnChat(cfg: AssistantConfig, runner: TurnRunner, timeoutMs = DEFAULT_TURN_TIMEOUT_MS, precheck?: Precheck) {
   return async (text: string, print: (line: string) => void, model?: string, abort?: AbortController): Promise<void> => {
+    // Gate the turn on auth before firing a doomed request. Without this, a signed-out user's message
+    // hangs until the 120s timeout instead of getting an immediate, actionable hint.
+    if (precheck) {
+      const blocked = await precheck().catch(() => null); // a failed check must never wedge chat
+      if (blocked) { print(blocked); return; }
+    }
     const ctrl = abort ?? new AbortController();
     let timedOut = false;
     // Race the turn against a hard timeout so a hung SDK/upstream can never block the UI forever.

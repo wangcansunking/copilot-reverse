@@ -136,6 +136,16 @@ async function launchTui(): Promise<void> {
       setupClient: async (c, s, m) => applyClient(c, s, m),
     },
     (c, p, print, abort) => runAssistantTurn(c, p, print, undefined, abort),
+    undefined,
+    // Pre-flight auth gate: block a turn (with an actionable hint) when there's no GitHub token, or
+    // the stored one no longer exchanges for a Copilot token — instead of firing a request that just
+    // hangs until the turn timeout. Reuses the long-lived tokenStore so a valid login is a cached,
+    // round-trip-free check between message bursts (its get() caches with a 60s skew).
+    async () => {
+      if (!readGhToken(dataDir())) return "you're signed out — run /login to sign in before chatting";
+      try { await tokenStore.get(); return null; }
+      catch { return "your GitHub login has expired — run /login to sign in again"; }
+    },
   );
 
   const persistedModel = readChatModel(dataDir());
