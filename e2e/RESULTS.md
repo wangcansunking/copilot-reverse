@@ -3,6 +3,13 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-25** — Fixed the `/login` deadlock: the slash command buffered the device code behind a
+  blocking token poll, so the Repl showed nothing and the user could never authorize. Split device
+  login into `beginDeviceLogin` (returns the code immediately) + `complete()` (polls), and gave the
+  TUI a non-blocking `/login` branch that renders the verification URL + code first, then a
+  completion card. Full suite green: `npm test` → **238 passed** (47 files), `npm run test:e2e` →
+  **31 passed** (4 files), tsc build clean.
+
 - **2026-06-23** — Added `ToolCallExtractor` (recovers text-emitted `<function_calls>`/`<invoke>`
   tool calls into structured tool chunks) plus changeset-driven auto-release (build-time version
   injection, release workflow). Full suite green: `npm test` → **236 passed** (47 files), e2e all

@@ -107,6 +107,33 @@ describe("TUI: Repl autocomplete navigation", () => {
   });
 });
 
+describe("TUI: /login surfaces the device code before the poll resolves", () => {
+  it("renders the verification URL + code immediately, not buffered behind the token poll", async () => {
+    // Reproduces the deadlock: the old /login buffered its device-code line and only returned
+    // (and thus rendered) after pollForToken resolved — but the user can't authorize a code they
+    // can't see. The login prop must push the code to the UI, then resolve when authorized.
+    let releaseToken!: () => void;
+    const tokenGate = new Promise<void>((r) => { releaseToken = r; });
+    const login = (show: (lines: string[]) => void) => {
+      show(["Open https://github.com/login/device and enter code: AB-12"]);
+      return tokenGate.then(() => ["GitHub authorization complete."]);
+    };
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" login={login} />);
+    await tick();
+    stdin.write("/login");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    // The code is on screen WHILE the token poll is still pending (gate not released).
+    expect(lastFrame()).toContain("AB-12");
+    expect(lastFrame()).toContain("github.com/login/device");
+
+    releaseToken();
+    await tick(80);
+    expect(lastFrame()).toContain("GitHub authorization complete.");
+  });
+});
+
 describe("TUI: model picker", () => {
   it("/model opens the picker and lists models with context windows", async () => {
     const loadModels = async () => ["gpt-4o", "claude-opus-4.8"];
