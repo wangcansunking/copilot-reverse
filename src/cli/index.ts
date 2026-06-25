@@ -5,7 +5,7 @@ import { Command } from "commander";
 import { App } from "../tui/app.js";
 import { buildRegistry } from "../tui/slash/commands.js";
 import { DaemonClient } from "../tui/daemon-client.js";
-import { runDeviceLogin } from "./auth.js";
+import { runDeviceLogin, beginDeviceLogin } from "./auth.js";
 import { probeSupervisor } from "../daemon/lifecycle.js";
 import { startSupervisor } from "../supervisor/index.js";
 import { runAssistantTurn } from "../tui/assistant/runtime.js";
@@ -78,14 +78,6 @@ async function launchTui(): Promise<void> {
     appVersion: APP_VERSION,
     platform: `${process.platform} node-${process.version}`,
     resetClient,
-    // Re-run device-code login, then restart the worker so it picks up the new token.
-    login: async () => {
-      const lines: string[] = [];
-      await runDeviceLogin(dataDir(), fetch, (m) => lines.push(m));
-      await client.restart().catch(() => {});
-      lines.push("worker restarting with the new token");
-      return lines;
-    },
     // Clear the stored token and restart the worker (it will report unauthenticated until re-login).
     logout: async () => {
       clearGhToken(dataDir());
@@ -93,9 +85,22 @@ async function launchTui(): Promise<void> {
       return ["signed out — GitHub token removed", "run /login to sign in again"];
     },
   });
+  // Two-phase /login for the TUI: surface the device code immediately, poll in the background, then
+  // restart the worker so it picks up the new token. The blocking single-call form deadlocked the
+  // Repl (the code stayed hidden behind the poll, so the user could never authorize it).
+  const doLogin = async (show: (lines: string[]) => void): Promise<string[]> => {
+    const { code, complete } = await beginDeviceLogin(dataDir());
+    show([`Open ${code.verification_uri} and enter code: ${code.user_code}`, "waiting for authorization…"]);
+    await complete();
+    // Re-point the token store at the freshly written GitHub token; the old store still holds the
+    // expired one and would 401 once its cached Copilot token rotates, breaking the model picker.
+    tokenStore = new CopilotTokenStore(readGhToken(dataDir())!);
+    await client.restart().catch(() => {});
+    return ["GitHub authorization complete — worker restarting with the new token"];
+  };
   // Filled in below once we have a token; the assistant prefers a model's real window over the default.
   const modelLimits: Record<string, number> = {};
-  const tokenStore = new CopilotTokenStore(readGhToken(dataDir())!);
+  let tokenStore = new CopilotTokenStore(readGhToken(dataDir())!);
   const loadModels = async () => {
     const token = await tokenStore.get();
     const [ids, limits] = await Promise.all([fetchCopilotModels(token), fetchModelLimits(token)]);
@@ -131,6 +136,16 @@ async function launchTui(): Promise<void> {
       setupClient: async (c, s, m) => applyClient(c, s, m),
     },
     (c, p, print, abort) => runAssistantTurn(c, p, print, undefined, abort),
+    undefined,
+    // Pre-flight auth gate: block a turn (with an actionable hint) when there's no GitHub token, or
+    // the stored one no longer exchanges for a Copilot token — instead of firing a request that just
+    // hangs until the turn timeout. Reuses the long-lived tokenStore so a valid login is a cached,
+    // round-trip-free check between message bursts (its get() caches with a 60s skew).
+    async () => {
+      if (!readGhToken(dataDir())) return "you're signed out — run /login to sign in before chatting";
+      try { await tokenStore.get(); return null; }
+      catch { return "your GitHub login has expired — run /login to sign in again"; }
+    },
   );
 
   const persistedModel = readChatModel(dataDir());
@@ -155,6 +170,7 @@ async function launchTui(): Promise<void> {
       },
       onModelChange: (m: string) => writeChatModel(dataDir(), m),
       pickModelOnStart: !persistedModel,
+      login: doLogin,
     }),
   );
 }

@@ -48,4 +48,24 @@ describe("makeOnChat", () => {
     await p;
     expect(printed.join("\n")).toMatch(/interrupted/);
   });
+
+  it("blocks the turn and steers to /login when the precheck reports no valid login", async () => {
+    const runner = vi.fn(async () => {});
+    const printed: string[] = [];
+    const precheck = vi.fn(async () => "signed out — run /login to sign in again");
+    const onChat = makeOnChat({ client: {} as any, workerBaseUrl: "http://x", apiKey: "k", model: "m" }, runner as any, undefined, precheck);
+    await onChat("hi", (l) => printed.push(l));
+    expect(runner).not.toHaveBeenCalled();            // never fires the doomed request
+    expect(printed.join("\n")).toMatch(/\/login/);
+  });
+
+  it("runs the turn normally when the precheck passes", async () => {
+    const runner = vi.fn(async (_c: any, prompt: string, print: (l: string) => void) => { print(`echo:${prompt}`); });
+    const printed: string[] = [];
+    const precheck = vi.fn(async () => null);          // null = login OK
+    const onChat = makeOnChat({ client: {} as any, workerBaseUrl: "http://x", apiKey: "k", model: "m" }, runner as any, undefined, precheck);
+    await onChat("hello", (l) => printed.push(l));
+    expect(precheck).toHaveBeenCalled();
+    expect(printed).toContain("echo:hello");
+  });
 });

@@ -107,6 +107,66 @@ describe("TUI: Repl autocomplete navigation", () => {
   });
 });
 
+describe("TUI: /login surfaces the device code before the poll resolves", () => {
+  it("renders the verification URL + code immediately, not buffered behind the token poll", async () => {
+    // Reproduces the deadlock: the old /login buffered its device-code line and only returned
+    // (and thus rendered) after pollForToken resolved — but the user can't authorize a code they
+    // can't see. The login prop must push the code to the UI, then resolve when authorized.
+    let releaseToken!: () => void;
+    const tokenGate = new Promise<void>((r) => { releaseToken = r; });
+    const login = (show: (lines: string[]) => void) => {
+      show(["Open https://github.com/login/device and enter code: AB-12"]);
+      return tokenGate.then(() => ["GitHub authorization complete."]);
+    };
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" login={login} />);
+    await tick();
+    stdin.write("/login");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    // The code is on screen WHILE the token poll is still pending (gate not released).
+    expect(lastFrame()).toContain("AB-12");
+    expect(lastFrame()).toContain("github.com/login/device");
+
+    releaseToken();
+    await tick(80);
+    expect(lastFrame()).toContain("GitHub authorization complete.");
+  });
+
+  it("renders an error card (not a crash) when authorization fails", async () => {
+    // A rejected poll (e.g. expired/incorrect device code) must surface as an error card. The old
+    // path let the rejection escape as an unhandled rejection and killed the whole process.
+    const login = (show: (lines: string[]) => void) => {
+      show(["Open https://github.com/login/device and enter code: AB-12"]);
+      return Promise.reject(new Error("authorization failed: incorrect_device_code"));
+    };
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" login={login} />);
+    await tick();
+    stdin.write("/login");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    const f = lastFrame() ?? "";
+    expect(f).toContain("login failed");
+    expect(f).toContain("incorrect_device_code");
+    // The raw "Error:" prefix should be stripped — show a clean message.
+    expect(f).not.toContain("Error:");
+  });
+
+  it("ignores a second /login while one is already in flight", async () => {
+    // The user can hit Enter on /login twice; without a guard that starts two device-code flows,
+    // and polling a superseded code fails with incorrect_device_code. Only one flow should start.
+    let starts = 0;
+    const gate = new Promise<string[]>(() => {}); // never resolves — login stays pending
+    const login = (show: (lines: string[]) => void) => { starts++; show([`code ${starts}`]); return gate; };
+    const { stdin } = render(<App registry={reg()} title="m" login={login} />);
+    await tick();
+    stdin.write("/login"); await tick(); stdin.write("\r"); await tick(60);
+    stdin.write("/login"); await tick(); stdin.write("\r"); await tick(60);
+    expect(starts).toBe(1);
+  });
+});
+
 describe("TUI: model picker", () => {
   it("/model opens the picker and lists models with context windows", async () => {
     const loadModels = async () => ["gpt-4o", "claude-opus-4.8"];
