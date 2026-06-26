@@ -4,8 +4,9 @@ import { CopilotAdapter } from "../providers/copilot/adapter.js";
 import { CopilotTokenStore } from "../providers/copilot/token.js";
 import { fetchCopilotModels, fetchModelEndpoints } from "../providers/copilot/models.js";
 import { readGhToken } from "../shared/creds.js";
-import { readWebIqKey } from "../shared/webiq-key.js";
+import { readWebIqKey, readWebSearchMode } from "../shared/webiq-key.js";
 import { makeGatewayRunner } from "../core/server-tools.js";
+import { borrowSearch } from "../providers/copilot/borrow-search.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 import type { WorkerToSupervisor } from "../shared/ipc.js";
@@ -32,9 +33,14 @@ void tokenStore.get().then(async (t) => {
   router.setAvailableModels(ids);
   modelEndpoints = endpoints;
 }).catch(() => {});
-// Gateway-run web_search / web_fetch: reads the WebIQ key lazily per call (env or data dir), so
-// setting it via /web-search-support takes effect without restarting the worker.
-const gatewayRunner = makeGatewayRunner(() => readWebIqKey(dataDir()));
+// Gateway-run web_search / web_fetch. Default backend borrows gpt-5-mini's native web_search via the
+// Copilot token (no key); when the user enables WebIQ (/webiq), mode flips to "webiq" and a stored key
+// forces all traffic through WebIQ. Mode + key are read lazily per call → /webiq toggles need no restart.
+const gatewayRunner = makeGatewayRunner({
+  mode: () => readWebSearchMode(dataDir()),
+  webiqKey: () => readWebIqKey(dataDir()),
+  borrow: { run: (input) => borrowSearch(tokenStore, input) },
+});
 const app = createWorkerApp(router, (m) => send({ type: "request-metric", ...m }), gatewayRunner);
 const server = app.listen(port, host, () => send({ type: "ready", port }));
 const hb = setInterval(() => send({ type: "heartbeat", ts: Date.now() }), 5_000);
