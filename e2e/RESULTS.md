@@ -3,6 +3,18 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-26 (outbound /responses routing)** — Newer Copilot models are served ONLY on /responses:
+  live probe confirms `gpt-5.5` (and `gpt-5.3-codex`, `gpt-5.4-mini`, `mai-code-1-flash-internal`)
+  report `supported_endpoints: ["/responses","ws:/responses"]` with no `/chat/completions`. Added the
+  outbound translation module (`src/providers/copilot/responses-upstream.ts`), routed the adapter by
+  `supported_endpoints` (with a `/chat` 400 `unsupported_api_for_model` → `/responses` retry net), and
+  wired `fetchModelEndpoints` into the worker (lazy, same source as the model list). Verified live
+  end-to-end against real Copilot: adapter `complete()`/`stream()` on gpt-5.5 hit /responses
+  (`ROUTED_OK` / `STREAM_OK`); and through the worker over HTTP, `POST /openai/responses` non-stream
+  returned `status: completed` + `output_text: E2E_RESPONSES_OK`, stream ran `response.created …
+  response.completed`. gpt-4o still routes to /chat/completions. Full suite green: `npm test` →
+  **329 passed** (54 files), `npm run test:e2e` → **31 passed** (4 files), tsc build clean.
+
 - **2026-06-26 (split antml: sentinel)** — Fixed a recurrence of the text-emitted-tool-call bug: the
   `ToolCallExtractor` split-sentinel hold-back (`PREFIX_TOKENS`) listed only the bare `<invoke` /
   `<function_calls>` forms — the two namespaced slots were duplicated bare copies. Copilot streams

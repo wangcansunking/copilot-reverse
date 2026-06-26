@@ -2,7 +2,7 @@ import { createWorkerApp } from "./server.js";
 import { Router } from "./router.js";
 import { CopilotAdapter } from "../providers/copilot/adapter.js";
 import { CopilotTokenStore } from "../providers/copilot/token.js";
-import { fetchCopilotModels } from "../providers/copilot/models.js";
+import { fetchCopilotModels, fetchModelEndpoints } from "../providers/copilot/models.js";
 import { readGhToken } from "../shared/creds.js";
 import { readWebIqKey } from "../shared/webiq-key.js";
 import { makeGatewayRunner } from "../core/server-tools.js";
@@ -20,9 +20,18 @@ const gh = readGhToken(dataDir());
 if (!gh) { send({ type: "error", message: "no GitHub token; run `copilot-reverse` and /login first" }); process.exit(1); }
 
 const tokenStore = new CopilotTokenStore(gh);
-const router = new Router([new CopilotAdapter(tokenStore)], cfg.modelMap);
-// Load the live model list so the router can fuzzy-match near-miss ids (e.g. dated Anthropic ids).
-void tokenStore.get().then((t) => fetchCopilotModels(t)).then((ids) => router.setAvailableModels(ids)).catch(() => {});
+// Per-model supported_endpoints, populated lazily from the live model list (same source as the model
+// ids). The adapter reads through this map so responses-only models (e.g. gpt-5.5) route to /responses
+// as soon as discovery resolves; until then the map is empty and the /chat 400 safety net covers it.
+let modelEndpoints: Record<string, string[]> = {};
+const router = new Router([new CopilotAdapter(tokenStore, fetch, (m) => modelEndpoints[m] ?? [])], cfg.modelMap);
+// Load the live model list so the router can fuzzy-match near-miss ids (e.g. dated Anthropic ids),
+// and the endpoint map so the adapter can route per model. One token fetch feeds both.
+void tokenStore.get().then(async (t) => {
+  const [ids, endpoints] = await Promise.all([fetchCopilotModels(t), fetchModelEndpoints(t)]);
+  router.setAvailableModels(ids);
+  modelEndpoints = endpoints;
+}).catch(() => {});
 // Gateway-run web_search / web_fetch: reads the WebIQ key lazily per call (env or data dir), so
 // setting it via /web-search-support takes effect without restarting the worker.
 const gatewayRunner = makeGatewayRunner(() => readWebIqKey(dataDir()));
