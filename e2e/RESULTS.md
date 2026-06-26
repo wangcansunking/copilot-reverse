@@ -3,6 +3,20 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-26 (default to WebIQ; disable slow borrow)** — gpt-5-mini (the Claude "borrow" backend
+  model) is badly congested on Copilot's `/responses`: repeated `503 "high demand"` and 20s–7min
+  stalls measured live (one user search ran 437s). Same native search on gpt-5.4-mini/gpt-5.4/gpt-5.5
+  is ~4s, and WebIQ is sub-second — so borrow is gated behind `COPILOT_WEB_SEARCH_ENABLED` (now
+  `false`) and web search routes through WebIQ. `resolveWebSearchBackend(mode, hasKey)` →
+  `copilot | webiq | unavailable` centralises the policy; the runner returns a fixed "run /webiq …"
+  message (with the profile URL) when unavailable. Also: `borrowSearch` gained a 30s timeout (the
+  missing one is why a stalled search hung the turn for minutes) and runs at `reasoning.effort:"low"`
+  (~5-6x faster when it is used). status card + HUD show the resolved backend incl. unavailable.
+  Codex's native `/responses` web_search is untouched. Verified live: Claude `web_search` routes
+  through WebIQ end-to-end (`end_turn`, grounded Rust 1.96.0 answer, no tool_use leak); no-key path
+  returns the `/webiq` guidance. Full suite green: `npm test` → **356 passed** (55 files),
+  `npm run test:e2e` → **31 passed** (4 files), tsc build clean.
+
 - **2026-06-26 (Phase 2: web-search backends)** — Web search now works out of the box for both
   clients, with no key. **Claude path**: the gateway borrows gpt-5-mini's native web_search internally
   (`borrow-search.ts`), extracts url_citation sources, and feeds them back — verified live through the
