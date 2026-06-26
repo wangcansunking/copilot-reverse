@@ -57,7 +57,10 @@ export async function borrowSearch(tokenStore: TokenSource, input: string, fetch
   try {
     const res = await fetchFn(RESPONSES_URL, {
       method: "POST", headers: headers(token),
-      body: JSON.stringify({ model: "gpt-5-mini", input, stream: false, tools: [{ type: "web_search" }] }),
+      // reasoning.effort "low" is a ~5-6x speedup (≈30s→≈5s, and far less variance) vs the default:
+      // we discard gpt-5's prose and keep only the citations, so the heavy reasoning it would otherwise
+      // do before/after the search is wasted. ("minimal" is rejected by the API alongside web_search.)
+      body: JSON.stringify({ model: "gpt-5-mini", input, stream: false, tools: [{ type: "web_search" }], reasoning: { effort: "low" } }),
     });
     if (!res.ok) {
       const detail = await res.text().catch(() => "");

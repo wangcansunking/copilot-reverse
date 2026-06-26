@@ -59,6 +59,7 @@ describe("borrowSearch", () => {
     expect(body.model).toBe("gpt-5-mini");
     expect(body.input).toBe("rust 2024 edition");
     expect(body.tools).toEqual([{ type: "web_search" }]);
+    expect(body.reasoning).toEqual({ effort: "low" }); // low effort = ~5-6x faster, citations intact
     expect(body.stream).toBe(false);
     const h = init!.headers as Record<string, string>;
     expect(h.authorization).toBe("Bearer cop-tok");
