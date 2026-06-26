@@ -4,7 +4,7 @@ import { CopilotAdapter } from "../providers/copilot/adapter.js";
 import { CopilotTokenStore } from "../providers/copilot/token.js";
 import { fetchCopilotModels, fetchModelEndpoints } from "../providers/copilot/models.js";
 import { readGhToken } from "../shared/creds.js";
-import { readWebIqKey, readWebSearchMode } from "../shared/webiq-key.js";
+import { readWebIqKey, readWebSearchMode, resolveWebSearchBackend } from "../shared/webiq-key.js";
 import { makeGatewayRunner } from "../core/server-tools.js";
 import { borrowSearch } from "../providers/copilot/borrow-search.js";
 import { dataDir } from "../shared/paths.js";
@@ -33,11 +33,11 @@ void tokenStore.get().then(async (t) => {
   router.setAvailableModels(ids);
   modelEndpoints = endpoints;
 }).catch(() => {});
-// Gateway-run web_search / web_fetch. Default backend borrows gpt-5-mini's native web_search via the
-// Copilot token (no key); when the user enables WebIQ (/webiq), mode flips to "webiq" and a stored key
-// forces all traffic through WebIQ. Mode + key are read lazily per call → /webiq toggles need no restart.
+// Gateway-run web_search / web_fetch. The backend is resolved per call (lazy → /webiq toggles need no
+// restart): currently WebIQ when a key is set, else unavailable (Copilot borrow is disabled — see
+// COPILOT_WEB_SEARCH_ENABLED). resolveWebSearchBackend centralises that policy.
 const gatewayRunner = makeGatewayRunner({
-  mode: () => readWebSearchMode(dataDir()),
+  backend: () => resolveWebSearchBackend(readWebSearchMode(dataDir()), Boolean(readWebIqKey(dataDir()))),
   webiqKey: () => readWebIqKey(dataDir()),
   borrow: { run: (input) => borrowSearch(tokenStore, input) },
 });

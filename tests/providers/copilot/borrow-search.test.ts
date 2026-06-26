@@ -87,6 +87,16 @@ describe("borrowSearch", () => {
     expect(out.ok).toBe(false);
   });
 
+  it("times out instead of hanging when the upstream stalls", async () => {
+    // fetch that honors the abort signal but otherwise never resolves (the gpt-5-mini "high demand" hang).
+    const hangingFetch = (_u: string, init: RequestInit) => new Promise<Response>((_res, rej) => {
+      init.signal?.addEventListener("abort", () => rej(Object.assign(new Error("aborted"), { name: "AbortError" })));
+    });
+    const out = await borrowSearch(tokenStore, "q", hangingFetch as unknown as typeof fetch, 20);
+    expect(out.ok).toBe(false);
+    if (!out.ok) expect(out.error).toMatch(/timed out/i);
+  });
+
   it("rejects an empty query without calling fetch", async () => {
     const f = vi.fn();
     const out = await borrowSearch(tokenStore, "  ", f as unknown as typeof fetch);

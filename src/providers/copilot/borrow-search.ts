@@ -48,15 +48,19 @@ export function extractText(output: any[]): string {
 
 // Run one internal gpt-5-mini web_search. `input` is the full instruction (a query for web_search, or
 // "Open {url} and extract its content" for web_fetch). Never throws — failures become an error string
-// so the gateway tool loop can degrade gracefully.
-export async function borrowSearch(tokenStore: TokenSource, input: string, fetchFn: typeof fetch = fetch): Promise<BorrowOutcome> {
+// so the gateway tool loop can degrade gracefully. Bounded by a timeout so a congested upstream (gpt-5-
+// mini is prone to "high demand" stalls) fails fast instead of hanging the whole turn for minutes.
+const DEFAULT_TIMEOUT_MS = 30_000;
+export async function borrowSearch(tokenStore: TokenSource, input: string, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<BorrowOutcome> {
   if (!input.trim()) return { ok: false, error: "borrow search error: empty query" };
   let token: string;
   try { token = await tokenStore.get(); }
   catch (e) { return { ok: false, error: `borrow search unavailable: ${e instanceof Error ? e.message : String(e)}` }; }
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetchFn(RESPONSES_URL, {
-      method: "POST", headers: headers(token),
+      method: "POST", headers: headers(token), signal: ctrl.signal,
       // reasoning.effort "low" is a ~5-6x speedup (≈30s→≈5s, and far less variance) vs the default:
       // we discard gpt-5's prose and keep only the citations, so the heavy reasoning it would otherwise
       // do before/after the search is wasted. ("minimal" is rejected by the API alongside web_search.)
@@ -68,8 +72,11 @@ export async function borrowSearch(tokenStore: TokenSource, input: string, fetch
     }
     const data = (await res.json()) as { output?: any[] };
     return { ok: true, sources: extractCitations(data.output ?? []), text: extractText(data.output ?? []) };
-  } catch {
-    return { ok: false, error: "borrow search failed: could not reach Copilot" };
+  } catch (e) {
+    const timedOut = e instanceof Error && e.name === "AbortError";
+    return { ok: false, error: timedOut ? `borrow search timed out after ${timeoutMs}ms` : "borrow search failed: could not reach Copilot" };
+  } finally {
+    clearTimeout(timer);
   }
 }
 

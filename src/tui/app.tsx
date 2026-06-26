@@ -12,7 +12,7 @@ import type { ClientStatus } from "./setup/status.js";
 import { theme } from "./theme.js";
 import type { Registry } from "./slash/registry.js";
 import type { WorkerState, StatusResponse } from "../shared/control-types.js";
-import type { WebSearchMode } from "../shared/webiq-key.js";
+import type { WebSearchBackend } from "../shared/webiq-key.js";
 
 type Entry =
   | { type: "user"; text: string }
@@ -30,12 +30,12 @@ const stateColor: Record<WorkerState, string> = {
 const EMPTY_STATUS: ClientStatus = { claude: { user: false, project: false }, codex: { user: false, project: false } };
 const SPINNER = ["✶", "✸", "✹", "✺", "✹", "✷"];
 
-// Startup overview card. GitHub shows a login STATE (no real token expiry exists). Web search is
-// always available, so it shows the active BACKEND: "copilot" (native/borrow, no key) or "webiq".
+// Startup overview card. GitHub shows a login STATE (no real token expiry exists). Web search shows
+// the resolved backend: "via WebIQ", "via Copilot (native)", or "unavailable — run /webiq".
 // `extra` appends detail lines (e.g. worker restart history for /status).
 function statusCard(s: StatusSummary, extra: string[] = []): Entry {
   const gh = s.github === "connected" ? "✓ connected" : s.github === "expired" ? "✗ expired — run /login" : "✗ signed out — run /login";
-  const web = s.webSearch === "webiq" ? "✓ via WebIQ" : "✓ via Copilot (native)";
+  const web = s.webSearch === "webiq" ? "✓ via WebIQ" : s.webSearch === "copilot" ? "✓ via Copilot (native)" : "✗ unavailable — run /webiq";
   const clients = `claude ${s.clients.claude ? "✓" : "○"}  codex ${s.clients.codex ? "✓" : "○"}`;
   const tone: "ok" | "error" = s.github === "connected" ? "ok" : "error";
   return { type: "card", title: "status", tone, lines: [
@@ -71,12 +71,12 @@ export interface AppProps {
   // returned promise resolves with a completion message once the user authorizes. The two-phase
   // shape is required: a single blocking call would hide the code behind the token poll.
   login?: (show: (lines: string[]) => void) => Promise<string[]>;
-  // Web search backend control. Default is Copilot borrow (always on, no key). The /webiq command
-  // opts into Microsoft Web IQ: enableWebiq stores the key + flips mode; disableWebiq (/webiq clean)
-  // clears the key + reverts to copilot. webSearchMode is read live so the HUD/status reflect it.
+  // Web search backend control. /webiq opts into Microsoft Web IQ (enableWebiq stores the key + flips
+  // mode); disableWebiq (/webiq clean) clears the key. webSearchBackend reports the RESOLVED active
+  // backend (copilot | webiq | unavailable), read live so the HUD/status reflect it.
   enableWebiq?: (key: string) => void;
   disableWebiq?: () => void;
-  webSearchMode?: () => WebSearchMode;
+  webSearchBackend?: () => WebSearchBackend;
   // One-time status overview shown as the first card on startup.
   startupStatus?: StatusSummary;
   // Live GitHub login check for /status (a real token-exchange check). Defaults to the startup value.
@@ -135,7 +135,7 @@ function ClientBadge({ name, status }: { name: string; status: { user: boolean; 
 export function App({
   registry, title, workerState = "starting", initialModel = "—",
   statusSource, readStatus, modelLimits, onChat,
-  loadModels, setup, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchMode, startupStatus, githubStatus,
+  loadModels, setup, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, startupStatus, githubStatus,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
   const [entries, setEntries] = useState<Entry[]>(() => [
@@ -144,14 +144,14 @@ export function App({
   ]);
   const [state, setState] = useState<WorkerState>(workerState);
   const [status, setStatus] = useState<ClientStatus>(() => readStatus?.() ?? EMPTY_STATUS);
-  const [webMode, setWebMode] = useState<WebSearchMode>(() => webSearchMode?.() ?? "copilot");
+  const [webBackend, setWebBackend] = useState<WebSearchBackend>(() => webSearchBackend?.() ?? "unavailable");
   const [model, setModel] = useState(initialModel);
   const [screen, setScreen] = useState<Screen>(pickModelOnStart && loadModels ? { kind: "model" } : null);
   const [, setNow] = useState(0); // ticks the live loading line while the assistant streams
   const abortRef = useRef<AbortController | null>(null); // current turn's interrupt handle
   const loginInFlight = useRef(false); // guards against starting a second device-login flow
   const add = (e: Entry) => setEntries((p) => [...p, e].slice(-100));
-  const refreshStatus = () => { if (readStatus) setStatus(readStatus()); if (webSearchMode) setWebMode(webSearchMode()); };
+  const refreshStatus = () => { if (readStatus) setStatus(readStatus()); if (webSearchBackend) setWebBackend(webSearchBackend()); };
 
   // esc interrupts an in-flight assistant turn (the Repl doesn't use esc, so this is unambiguous).
   useInput((_input, key) => { if (key.escape) abortRef.current?.abort(); });
@@ -186,15 +186,15 @@ export function App({
     add({ type: "user", text: `› ${line}` });
     const t = line.trim();
     if (t === "/model" && loadModels) { setScreen({ kind: "model" }); return; }
-    // Hidden web-search backend controls (not in /help). "/webiq clean" disables + clears; "/webiq"
-    // opens the key screen and switches to the WebIQ backend on submit.
+    // Web-search backend controls. "/webiq clean" clears the key; "/webiq" opens the key screen and
+    // switches to the WebIQ backend on submit. After either, re-read the resolved backend for the HUD.
     if (t === "/webiq clean" && disableWebiq) {
-      disableWebiq(); setWebMode("copilot");
-      add({ type: "card", title: "/webiq", tone: "ok", lines: ["✓ WebIQ disabled — web search back to Copilot (native)"] });
+      disableWebiq(); setWebBackend(webSearchBackend?.() ?? "unavailable");
+      add({ type: "card", title: "/webiq", tone: "ok", lines: ["✓ WebIQ key cleared"] });
       return;
     }
     if (t === "/webiq" && enableWebiq) { setScreen({ kind: "webiq-key" }); return; }
-    if (t === "/status" && (startupStatus || githubStatus || webSearchMode)) {
+    if (t === "/status" && (startupStatus || githubStatus || webSearchBackend)) {
       // Render the live status overview (same card as startup), then the worker restart history.
       const github = githubStatus ? await githubStatus() : (startupStatus?.github ?? "signed-out");
       let worker = state, restarts: string[] = [];
@@ -204,7 +204,7 @@ export function App({
       } catch { /* daemon momentarily down — show what we have */ }
       const summary = summarizeStatus({
         hasToken: github !== "signed-out", tokenValid: github === "connected",
-        webSearchMode: webSearchMode?.() ?? webMode, worker,
+        webSearch: webSearchBackend?.() ?? webBackend, worker,
         clients: { claude: status.claude.user || status.claude.project, codex: status.codex.user || status.codex.project },
       });
       add(statusCard(summary, restarts.length ? ["", "recent restarts:", ...restarts] : []));
@@ -299,7 +299,7 @@ export function App({
   } else if (screen?.kind === "webiq-key" && enableWebiq) {
     body = (
       <WebIqKeyScreen
-        onSubmit={(k) => { enableWebiq(k); setWebMode("webiq"); setScreen(null); add({ type: "card", title: "/webiq", tone: "ok", lines: ["✓ WebIQ enabled — all web search now routes through Microsoft Web IQ"] }); }}
+        onSubmit={(k) => { enableWebiq(k); setWebBackend(webSearchBackend?.() ?? "webiq"); setScreen(null); add({ type: "card", title: "/webiq", tone: "ok", lines: ["✓ WebIQ enabled — all web search now routes through Microsoft Web IQ"] }); }}
         onCancel={() => { setScreen(null); add({ type: "system", text: "webiq cancelled" }); }}
       />
     );
@@ -340,7 +340,7 @@ export function App({
         <Box>
           <Text color={theme.muted}>model </Text><Text color={theme.accent}>{model}</Text>
           <Text color={theme.muted}>  ·  daemon </Text><Text color={stateColor[state]}>{state}</Text>
-          <Text color={theme.muted}>  ·  web </Text><Text color={theme.ready}>{webMode === "webiq" ? "✓ webiq" : "✓ copilot"}</Text>
+          <Text color={theme.muted}>  ·  web </Text><Text color={webBackend === "unavailable" ? theme.muted : theme.ready}>{webBackend === "webiq" ? "✓ webiq" : webBackend === "copilot" ? "✓ copilot" : "✗ /webiq"}</Text>
         </Box>
         <Box>
           <ClientBadge name="claude" status={status.claude} />

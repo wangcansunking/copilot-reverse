@@ -39,3 +39,21 @@ export function readWebSearchMode(dir: string): WebSearchMode {
 export function writeWebSearchMode(dir: string, mode: WebSearchMode): void {
   write(dir, { ...read(dir), mode });
 }
+
+// Master switch for the Copilot "borrow" backend (gpt-5-mini's native web_search). Currently OFF:
+// gpt-5-mini is badly congested on Copilot's /responses (503 "high demand", 20s–7min), while WebIQ is
+// sub-second. So web search routes through WebIQ only; with no key it is unavailable. Flip this to
+// `true` to bring borrow search back (the borrow code path is kept intact). NOTE: this gates only the
+// Claude gateway backend — Codex's native /responses web_search is unaffected (it uses fast gpt-5
+// models directly, not gpt-5-mini).
+export const COPILOT_WEB_SEARCH_ENABLED = false;
+
+export type WebSearchBackend = "copilot" | "webiq" | "unavailable";
+
+// Resolve which backend a gateway web_search/web_fetch call should use. Pure (no I/O) so both flag
+// states are unit-tested. `enabled` defaults to the live flag; tests pass it explicitly.
+export function resolveWebSearchBackend(mode: WebSearchMode, hasKey: boolean, enabled: boolean = COPILOT_WEB_SEARCH_ENABLED): WebSearchBackend {
+  if (!enabled) return hasKey ? "webiq" : "unavailable"; // borrow disabled → WebIQ or nothing
+  if (mode === "webiq" && hasKey) return "webiq";
+  return "copilot"; // default borrow (and the webiq-without-key fallback)
+}
