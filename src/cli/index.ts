@@ -187,6 +187,11 @@ async function launchTui(): Promise<void> {
       saveWebIqKey: (k: string) => writeWebIqKey(k, dataDir()),
       webSearchReady: () => Boolean(readWebIqKey(dataDir())),
       startupStatus,
+      githubStatus: async () => {
+        const token = readGhToken(dataDir());
+        if (!token) return "signed-out";
+        return (await isCopilotTokenValid(token)) ? "connected" : "expired";
+      },
     }),
   );
 }

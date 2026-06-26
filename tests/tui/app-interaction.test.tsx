@@ -189,6 +189,38 @@ describe("TUI: /web-search-support key entry", () => {
   });
 });
 
+describe("TUI: /status command shows the live status card", () => {
+  it("renders the GitHub/web/worker overview when /status is run", async () => {
+    const { stdin, lastFrame } = render(
+      <App registry={reg()} title="m"
+        githubStatus={async () => "connected"}
+        webSearchReady={() => true} />,
+    );
+    await tick();
+    stdin.write("/status");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/GitHub login.*connected/);
+    expect(f).toMatch(/web search.*✓ ready/);
+  });
+
+  it("steers to /web-search-support in the card when web search is unconfigured", async () => {
+    const { stdin, lastFrame } = render(
+      <App registry={reg()} title="m"
+        githubStatus={async () => "connected"}
+        webSearchReady={() => false} />,
+    );
+    await tick();
+    stdin.write("/status");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    expect(lastFrame()).toMatch(/web search.*not configured.*\/web-search-support/);
+  });
+});
+
 describe("TUI: startup status card", () => {
   it("renders the GitHub/web-search/worker overview on startup", () => {
     const startupStatus = { github: "connected" as const, webSearch: "not-configured" as const, worker: "ready" as const, clients: { claude: true, codex: false } };

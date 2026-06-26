@@ -6,7 +6,7 @@ import { SetupWizard, type SetupClient } from "./setup/wizard.js";
 import { ModelScreen } from "./screens/model.js";
 import { ConfigScreen, type ConfigInfo } from "./screens/config.js";
 import { WebIqKeyScreen } from "./screens/webiq-key.js";
-import type { StatusSummary } from "./status-summary.js";
+import { summarizeStatus, type StatusSummary, type GithubLoginState } from "./status-summary.js";
 import type { Scope, ApplyResult } from "./setup/apply.js";
 import type { ClientStatus } from "./setup/status.js";
 import { theme } from "./theme.js";
@@ -30,8 +30,9 @@ const EMPTY_STATUS: ClientStatus = { claude: { user: false, project: false }, co
 const SPINNER = ["✶", "✸", "✹", "✺", "✹", "✷"];
 
 // Startup overview card. GitHub shows a login STATE (no real token expiry exists), web search shows
-// whether a WebIQ key is configured with the command to fix it when not.
-function statusCard(s: StatusSummary): Entry {
+// whether a WebIQ key is configured with the command to fix it when not. `extra` appends detail
+// lines (e.g. worker restart history for /status).
+function statusCard(s: StatusSummary, extra: string[] = []): Entry {
   const gh = s.github === "connected" ? "✓ connected" : s.github === "expired" ? "✗ expired — run /login" : "✗ signed out — run /login";
   const web = s.webSearch === "ready" ? "✓ ready" : "✗ not configured — run /web-search-support";
   const clients = `claude ${s.clients.claude ? "✓" : "○"}  codex ${s.clients.codex ? "✓" : "○"}`;
@@ -41,6 +42,7 @@ function statusCard(s: StatusSummary): Entry {
     `web search     ${web}`,
     `worker         ${s.worker}`,
     `clients        ${clients}`,
+    ...extra,
   ] };
 }
 
@@ -74,6 +76,8 @@ export interface AppProps {
   webSearchReady?: () => boolean;
   // One-time status overview shown as the first card on startup.
   startupStatus?: StatusSummary;
+  // Live GitHub login check for /status (a real token-exchange check). Defaults to the startup value.
+  githubStatus?: () => Promise<GithubLoginState>;
 }
 
 function OutputCard({ title, lines, tone }: { title: string; lines: string[]; tone: "info" | "ok" | "error" }) {
@@ -128,7 +132,7 @@ function ClientBadge({ name, status }: { name: string; status: { user: boolean; 
 export function App({
   registry, title, workerState = "starting", initialModel = "—",
   statusSource, readStatus, modelLimits, onChat,
-  loadModels, setup, info, onModelChange, pickModelOnStart, login, saveWebIqKey, webSearchReady, startupStatus,
+  loadModels, setup, info, onModelChange, pickModelOnStart, login, saveWebIqKey, webSearchReady, startupStatus, githubStatus,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
   const [entries, setEntries] = useState<Entry[]>(() => [
@@ -180,6 +184,22 @@ export function App({
     const t = line.trim();
     if (t === "/model" && loadModels) { setScreen({ kind: "model" }); return; }
     if (t === "/web-search-support" && saveWebIqKey) { setScreen({ kind: "webiq-key" }); return; }
+    if (t === "/status" && (startupStatus || githubStatus || webSearchReady)) {
+      // Render the live status overview (same card as startup), then the worker restart history.
+      const github = githubStatus ? await githubStatus() : (startupStatus?.github ?? "signed-out");
+      let worker = state, restarts: string[] = [];
+      try {
+        const s = await statusSource?.();
+        if (s) { worker = s.workerState; restarts = s.restarts.slice(0, 5).map((r) => `  ${r.reason} exit=${r.exitCode ?? "-"} ${r.stderrTail.slice(0, 60)}`); }
+      } catch { /* daemon momentarily down — show what we have */ }
+      const summary = summarizeStatus({
+        hasToken: github !== "signed-out", tokenValid: github === "connected",
+        webSearchReady: webSearchReady?.() ?? webReady, worker,
+        clients: { claude: status.claude.user || status.claude.project, codex: status.codex.user || status.codex.project },
+      });
+      add(statusCard(summary, restarts.length ? ["", "recent restarts:", ...restarts] : []));
+      return;
+    }
     if (t === "/config" && info) { setScreen({ kind: "config" }); return; }
     if (t === "/login" && login) {
       // Show the verification URL + code right away, then resolve a completion card once the user
