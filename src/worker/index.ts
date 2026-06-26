@@ -4,6 +4,8 @@ import { CopilotAdapter } from "../providers/copilot/adapter.js";
 import { CopilotTokenStore } from "../providers/copilot/token.js";
 import { fetchCopilotModels } from "../providers/copilot/models.js";
 import { readGhToken } from "../shared/creds.js";
+import { readWebIqKey } from "../shared/webiq-key.js";
+import { makeGatewayRunner } from "../core/server-tools.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 import type { WorkerToSupervisor } from "../shared/ipc.js";
@@ -21,7 +23,10 @@ const tokenStore = new CopilotTokenStore(gh);
 const router = new Router([new CopilotAdapter(tokenStore)], cfg.modelMap);
 // Load the live model list so the router can fuzzy-match near-miss ids (e.g. dated Anthropic ids).
 void tokenStore.get().then((t) => fetchCopilotModels(t)).then((ids) => router.setAvailableModels(ids)).catch(() => {});
-const app = createWorkerApp(router, (m) => send({ type: "request-metric", ...m }));
+// Gateway-run web_search / web_fetch: reads the WebIQ key lazily per call (env or data dir), so
+// setting it via /web-search-support takes effect without restarting the worker.
+const gatewayRunner = makeGatewayRunner(() => readWebIqKey(dataDir()));
+const app = createWorkerApp(router, (m) => send({ type: "request-metric", ...m }), gatewayRunner);
 const server = app.listen(port, host, () => send({ type: "ready", port }));
 const hb = setInterval(() => send({ type: "heartbeat", ts: Date.now() }), 5_000);
 

@@ -1,0 +1,146 @@
+import type { CanonicalRequest, CanonicalResponse, CanonicalMessage, ContentBlock } from "./canonical.js";
+import { joinText } from "./canonical.js";
+
+// OpenAI Responses API translation. Codex (post codex#7782) speaks ONLY this API — it POSTs to
+// {base_url}/responses. Like agent-maestro's implementation we are STATELESS: previous_response_id /
+// conversation / item_reference are unsupported (the client sends full history in `input` each turn),
+// and only function tools are honored. Mirrors the chat-completions translator in openai-inbound.ts.
+
+interface ResponsesContentPart { type?: string; text?: string; image_url?: string | { url?: string } }
+interface ResponsesInputItem {
+  type?: string; role?: string;
+  content?: string | ResponsesContentPart[];     // message
+  call_id?: string; name?: string; arguments?: string; // function_call
+  output?: string;                                // function_call_output
+}
+interface ResponsesTool { type: string; name?: string; description?: string; parameters?: Record<string, unknown> }
+export interface ResponsesRequest {
+  model: string; input: string | ResponsesInputItem[]; instructions?: string;
+  stream?: boolean; temperature?: number; max_output_tokens?: number; tools?: ResponsesTool[];
+}
+
+function partsText(content: string | ResponsesContentPart[] | undefined): string {
+  if (content == null) return "";
+  if (typeof content === "string") return content;
+  return content.map((p) => (typeof p === "string" ? p : p?.text ?? "")).join("");
+}
+function partsImages(content: string | ResponsesContentPart[] | undefined): ContentBlock[] {
+  if (!Array.isArray(content)) return [];
+  const urlOf = (p: ResponsesContentPart): string | undefined => typeof p.image_url === "string" ? p.image_url : p.image_url?.url;
+  return content.filter((p) => p?.type === "input_image" && urlOf(p)).map((p) => ({ type: "image", dataUrl: urlOf(p)! }));
+}
+function safeJson(s: string | undefined): unknown { try { return s ? JSON.parse(s) : {}; } catch { return {}; } }
+
+function itemToMessage(it: ResponsesInputItem): CanonicalMessage | null {
+  if (it.type === "function_call" && it.call_id) {
+    return { role: "assistant", content: [{ type: "tool_use", id: it.call_id, name: it.name ?? "", input: safeJson(it.arguments) }] };
+  }
+  if (it.type === "function_call_output" && it.call_id) {
+    return { role: "tool", content: [{ type: "tool_result", toolUseId: it.call_id, content: it.output ?? "" }] };
+  }
+  // default: a message item
+  const role = (["system", "user", "assistant"].includes(it.role ?? "") ? it.role : "user") as CanonicalMessage["role"];
+  const content: ContentBlock[] = [];
+  const text = partsText(it.content);
+  if (text) content.push({ type: "text", text });
+  content.push(...partsImages(it.content));
+  return content.length ? { role, content } : null;
+}
+
+export function responsesRequestToCanonical(req: ResponsesRequest): CanonicalRequest {
+  const messages: CanonicalMessage[] = [];
+  if (req.instructions) messages.push({ role: "system", content: [{ type: "text", text: req.instructions }] });
+  if (typeof req.input === "string") {
+    messages.push({ role: "user", content: [{ type: "text", text: req.input }] });
+  } else {
+    for (const it of req.input) { const m = itemToMessage(it); if (m) messages.push(m); }
+  }
+  return {
+    model: req.model, stream: Boolean(req.stream), temperature: req.temperature, maxTokens: req.max_output_tokens,
+    tools: req.tools?.filter((t) => t.type === "function" && t.name).map((t) => ({ name: t.name!, description: t.description, parameters: t.parameters ?? {} })),
+    messages,
+  };
+}
+
+// Build the non-stream Responses object: text -> an output_text message item, tool_use -> function_call items.
+export function canonicalToResponsesResponse(r: CanonicalResponse) {
+  const output: unknown[] = [];
+  const text = joinText(r.content);
+  if (text) output.push({ type: "message", id: `msg_${r.id}`, role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] });
+  for (const b of r.content) {
+    if (b.type === "tool_use") output.push({ type: "function_call", id: `fc_${b.id}`, call_id: b.id, name: b.name, arguments: JSON.stringify(b.input ?? {}), status: "completed" });
+  }
+  return {
+    id: r.id, object: "response" as const, status: "completed" as const, model: r.model,
+    output, output_text: text,
+    usage: { input_tokens: r.usage.promptTokens, output_tokens: r.usage.completionTokens, total_tokens: r.usage.promptTokens + r.usage.completionTokens },
+  };
+}
+
+// Stateful SSE emitter for the Responses stream. Each event carries a monotonically increasing
+// sequence_number (Codex/agent-maestro require it). Text streams as one output_text message item;
+// each tool call is its own function_call output item. Indices are allocated sequentially.
+const frame = (event: unknown): string => `data: ${JSON.stringify(event)}\n\n`;
+export class ResponsesSSE {
+  private seq = 0;
+  private nextIndex = 0;
+  private textIndex?: number;
+  private textItemId?: string;
+  private toolIndex = new Map<number, { outputIndex: number; itemId: string }>();
+  constructor(private responseId: string, private model: string) {}
+
+  private ev(type: string, extra: Record<string, unknown>): string {
+    return frame({ type, sequence_number: this.seq++, ...extra });
+  }
+  private envelope(status: string) {
+    return { id: this.responseId, object: "response", status, model: this.model };
+  }
+
+  start(): string {
+    return this.ev("response.created", { response: { ...this.envelope("in_progress"), output: [] } });
+  }
+
+  text(delta: string): string[] {
+    const out: string[] = [];
+    if (this.textIndex === undefined) {
+      this.textIndex = this.nextIndex++;
+      this.textItemId = `msg_${this.responseId}`;
+      out.push(this.ev("response.output_item.added", { output_index: this.textIndex, item: { type: "message", id: this.textItemId, role: "assistant", status: "in_progress", content: [] } }));
+      out.push(this.ev("response.content_part.added", { item_id: this.textItemId, output_index: this.textIndex, content_index: 0, part: { type: "output_text", text: "", annotations: [] } }));
+    }
+    out.push(this.ev("response.output_text.delta", { item_id: this.textItemId, output_index: this.textIndex, content_index: 0, delta }));
+    return out;
+  }
+
+  toolStart(copilotIdx: number, callId: string, name: string): string[] {
+    if (this.toolIndex.has(copilotIdx)) return [];
+    const outputIndex = this.nextIndex++;
+    const itemId = `fc_${callId}`;
+    this.toolIndex.set(copilotIdx, { outputIndex, itemId });
+    return [this.ev("response.output_item.added", { output_index: outputIndex, item: { type: "function_call", id: itemId, call_id: callId, name, arguments: "", status: "in_progress" } })];
+  }
+
+  toolArgs(copilotIdx: number, deltaArgs: string): string[] {
+    const t = this.toolIndex.get(copilotIdx);
+    if (!t) return [];
+    return [this.ev("response.function_call_arguments.delta", { item_id: t.itemId, output_index: t.outputIndex, delta: deltaArgs })];
+  }
+
+  // Close all open items and complete the response. `argsByIdx` supplies final accumulated tool args.
+  finish(usage: { promptTokens: number; completionTokens: number } | undefined, _finishReason: string, argsByIdx?: Map<number, string>): string[] {
+    const out: string[] = [];
+    if (this.textIndex !== undefined) {
+      out.push(this.ev("response.output_text.done", { item_id: this.textItemId, output_index: this.textIndex, content_index: 0, text: "" }));
+      out.push(this.ev("response.content_part.done", { item_id: this.textItemId, output_index: this.textIndex, content_index: 0, part: { type: "output_text", text: "", annotations: [] } }));
+      out.push(this.ev("response.output_item.done", { output_index: this.textIndex, item: { type: "message", id: this.textItemId, role: "assistant", status: "completed", content: [] } }));
+    }
+    for (const [copilotIdx, t] of this.toolIndex) {
+      const args = argsByIdx?.get(copilotIdx) ?? "";
+      out.push(this.ev("response.function_call_arguments.done", { item_id: t.itemId, output_index: t.outputIndex, arguments: args }));
+      out.push(this.ev("response.output_item.done", { output_index: t.outputIndex, item: { type: "function_call", id: t.itemId, status: "completed" } }));
+    }
+    const u = usage ? { input_tokens: usage.promptTokens, output_tokens: usage.completionTokens, total_tokens: usage.promptTokens + usage.completionTokens } : undefined;
+    out.push(this.ev("response.completed", { response: { ...this.envelope("completed"), ...(u ? { usage: u } : {}) } }));
+    return out;
+  }
+}

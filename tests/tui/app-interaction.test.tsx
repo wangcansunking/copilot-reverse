@@ -167,6 +167,86 @@ describe("TUI: /login surfaces the device code before the poll resolves", () => 
   });
 });
 
+describe("TUI: /web-search-support key entry", () => {
+  it("opens a masked key screen and persists the typed key via saveWebIqKey", async () => {
+    const saved: string[] = [];
+    const saveWebIqKey = (k: string) => { saved.push(k); };
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" saveWebIqKey={saveWebIqKey} />);
+    await tick();
+    stdin.write("/web-search-support");
+    await tick();
+    stdin.write("\r");          // run the command -> opens the screen
+    await tick(60);
+    expect(lastFrame()).toMatch(/WebIQ API key/i);
+    // type a key (should render masked, not echoed)
+    stdin.write("secret-key-123");
+    await tick();
+    expect(lastFrame()).not.toContain("secret-key-123");
+    expect(lastFrame()).toMatch(/•/);
+    stdin.write("\r");          // submit
+    await tick(60);
+    expect(saved).toEqual(["secret-key-123"]);
+  });
+});
+
+describe("TUI: /status command shows the live status card", () => {
+  it("renders the GitHub/web/worker overview when /status is run", async () => {
+    const { stdin, lastFrame } = render(
+      <App registry={reg()} title="m"
+        githubStatus={async () => "connected"}
+        webSearchReady={() => true} />,
+    );
+    await tick();
+    stdin.write("/status");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/GitHub login.*connected/);
+    expect(f).toMatch(/web search.*✓ ready/);
+  });
+
+  it("steers to /web-search-support in the card when web search is unconfigured", async () => {
+    const { stdin, lastFrame } = render(
+      <App registry={reg()} title="m"
+        githubStatus={async () => "connected"}
+        webSearchReady={() => false} />,
+    );
+    await tick();
+    stdin.write("/status");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    expect(lastFrame()).toMatch(/web search.*not configured.*\/web-search-support/);
+  });
+});
+
+describe("TUI: startup status card", () => {
+  it("renders the GitHub/web-search/worker overview on startup", () => {
+    const startupStatus = { github: "connected" as const, webSearch: "not-configured" as const, worker: "ready" as const, clients: { claude: true, codex: false } };
+    const { lastFrame } = render(<App registry={reg()} title="m" startupStatus={startupStatus} />);
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/status/);
+    expect(f).toMatch(/GitHub login.*connected/);
+    expect(f).toMatch(/web search.*not configured.*\/web-search-support/);
+    expect(f).toMatch(/worker.*ready/);
+  });
+});
+
+describe("TUI: HUD web search indicator", () => {
+  it("shows web ✗ with the command hint when no WebIQ key is configured", () => {
+    const { lastFrame } = render(<App registry={reg()} title="m" webSearchReady={() => false} />);
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/web .*✗/);
+    expect(f).toContain("/web-search-support");
+  });
+  it("shows web ✓ when a WebIQ key is configured", () => {
+    const { lastFrame } = render(<App registry={reg()} title="m" webSearchReady={() => true} />);
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/web .*✓/);
+  });
+});
+
 describe("TUI: model picker", () => {
   it("/model opens the picker and lists models with context windows", async () => {
     const loadModels = async () => ["gpt-4o", "claude-opus-4.8"];

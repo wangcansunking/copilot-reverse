@@ -6,10 +6,17 @@ import { anthropicRequestToCanonical, canonicalToAnthropicResponse } from "../co
 import { estimateTokens } from "../core/tokens.js";
 import { errorHint } from "./errors.js";
 import { CopilotAuthError } from "../providers/copilot/token.js";
+import { isGatewayTool, type GatewayToolRunner } from "../core/server-tools.js";
+import type { ContentBlock } from "../core/canonical.js";
 
 const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+const safeJson = (s: string): unknown => { try { return JSON.parse(s); } catch { return {}; } };
 
-export function mountAnthropic(app: Express, router: Router, onMetric: MetricSink): void {
+// Bounds the gateway tool loop so a model that calls web_search every turn (or a runner that always
+// returns "search more") can never spin forever inside one request.
+const MAX_TOOL_ITERS = 5;
+
+export function mountAnthropic(app: Express, router: Router, onMetric: MetricSink, runner?: GatewayToolRunner): void {
   // Model discovery — Anthropic list shape. Claude Desktop / Anthropic-protocol clients GET this
   // before chatting; without it they 404 on the connection test.
   app.get("/anthropic/v1/models", (_req, res) => {
@@ -41,54 +48,99 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         const estInput = estimateTokens(canon);
         res.write(frame("message_start", { type: "message_start", message: { id, type: "message", role: "assistant", model: canon.model, content: [], stop_reason: null, usage: { input_tokens: estInput, output_tokens: 0, cache_read_input_tokens: 0 } } }));
 
-        // D3 (interface-freeze §5.4) + mixed text+tool fix (architect, 2026-06-17): the endpoint owns
-        // open/stop bookkeeping with DYNAMIC SEQUENTIAL allocation. We do NOT pre-open an index-0 text block,
-        // and we do NOT map the Copilot tool index straight to the Anthropic block index (that collides with a
-        // text preamble on a mixed turn). Instead, whichever block opens FIRST claims Anthropic index 0, the
-        // next claims 1, etc. This keeps indices contiguous-from-0 in all three cases: pure-text (text@0),
-        // pure-tool (tool@0), and mixed preamble+tool (text@0, tool@1).
+        // D3 (interface-freeze §5.4) + mixed text+tool fix (architect, 2026-06-17) + gateway tool loop
+        // (2026-06): the endpoint owns block open/stop bookkeeping with DYNAMIC SEQUENTIAL allocation,
+        // and `next` spans ALL loop iterations so block indices stay contiguous-from-0 across turns.
+        // Within a turn, text streams live (transparent progress) but tool calls are BUFFERED: only
+        // after the turn ends do we know whether they're gateway tools (run here, then loop) or client
+        // tools (forwarded to the client, exactly as before). Whichever block opens first claims index 0.
         let next = 0;
-        let textIndex: number | undefined;                  // Anthropic index of the (single) text block, once opened
-        const toolIndex = new Map<number, number>();        // Copilot tool index -> Anthropic block index
-        const openedOrder: number[] = [];                   // Anthropic indices in allocation order
-        let stopReason: "stop" | "length" | "tool_use" | "error" = "stop";
-        let usage: { promptTokens: number; completionTokens: number; cachedTokens?: number } | undefined;
+        let lastPrompt = estInput, lastCached = 0, sumCompletion = 0;
+        let finalStop: "stop" | "length" | "tool_use" | "error" = "stop";
 
-        for await (const chunk of provider.stream(canon)) {
-          if (chunk.done) { stopReason = chunk.finishReason ?? "stop"; usage = chunk.usage; break; }
-          if (chunk.kind === "text") {
-            if (textIndex === undefined) {
-              textIndex = next++;
-              openedOrder.push(textIndex);
-              res.write(frame("content_block_start", { type: "content_block_start", index: textIndex, content_block: { type: "text", text: "" } }));
+        for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
+          let textIndex: number | undefined;                              // Anthropic index of this turn's text block
+          const byCopilotIdx = new Map<number, { id: string; name: string; args: string }>();
+          const buffered: { id: string; name: string; args: string }[] = []; // tool calls seen this turn, in order
+          let turnStop: "stop" | "length" | "tool_use" | "error" = "stop";
+
+          for await (const chunk of provider.stream(canon)) {
+            if (chunk.done) {
+              turnStop = chunk.finishReason ?? "stop";
+              if (chunk.usage) { lastPrompt = chunk.usage.promptTokens ?? lastPrompt; lastCached = chunk.usage.cachedTokens ?? 0; sumCompletion += chunk.usage.completionTokens ?? 0; }
+              break;
             }
-            res.write(frame("content_block_delta", { type: "content_block_delta", index: textIndex, delta: { type: "text_delta", text: chunk.delta } }));
-          } else if (chunk.kind === "tool_use_start") {
-            if (!toolIndex.has(chunk.index)) {
-              const index = next++;
-              toolIndex.set(chunk.index, index);
-              openedOrder.push(index);
-              res.write(frame("content_block_start", { type: "content_block_start", index, content_block: { type: "tool_use", id: chunk.id, name: chunk.name, input: {} } }));
+            if (chunk.kind === "text") {
+              if (textIndex === undefined) {
+                textIndex = next++;
+                res.write(frame("content_block_start", { type: "content_block_start", index: textIndex, content_block: { type: "text", text: "" } }));
+              }
+              res.write(frame("content_block_delta", { type: "content_block_delta", index: textIndex, delta: { type: "text_delta", text: chunk.delta } }));
+            } else if (chunk.kind === "tool_use_start") {
+              if (!byCopilotIdx.has(chunk.index)) { const t = { id: chunk.id, name: chunk.name, args: "" }; byCopilotIdx.set(chunk.index, t); buffered.push(t); }
+            } else if (chunk.kind === "tool_use_delta") {
+              const t = byCopilotIdx.get(chunk.index); if (t) t.args += chunk.argsDelta;
             }
-          } else if (chunk.kind === "tool_use_delta") {
-            const index = toolIndex.get(chunk.index);
-            if (index !== undefined) res.write(frame("content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: chunk.argsDelta } }));
           }
+          if (textIndex !== undefined) res.write(frame("content_block_stop", { type: "content_block_stop", index: textIndex }));
+
+          const gatewayCalls = buffered.filter((t) => isGatewayTool(t.name));
+
+          // Invariant: a gateway tool (web_search/web_fetch) must NEVER reach the client — the client
+          // has no handler for it and would stall. So whenever the model calls gateway tools (and a
+          // runner is wired), run them here and loop, feeding results back. Any client tools called in
+          // the SAME turn are deliberately NOT forwarded yet: we drop them this turn and let the model
+          // re-issue them on the next turn, now informed by the search result. (Forwarding them now
+          // would end the turn as tool_use and strand the gateway result with nowhere to go.)
+          if (runner && gatewayCalls.length) {
+            canon.messages.push({ role: "assistant", content: gatewayCalls.map((t): ContentBlock => ({ type: "tool_use", id: t.id, name: t.name, input: safeJson(t.args) })) });
+            const results: ContentBlock[] = [];
+            for (const t of gatewayCalls) results.push({ type: "tool_result", toolUseId: t.id, content: await runner(t.name, safeJson(t.args)) });
+            canon.messages.push({ role: "tool", content: results });
+            continue;
+          }
+
+          // Terminal turn (no gateway tools, or no runner): forward any buffered tool calls to the
+          // client (open/delta/close each at its own freshly-allocated index), then finish.
+          for (const t of buffered) {
+            const index = next++;
+            res.write(frame("content_block_start", { type: "content_block_start", index, content_block: { type: "tool_use", id: t.id, name: t.name, input: {} } }));
+            if (t.args) res.write(frame("content_block_delta", { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: t.args } }));
+            res.write(frame("content_block_stop", { type: "content_block_stop", index }));
+          }
+          finalStop = buffered.length ? "tool_use" : turnStop;
+          break;
         }
 
-        // Close every opened block (ascending Anthropic index) before the terminal frames.
-        for (const index of [...openedOrder].sort((a, b) => a - b)) res.write(frame("content_block_stop", { type: "content_block_stop", index }));
         // Report real usage (agent-maestro shape): split cached tokens out of input so Claude Code's
-        // context bar is accurate. Falls back to zeros if Copilot didn't return usage.
-        const cached = usage?.cachedTokens ?? 0;
-        const inputTokens = Math.max(0, (usage?.promptTokens ?? estInput) - cached); // fall back to the estimate
-        const deltaUsage = { input_tokens: inputTokens, output_tokens: usage?.completionTokens ?? 0, cache_read_input_tokens: cached };
-        res.write(frame("message_delta", { type: "message_delta", delta: { stop_reason: stopReason === "tool_use" ? "tool_use" : stopReason === "length" ? "max_tokens" : "end_turn" }, usage: deltaUsage }));
+        // context bar is accurate. promptTokens is the last turn's (largest, includes tool results);
+        // output is summed across turns.
+        const inputTokens = Math.max(0, lastPrompt - lastCached);
+        const deltaUsage = { input_tokens: inputTokens, output_tokens: sumCompletion, cache_read_input_tokens: lastCached };
+        res.write(frame("message_delta", { type: "message_delta", delta: { stop_reason: finalStop === "tool_use" ? "tool_use" : finalStop === "length" ? "max_tokens" : "end_turn" }, usage: deltaUsage }));
         res.write(frame("message_stop", { type: "message_stop" }));
         res.end();
         metric(200);
       } else {
-        res.json(canonicalToAnthropicResponse(await provider.complete(canon)));
+        // Non-stream: same gateway loop without SSE — run gateway tools and re-complete until the
+        // model answers with text (or a client tool), capped identically.
+        let resp = await provider.complete(canon);
+        for (let iter = 0; runner && iter < MAX_TOOL_ITERS; iter++) {
+          const toolUses = resp.content.filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use");
+          const gatewayUses = toolUses.filter((b) => isGatewayTool(b.name));
+          if (!gatewayUses.length) break; // no gateway work left — client tools / text are terminal
+          // Run the gateway tools, feed results back, and continue. Any client tools in the SAME turn
+          // ride along in the assistant message and remain in the final resp for the client to handle.
+          canon.messages.push({ role: "assistant", content: resp.content });
+          const results: ContentBlock[] = [];
+          for (const u of gatewayUses) results.push({ type: "tool_result", toolUseId: u.id, content: await runner(u.name, u.input) });
+          canon.messages.push({ role: "tool", content: results });
+          resp = await provider.complete(canon);
+        }
+        // Invariant: never forward a gateway tool_use to the client (it can't handle it). If the cap
+        // was hit with gateway calls still pending, strip them — better a partial answer than a stall.
+        if (runner) resp = { ...resp, content: resp.content.filter((b) => b.type !== "tool_use" || !isGatewayTool((b as Extract<ContentBlock, { type: "tool_use" }>).name)) };
+        res.json(canonicalToAnthropicResponse(resp));
         metric(200);
       }
     } catch (err) {

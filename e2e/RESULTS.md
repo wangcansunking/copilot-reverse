@@ -3,6 +3,30 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-26 (Codex /responses)** — Fixed Codex startup: new Codex removed `wire_api = "chat"`
+  (codex#7782) and requires `"responses"`, which makes it POST `{base_url}/responses`. Implemented the
+  OpenAI Responses API at `POST /openai/responses` (new `src/core/responses-inbound.ts`: item-centric
+  request → canonical, canonical → response object, and a stateful SSE emitter with `sequence_number`
+  and the `response.created → output_item.added → content_part.added → output_text.delta → … →
+  response.completed` event sequence). Codex config now writes `wire_api = "responses"` (base_url
+  stays `…/openai`; Codex appends `/responses`). Verified live end-to-end against real Copilot:
+  non-stream returns a completed `response` object with an `output_text` item; stream begins
+  `response.created` and ends `response.completed` with `output_text.delta` in between. Full suite
+  green: `npm test` → **294 passed** (52 files), `npm run test:e2e` → **31 passed**, tsc build clean.
+
+- **2026-06-26** — Restored web_search / web_fetch for Claude Code through the gateway. The inbound
+  translator now converts Anthropic's server-side web tools to function tools (instead of dropping
+  them); a capped agentic loop in the Anthropic endpoint runs those tools internally against
+  Microsoft Web IQ (`api.microsoft.ai`) and feeds results back, so the client only ever sees the
+  final grounded answer (transparent). A new `/web-search-support` command stores the WebIQ key
+  (data dir or `WEBIQ_API_KEY`, read lazily — no worker restart). Also added a startup status card
+  (GitHub login state — connected/expired/signed-out, since the device-flow token has no real
+  expiry — plus web search readiness, worker, and configured clients) and a live `web ✓/✗` indicator
+  in the now two-line HUD footer. Verified live end-to-end (real Copilot + real WebIQ): a
+  `web_search` request returned `stop_reason: end_turn` with a fresh answer and no tool_use block
+  leaked to the client. Full suite green: `npm test` → **281 passed** (51 files), `npm run test:e2e`
+  → **31 passed** (4 files), tsc build clean.
+
 - **2026-06-25** — Fixed the `/login` deadlock: the slash command buffered the device code behind a
   blocking token poll, so the Repl showed nothing and the user could never authorize. Split device
   login into `beginDeviceLogin` (returns the code immediately) + `complete()` (polls), and gave the

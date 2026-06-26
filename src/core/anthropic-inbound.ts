@@ -1,9 +1,12 @@
 import type { CanonicalRequest, CanonicalResponse, CanonicalMessage, ContentBlock } from "./canonical.js";
+import { GATEWAY_TOOL_DEFS, isGatewayTool } from "./server-tools.js";
 
 interface AnthropicImageSource { type: "base64" | "url"; media_type?: string; data?: string; url?: string }
 interface AnthropicBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; source?: AnthropicImageSource }
 interface AnthropicMsg { role: "user" | "assistant"; content: string | AnthropicBlock[] }
-interface AnthropicTool { name: string; description?: string; input_schema: Record<string, unknown> }
+// Custom tools carry an input_schema. Server-side tools (web_search, web_fetch, bash, computer, …)
+// instead carry a dated `type` (e.g. "web_search_20250305") and a bare `name`, with no schema.
+interface AnthropicTool { type?: string; name: string; description?: string; input_schema?: Record<string, unknown> }
 interface AnthropicRequest {
   model: string; max_tokens: number; stream?: boolean; temperature?: number;
   system?: string | AnthropicBlock[]; tools?: AnthropicTool[]; messages: AnthropicMsg[];
@@ -47,14 +50,30 @@ export function anthropicRequestToCanonical(req: AnthropicRequest): CanonicalReq
   }
   return {
     model: req.model, stream: Boolean(req.stream), temperature: req.temperature, maxTokens: req.max_tokens,
-    // Keep only custom tools with a real JSON-Schema. Anthropic server-side tools (web_search,
-    // bash, computer, …) arrive with a `type` and no `input_schema`; forwarding them produces an
-    // invalid tool the model can't fulfil, and the client hangs forever waiting for a tool_result.
-    tools: req.tools
-      ?.filter((t) => t.input_schema != null && typeof t.input_schema === "object")
-      .map((t) => ({ name: t.name, description: t.description, parameters: t.input_schema })),
+    tools: mapTools(req.tools),
     messages,
   };
+}
+
+// Custom tools (with a real JSON-Schema) pass through. Anthropic server-side tools arrive with a
+// dated `type` and no input_schema: web_search / web_fetch are converted to gateway function tools
+// (the gateway runs them itself against WebIQ), and every OTHER server tool (bash, computer, …) is
+// dropped — forwarding an unfulfillable tool makes the client hang forever waiting for a result.
+function mapTools(tools: AnthropicTool[] | undefined): CanonicalRequest["tools"] {
+  if (!tools) return undefined;
+  const out: NonNullable<CanonicalRequest["tools"]> = [];
+  let injectedGateway = false;
+  for (const t of tools) {
+    if (t.input_schema != null && typeof t.input_schema === "object") {
+      out.push({ name: t.name, description: t.description, parameters: t.input_schema });
+    } else if (isGatewayTool(t.name) && !injectedGateway) {
+      // Replace the schema-less server tool with our gateway defs. Inject the whole set once so the
+      // model can use both web_search and web_fetch whenever it asks for either.
+      out.push(...GATEWAY_TOOL_DEFS);
+      injectedGateway = true;
+    }
+  }
+  return out;
 }
 
 export function canonicalToAnthropicResponse(r: CanonicalResponse) {

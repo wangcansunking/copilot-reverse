@@ -53,6 +53,7 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
   reg.add({ name: "/login", describe: "sign in to GitHub (device-code)", run: async () => opts.login ? opts.login() : ["login not available"] });
   reg.add({ name: "/logout", describe: "sign out — remove the stored GitHub token", run: async () => opts.logout ? opts.logout() : ["logout not available"] });
   reg.add({ name: "/model", describe: "switch the chat model", run: async () => ["opening model picker…"] });
+  reg.add({ name: "/web-search-support", describe: "enable web search/fetch (set WebIQ API key)", run: async () => ["opening web-search-support…"] });
   reg.add({ name: "/config", describe: "view & change configuration", run: async () => ["opening config panel…"] });
   reg.add({ name: "/dashboard", describe: "open the web dashboard in your browser", run: async () => {
     if (!opts.dashboardUrl) return ["dashboard URL not available"];

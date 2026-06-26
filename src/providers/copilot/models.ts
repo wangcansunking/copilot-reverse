@@ -12,7 +12,7 @@ const HEADERS = (token: string) => ({
 const DEFAULT_TIMEOUT_MS = 8000;
 
 // A stalled Copilot endpoint must never hang the model picker forever — abort after timeoutMs.
-async function getModels(token: string, fetchFn: typeof fetch, timeoutMs: number): Promise<{ id?: string; capabilities?: { limits?: { max_prompt_tokens?: number; max_context_window_tokens?: number } } }[] | null> {
+async function getModels(token: string, fetchFn: typeof fetch, timeoutMs: number): Promise<{ id?: string; supported_endpoints?: string[]; capabilities?: { limits?: { max_prompt_tokens?: number; max_context_window_tokens?: number } } }[] | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -31,6 +31,19 @@ export async function fetchCopilotModels(token: string, fetchFn: typeof fetch = 
   if (!data) return FALLBACK_MODELS;
   const ids = [...new Set(data.map((m) => m.id).filter((x): x is string => Boolean(x)))];
   return ids.length ? ids : FALLBACK_MODELS;
+}
+
+// Map of model id -> the Copilot API endpoints it supports (e.g. ["/responses","ws:/responses"]).
+// Used to route each request to the right upstream: newer gpt-5.x models are /responses-only and
+// reject /chat/completions. Returns {} on failure so the adapter falls back to chat/completions.
+export async function fetchModelEndpoints(token: string, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Record<string, string[]>> {
+  const data = await getModels(token, fetchFn, timeoutMs);
+  if (!data) return {};
+  const out: Record<string, string[]> = {};
+  for (const m of data) {
+    if (m.id && Array.isArray(m.supported_endpoints) && m.supported_endpoints.length) out[m.id] = m.supported_endpoints;
+  }
+  return out;
 }
 
 // Map of model id -> its real input/context window, used to size auto-compaction per model and

@@ -58,16 +58,25 @@ describe("anthropic inbound", () => {
     expect(blocks[2]).toEqual({ type: "image", dataUrl: "https://x/y.jpg" });
   });
 
-  it("drops Anthropic server-side tools that have no input_schema (prevents client hang)", () => {
+  it("converts web_search/web_fetch server tools to function tools, still drops others (bash/computer)", () => {
     const c = anthropicRequestToCanonical({
       model: "claude-opus-4-8", max_tokens: 100,
       messages: [{ role: "user", content: "hi" }],
       tools: [
         { name: "get_weather", description: "w", input_schema: { type: "object", properties: {} } },
         { type: "web_search_20250305", name: "web_search", max_uses: 5 } as any,
+        { type: "web_fetch_20250910", name: "web_fetch", max_uses: 5 } as any,
         { type: "bash_20250124", name: "bash" } as any,
       ],
     });
-    expect(c.tools?.map((t) => t.name)).toEqual(["get_weather"]);
+    const names = c.tools?.map((t) => t.name) ?? [];
+    // Custom tool kept, both web_* tools converted (now carry a real schema), bash dropped.
+    expect(names).toContain("get_weather");
+    expect(names).toContain("web_search");
+    expect(names).toContain("web_fetch");
+    expect(names).not.toContain("bash");
+    const ws = c.tools?.find((t) => t.name === "web_search");
+    expect((ws?.parameters as any)?.type).toBe("object");
+    expect((ws?.parameters as any)?.properties?.query).toBeTruthy();
   });
 });
