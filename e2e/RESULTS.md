@@ -3,6 +3,19 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-26 (Phase 2: web-search backends)** — Web search now works out of the box for both
+  clients, with no key. **Claude path**: the gateway borrows gpt-5-mini's native web_search internally
+  (`borrow-search.ts`), extracts url_citation sources, and feeds them back — verified live through the
+  worker's `/anthropic/v1/messages` with a `web_search_20250305` tool: returned a fresh grounded answer
+  (Rust 1.96.0), `stop_reason: end_turn`, and NO tool_use block leaked to the client. **Codex path**:
+  the hosted `web_search` tool is passed through both `/responses` translators (new
+  `CanonicalRequest.hostedTools`) so Copilot runs it server-side — verified live: gpt-5.5 returns
+  output items `reasoning/web_search_call/message` with citations. **Backend routing**: gateway runner
+  picks per call — default "copilot" borrow, or "webiq" (forced WebIQ) when enabled; mode persisted in
+  webiq.json, read lazily (no restart). **Commands**: removed `/web-search-support`; added hidden
+  `/webiq` + `/webiq clean`; status card + HUD show the active backend. Full suite green: `npm test` →
+  **350 passed** (55 files), `npm run test:e2e` → **31 passed** (4 files), tsc build clean.
+
 - **2026-06-26 (outbound /responses routing)** — Newer Copilot models are served ONLY on /responses:
   live probe confirms `gpt-5.5` (and `gpt-5.3-codex`, `gpt-5.4-mini`, `mai-code-1-flash-internal`)
   report `supported_endpoints: ["/responses","ws:/responses"]` with no `/chat/completions`. Added the
