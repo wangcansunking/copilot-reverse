@@ -133,4 +133,67 @@ describe("CopilotAdapter", () => {
     const text = chunks.filter((c) => c.kind === "text").map((c) => c.delta).join("");
     expect(text).toContain("invoke"); // raw text preserved verbatim, nothing eaten
   });
+
+  // --- Endpoint routing: models whose supported_endpoints omit /chat/completions (e.g. gpt-5.5)
+  // must be sent to /responses instead. endpointsFor(model) supplies the list; unknown -> chat.
+  const responsesObj = (text: string) => JSON.stringify({
+    id: "resp_1", model: "gpt-5.5", status: "completed",
+    output: [{ type: "message", id: "m", role: "assistant", content: [{ type: "output_text", text, annotations: [] }] }],
+    usage: { input_tokens: 5, output_tokens: 2 },
+  });
+  const r55: CanonicalRequest = { model: "gpt-5.5", stream: false, messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] };
+
+  it("routes a responses-only model to /responses on complete()", async () => {
+    const f = vi.fn(async (url: string) => new Response(responsesObj("from responses"), { status: 200, headers: { "content-type": "application/json" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => ["/responses"]);
+    const r = await a.complete(r55);
+    expect((f.mock.calls[0][0] as string)).toBe("https://api.githubcopilot.com/responses");
+    expect(r.content).toEqual([{ type: "text", text: "from responses" }]);
+    expect(r.usage).toEqual({ promptTokens: 5, completionTokens: 2 });
+  });
+
+  it("routes a responses-only model to /responses on stream()", async () => {
+    const sse =
+      'data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"m","role":"assistant","content":[]}}\n\n' +
+      'data: {"type":"response.output_text.delta","output_index":0,"item_id":"m","delta":"hel"}\n\n' +
+      'data: {"type":"response.output_text.delta","output_index":0,"item_id":"m","delta":"lo"}\n\n' +
+      'data: {"type":"response.completed","response":{"usage":{"input_tokens":1,"output_tokens":1}}}\n\n';
+    const f = vi.fn(async () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => ["/responses"]);
+    let out = "";
+    for await (const c of a.stream({ ...r55, stream: true })) if (c.kind === "text") out += c.delta;
+    expect((f.mock.calls[0][0] as string)).toBe("https://api.githubcopilot.com/responses");
+    expect(out).toBe("hello");
+  });
+
+  it("keeps using /chat/completions when the model supports it (or is unknown)", async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, (m) => m === "gpt-4o" ? ["/chat/completions", "/responses"] : []);
+    await a.complete(base); // gpt-4o
+    expect((f.mock.calls[0][0] as string)).toBe("https://api.githubcopilot.com/chat/completions");
+  });
+
+  it("falls back to /responses once when /chat returns 400 unsupported_api_for_model", async () => {
+    const f = vi.fn(async (url: string) => {
+      if (url === "https://api.githubcopilot.com/chat/completions") {
+        return new Response(JSON.stringify({ error: { code: "unsupported_api_for_model", message: "use responses" } }), { status: 400 });
+      }
+      return new Response(responsesObj("recovered"), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    // endpointsFor unknown (returns []) so it tries chat first, then the 400 safety net retries responses.
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+    const r = await a.complete(r55);
+    expect(f.mock.calls.map((c) => c[0])).toEqual([
+      "https://api.githubcopilot.com/chat/completions",
+      "https://api.githubcopilot.com/responses",
+    ]);
+    expect(r.content).toEqual([{ type: "text", text: "recovered" }]);
+  });
+
+  it("does NOT retry on an unrelated chat 400 (surfaces the error)", async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ error: { message: "bad request: oversized" } }), { status: 400 }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+    await expect(a.complete(r55)).rejects.toThrow();
+    expect(f).toHaveBeenCalledTimes(1); // no responses retry
+  });
 });

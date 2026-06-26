@@ -2,9 +2,15 @@ import { randomUUID } from "node:crypto";
 import type { ProviderAdapter } from "../types.js";
 import type { CanonicalRequest, CanonicalResponse, CanonicalChunk, CanonicalMessage, ContentBlock } from "../../core/canonical.js";
 import { ToolCallExtractor, type ExtractEvent } from "../../core/tool-xml.js";
+import { canonicalToResponsesBody, parseResponsesResult, streamResponses, RESPONSES_URL } from "./responses-upstream.js";
 
 const CHAT_URL = "https://api.githubcopilot.com/chat/completions";
 interface TokenSource { get(): Promise<string> }
+type EndpointsFor = (model: string) => string[];
+
+// A /chat 400 whose body names one of these means "this model is responses-only" — retry on /responses
+// once. Matches agent-maestro's safety net for models that drop /chat/completions from their endpoints.
+const RESPONSES_HINT_RE = /unsupported_api_for_model|invalid_request_body|does not support|use the responses|model_not_supported/i;
 
 // Canonical messages -> OpenAI wire messages (Copilot is OpenAI-shaped).
 function toWireMessages(messages: CanonicalMessage[]) {
@@ -52,12 +58,25 @@ async function errorDetail(res: Response): Promise<string> {
 
 export class CopilotAdapter implements ProviderAdapter {
   readonly name = "copilot";
-  constructor(private tokenStore: TokenSource, private fetchFn: typeof fetch = fetch) {}
+  // endpointsFor(model) -> the model's supported_endpoints (e.g. ["/responses"]). When known and it
+  // omits /chat/completions, route to /responses; unknown ([]) keeps the chat path (with a 400 net).
+  constructor(private tokenStore: TokenSource, private fetchFn: typeof fetch = fetch, private endpointsFor?: EndpointsFor) {}
+
+  private usesResponses(model: string): boolean {
+    const eps = this.endpointsFor?.(model);
+    return !!eps && eps.length > 0 && !eps.includes("/chat/completions");
+  }
 
   async complete(req: CanonicalRequest): Promise<CanonicalResponse> {
+    if (this.usesResponses(req.model)) return this.completeResponses(req);
     const token = await this.tokenStore.get();
     const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: false })) });
-    if (!res.ok) throw new Error(`copilot completion failed: ${res.status}${await errorDetail(res)}`);
+    if (!res.ok) {
+      const detail = await errorDetail(res);
+      // Safety net: a responses-only model rejected on /chat — retry once on /responses.
+      if (res.status === 400 && RESPONSES_HINT_RE.test(detail)) return this.completeResponses(req);
+      throw new Error(`copilot completion failed: ${res.status}${detail}`);
+    }
     const data = (await res.json()) as any;
     const choice = data.choices[0];
     const content: ContentBlock[] = [];
@@ -70,10 +89,29 @@ export class CopilotAdapter implements ProviderAdapter {
     };
   }
 
+  // /responses variants — used for responses-only models and as the /chat 400 safety-net target.
+  private async completeResponses(req: CanonicalRequest): Promise<CanonicalResponse> {
+    const token = await this.tokenStore.get();
+    const res = await this.fetchFn(RESPONSES_URL, { method: "POST", headers: headers(token), body: JSON.stringify(canonicalToResponsesBody({ ...req, stream: false })) });
+    if (!res.ok) throw new Error(`copilot responses failed: ${res.status}${await errorDetail(res)}`);
+    return { ...parseResponsesResult(await res.json()), model: req.model };
+  }
+  private async *streamResponsesReq(req: CanonicalRequest): AsyncIterable<CanonicalChunk> {
+    const token = await this.tokenStore.get();
+    const res = await this.fetchFn(RESPONSES_URL, { method: "POST", headers: headers(token), body: JSON.stringify(canonicalToResponsesBody({ ...req, stream: true })) });
+    if (!res.ok || !res.body) throw new Error(`copilot responses stream failed: ${res.status}${await errorDetail(res)}`);
+    yield* streamResponses(res);
+  }
+
   async *stream(req: CanonicalRequest): AsyncIterable<CanonicalChunk> {
+    if (this.usesResponses(req.model)) { yield* this.streamResponsesReq(req); return; }
     const token = await this.tokenStore.get();
     const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: true })) });
-    if (!res.ok || !res.body) throw new Error(`copilot stream failed: ${res.status}${await errorDetail(res)}`);
+    if (!res.ok || !res.body) {
+      const detail = await errorDetail(res);
+      if (res.status === 400 && RESPONSES_HINT_RE.test(detail)) { yield* this.streamResponsesReq(req); return; }
+      throw new Error(`copilot stream failed: ${res.status}${detail}`);
+    }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
     const startedTools = new Set<number>();
