@@ -11,6 +11,7 @@ import { startSupervisor } from "../supervisor/index.js";
 import { runAssistantTurn } from "../tui/assistant/runtime.js";
 import { makeOnChat } from "../tui/assistant/on-chat.js";
 import { readGhToken, clearGhToken } from "../shared/creds.js";
+import { writeWebIqKey } from "../shared/webiq-key.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
 import { readChatModel, writeChatModel } from "../shared/prefs.js";
 import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
@@ -171,6 +172,7 @@ async function launchTui(): Promise<void> {
       onModelChange: (m: string) => writeChatModel(dataDir(), m),
       pickModelOnStart: !persistedModel,
       login: doLogin,
+      saveWebIqKey: (k: string) => writeWebIqKey(k, dataDir()),
     }),
   );
 }

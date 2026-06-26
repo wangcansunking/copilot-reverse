@@ -167,6 +167,28 @@ describe("TUI: /login surfaces the device code before the poll resolves", () => 
   });
 });
 
+describe("TUI: /web-search-support key entry", () => {
+  it("opens a masked key screen and persists the typed key via saveWebIqKey", async () => {
+    const saved: string[] = [];
+    const saveWebIqKey = (k: string) => { saved.push(k); };
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" saveWebIqKey={saveWebIqKey} />);
+    await tick();
+    stdin.write("/web-search-support");
+    await tick();
+    stdin.write("\r");          // run the command -> opens the screen
+    await tick(60);
+    expect(lastFrame()).toMatch(/WebIQ API key/i);
+    // type a key (should render masked, not echoed)
+    stdin.write("secret-key-123");
+    await tick();
+    expect(lastFrame()).not.toContain("secret-key-123");
+    expect(lastFrame()).toMatch(/•/);
+    stdin.write("\r");          // submit
+    await tick(60);
+    expect(saved).toEqual(["secret-key-123"]);
+  });
+});
+
 describe("TUI: model picker", () => {
   it("/model opens the picker and lists models with context windows", async () => {
     const loadModels = async () => ["gpt-4o", "claude-opus-4.8"];

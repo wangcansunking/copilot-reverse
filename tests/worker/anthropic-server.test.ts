@@ -267,3 +267,177 @@ describe("worker Anthropic endpoint", () => {
     expect(res.body.has_more).toBe(false);
   });
 });
+
+describe("worker Anthropic endpoint — gateway tool loop (web_search/web_fetch)", () => {
+  // A provider that calls web_search on turn 1, then answers with text on turn 2. Tracks how many
+  // times stream() ran so we can assert the gateway looped (ran the tool) rather than forwarding it.
+  function twoTurnProvider(): { adapter: ProviderAdapter; turns: () => number } {
+    let turn = 0;
+    const adapter: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c", model: "m", content: [{ type: "text", text: "final" }], finishReason: "stop", usage: { promptTokens: 1, completionTokens: 1 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        turn++;
+        if (turn === 1) {
+          yield { kind: "tool_use_start", index: 0, id: "tu1", name: "web_search", done: false };
+          yield { kind: "tool_use_delta", index: 0, argsDelta: '{"query":"node lts"}', done: false };
+          yield { kind: "done", done: true, finishReason: "tool_use" };
+        } else {
+          yield { kind: "text", delta: "Node 24 is LTS", done: false };
+          yield { kind: "done", done: true, finishReason: "stop" };
+        }
+      },
+    };
+    return { adapter, turns: () => turn };
+  }
+
+  const appWithRunner = (p: ProviderAdapter, runner: (name: string, input: unknown) => Promise<string>) =>
+    createWorkerApp(new Router([p], { "*": "gpt-4o" }), () => {}, runner);
+
+  it("runs web_search internally and streams only the final text (transparent to the client)", async () => {
+    const { adapter, turns } = twoTurnProvider();
+    const calls: { name: string; input: any }[] = [];
+    const runner = async (name: string, input: unknown) => { calls.push({ name, input }); return "RESULT: Node 24.x is the current LTS"; };
+    const res = await request(appWithRunner(adapter, runner))
+      .post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "what is node lts" }] });
+    const frames = parseFrames(res.text);
+
+    // gateway ran the tool once, with the model's args, and looped (2 provider turns)
+    expect(calls).toHaveLength(1);
+    expect(calls[0].name).toBe("web_search");
+    expect(calls[0].input).toMatchObject({ query: "node lts" });
+    expect(turns()).toBe(2);
+
+    // client never sees the web_search tool_use block — only the final text
+    const toolStarts = frames.filter((f) => f.event === "content_block_start" && f.data.content_block?.type === "tool_use");
+    expect(toolStarts).toHaveLength(0);
+    expect(res.text).toContain("Node 24 is LTS");
+    // finishes as a normal end_turn, not tool_use (the tool was consumed internally)
+    expect(frames.find((f) => f.event === "message_delta")?.data.delta.stop_reason).toBe("end_turn");
+    expect(frames.at(-1)?.event).toBe("message_stop");
+  });
+
+  it("still forwards CLIENT tools (Read/Bash) to the client unchanged", async () => {
+    const clientToolProvider: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c", model: "m", content: [], finishReason: "tool_use", usage: { promptTokens: 1, completionTokens: 1 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        yield { kind: "tool_use_start", index: 0, id: "tu1", name: "Read", done: false };
+        yield { kind: "tool_use_delta", index: 0, argsDelta: '{"path":"a.ts"}', done: false };
+        yield { kind: "done", done: true, finishReason: "tool_use" };
+      },
+    };
+    const runner = async () => "should not be called";
+    const res = await request(appWithRunner(clientToolProvider, runner))
+      .post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "read a.ts" }] });
+    const frames = parseFrames(res.text);
+    const toolStarts = frames.filter((f) => f.event === "content_block_start" && f.data.content_block?.type === "tool_use");
+    expect(toolStarts).toHaveLength(1);
+    expect(toolStarts[0].data.content_block.name).toBe("Read");
+    expect(frames.find((f) => f.event === "message_delta")?.data.delta.stop_reason).toBe("tool_use");
+  });
+
+  it("caps the loop so a tool-call-forever provider can't run unbounded", async () => {
+    const loopForever: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c", model: "m", content: [], finishReason: "tool_use", usage: { promptTokens: 1, completionTokens: 1 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        yield { kind: "tool_use_start", index: 0, id: "tu1", name: "web_search", done: false };
+        yield { kind: "tool_use_delta", index: 0, argsDelta: '{"query":"x"}', done: false };
+        yield { kind: "done", done: true, finishReason: "tool_use" };
+      },
+    };
+    let n = 0;
+    const runner = async () => { n++; return "more"; };
+    const res = await request(appWithRunner(loopForever, runner))
+      .post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "go" }] });
+    // bounded: the runner is invoked a small, finite number of times, and the stream still terminates
+    expect(n).toBeGreaterThan(0);
+    expect(n).toBeLessThanOrEqual(5);
+    expect(parseFrames(res.text).at(-1)?.event).toBe("message_stop");
+  });
+
+  it("a web_search that hits the loop cap must NOT leak a tool_use block to the client (stream)", async () => {
+    const loopForever: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c", model: "m", content: [], finishReason: "tool_use", usage: { promptTokens: 1, completionTokens: 1 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        yield { kind: "tool_use_start", index: 0, id: "tu1", name: "web_search", done: false };
+        yield { kind: "tool_use_delta", index: 0, argsDelta: '{"query":"x"}', done: false };
+        yield { kind: "done", done: true, finishReason: "tool_use" };
+      },
+    };
+    const res = await request(appWithRunner(loopForever, async () => "more"))
+      .post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "go" }] });
+    // even when the cap is hit, a gateway tool is never forwarded to the client
+    expect(res.text).not.toContain('"name":"web_search"');
+    expect(parseFrames(res.text).at(-1)?.event).toBe("message_stop");
+  });
+
+  it("mixed gateway + client tools in one turn: runs the gateway tool, forwards ONLY the client tool", async () => {
+    let turn = 0;
+    const mixed: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c", model: "m", content: [], finishReason: "tool_use", usage: { promptTokens: 1, completionTokens: 1 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        turn++;
+        if (turn === 1) {
+          yield { kind: "tool_use_start", index: 0, id: "g1", name: "web_search", done: false };
+          yield { kind: "tool_use_delta", index: 0, argsDelta: '{"query":"q"}', done: false };
+          yield { kind: "tool_use_start", index: 1, id: "c1", name: "Read", done: false };
+          yield { kind: "tool_use_delta", index: 1, argsDelta: '{"path":"a.ts"}', done: false };
+          yield { kind: "done", done: true, finishReason: "tool_use" };
+        } else {
+          // after the gateway result is fed back, the model re-issues just the client tool
+          yield { kind: "tool_use_start", index: 0, id: "c2", name: "Read", done: false };
+          yield { kind: "tool_use_delta", index: 0, argsDelta: '{"path":"a.ts"}', done: false };
+          yield { kind: "done", done: true, finishReason: "tool_use" };
+        }
+      },
+    };
+    const calls: string[] = [];
+    const res = await request(appWithRunner(mixed, async (name) => { calls.push(name); return "RESULT"; }))
+      .post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "go" }] });
+    const frames = parseFrames(res.text);
+    // the gateway tool ran and was NOT forwarded; the client tool WAS forwarded
+    expect(calls).toContain("web_search");
+    expect(res.text).not.toContain('"name":"web_search"');
+    const toolStarts = frames.filter((f) => f.event === "content_block_start" && f.data.content_block?.type === "tool_use");
+    expect(toolStarts.every((f) => f.data.content_block.name === "Read")).toBe(true);
+    expect(toolStarts.length).toBeGreaterThan(0);
+  });
+
+  it("non-stream: runs web_search internally and returns the final text (no tool_use leaked)", async () => {
+    let turn = 0;
+    const twoTurn: ProviderAdapter = {
+      name: "copilot",
+      async complete() {
+        turn++;
+        return turn === 1
+          ? { id: "c", model: "m", content: [{ type: "tool_use", id: "g1", name: "web_search", input: { query: "q" } }], finishReason: "tool_use", usage: { promptTokens: 1, completionTokens: 1 } }
+          : { id: "c", model: "m", content: [{ type: "text", text: "grounded answer" }], finishReason: "stop", usage: { promptTokens: 2, completionTokens: 1 } };
+      },
+      async *stream(): AsyncIterable<CanonicalChunk> { yield { kind: "done", done: true, finishReason: "stop" }; },
+    };
+    const calls: string[] = [];
+    const res = await request(appWithRunner(twoTurn, async (n) => { calls.push(n); return "RESULT"; }))
+      .post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, messages: [{ role: "user", content: "go" }] });
+    expect(res.status).toBe(200);
+    expect(calls).toEqual(["web_search"]);
+    expect(res.body.content.some((b: any) => b.type === "tool_use")).toBe(false);
+    expect(res.body.content[0].text).toBe("grounded answer");
+    expect(res.body.stop_reason).toBe("end_turn");
+  });
+
+  it("non-stream: a web_search that hits the cap must NOT leak a tool_use block to the client", async () => {
+    const loopForever: ProviderAdapter = {
+      name: "copilot",
+      async complete() { return { id: "c", model: "m", content: [{ type: "tool_use", id: "g1", name: "web_search", input: { query: "x" } }], finishReason: "tool_use", usage: { promptTokens: 1, completionTokens: 1 } }; },
+      async *stream(): AsyncIterable<CanonicalChunk> { yield { kind: "done", done: true, finishReason: "stop" }; },
+    };
+    const res = await request(appWithRunner(loopForever, async () => "more"))
+      .post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, messages: [{ role: "user", content: "go" }] });
+    expect(res.status).toBe(200);
+    expect(res.body.content.some((b: any) => b.type === "tool_use")).toBe(false);
+  });
+});

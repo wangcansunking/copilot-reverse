@@ -3,6 +3,16 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-26** — Restored web_search / web_fetch for Claude Code through the gateway. The inbound
+  translator now converts Anthropic's server-side web tools to function tools (instead of dropping
+  them); a capped agentic loop in the Anthropic endpoint runs those tools internally against
+  Microsoft Web IQ (`api.microsoft.ai`) and feeds results back, so the client only ever sees the
+  final grounded answer (transparent). A new `/web-search-support` command stores the WebIQ key
+  (data dir or `WEBIQ_API_KEY`, read lazily — no worker restart). Verified live end-to-end (real
+  Copilot + real WebIQ): a `web_search` request returned `stop_reason: end_turn` with a fresh answer
+  and no tool_use block leaked to the client. Full suite green: `npm test` → **267 passed** (50
+  files), `npm run test:e2e` → **31 passed** (4 files), tsc build clean.
+
 - **2026-06-25** — Fixed the `/login` deadlock: the slash command buffered the device code behind a
   blocking token poll, so the Repl showed nothing and the user could never authorize. Split device
   login into `beginDeviceLogin` (returns the code immediately) + `complete()` (polls), and gave the

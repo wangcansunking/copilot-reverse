@@ -5,6 +5,7 @@ import { Repl, type CommandHint } from "./repl.js";
 import { SetupWizard, type SetupClient } from "./setup/wizard.js";
 import { ModelScreen } from "./screens/model.js";
 import { ConfigScreen, type ConfigInfo } from "./screens/config.js";
+import { WebIqKeyScreen } from "./screens/webiq-key.js";
 import type { Scope, ApplyResult } from "./setup/apply.js";
 import type { ClientStatus } from "./setup/status.js";
 import { theme } from "./theme.js";
@@ -18,7 +19,7 @@ type Entry =
   | { type: "card"; title: string; tone: "info" | "ok" | "error"; lines: string[] }
   | { type: "help"; commands: CommandHint[] };
 
-type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | null;
+type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | { kind: "webiq-key" } | null;
 
 const stateColor: Record<WorkerState, string> = {
   ready: theme.ready, starting: theme.starting, crashed: theme.crashed, unhealthy: theme.unhealthy,
@@ -51,6 +52,8 @@ export interface AppProps {
   // returned promise resolves with a completion message once the user authorizes. The two-phase
   // shape is required: a single blocking call would hide the code behind the token poll.
   login?: (show: (lines: string[]) => void) => Promise<string[]>;
+  // Persist a WebIQ API key entered via /web-search-support (enables gateway web_search/web_fetch).
+  saveWebIqKey?: (key: string) => void;
 }
 
 function OutputCard({ title, lines, tone }: { title: string; lines: string[]; tone: "info" | "ok" | "error" }) {
@@ -105,7 +108,7 @@ function ClientBadge({ name, status }: { name: string; status: { user: boolean; 
 export function App({
   registry, title, workerState = "starting", initialModel = "—",
   statusSource, readStatus, modelLimits, onChat,
-  loadModels, setup, info, onModelChange, pickModelOnStart, login,
+  loadModels, setup, info, onModelChange, pickModelOnStart, login, saveWebIqKey,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
   const [entries, setEntries] = useState<Entry[]>([
@@ -154,6 +157,7 @@ export function App({
     add({ type: "user", text: `› ${line}` });
     const t = line.trim();
     if (t === "/model" && loadModels) { setScreen({ kind: "model" }); return; }
+    if (t === "/web-search-support" && saveWebIqKey) { setScreen({ kind: "webiq-key" }); return; }
     if (t === "/config" && info) { setScreen({ kind: "config" }); return; }
     if (t === "/login" && login) {
       // Show the verification URL + code right away, then resolve a completion card once the user
@@ -238,6 +242,13 @@ export function App({
           else if (a === "setup-codex") setScreen({ kind: "setup", client: "codex" });
           else setScreen(null);
         }}
+      />
+    );
+  } else if (screen?.kind === "webiq-key" && saveWebIqKey) {
+    body = (
+      <WebIqKeyScreen
+        onSubmit={(k) => { saveWebIqKey(k); setScreen(null); add({ type: "card", title: "/web-search-support", tone: "ok", lines: ["✓ WebIQ key saved — web search is now enabled for connected clients"] }); }}
+        onCancel={() => { setScreen(null); add({ type: "system", text: "web-search-support cancelled" }); }}
       />
     );
   } else {
