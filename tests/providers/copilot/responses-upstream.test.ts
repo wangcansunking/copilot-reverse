@@ -63,6 +63,24 @@ describe("canonicalToResponsesBody", () => {
     });
     expect(body.tools).toEqual([{ type: "function", name: "search", description: "d", parameters: { type: "object", properties: {} } }]);
   });
+
+  it("forwards hosted tools (web_search) as {type} entries alongside function tools", () => {
+    const body = canonicalToResponsesBody({
+      model: "gpt-5.5", stream: false, messages: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+      tools: [{ name: "search", description: "d", parameters: {} }],
+      hostedTools: ["web_search"],
+    });
+    expect(body.tools).toContainEqual({ type: "web_search" });
+    expect(body.tools).toContainEqual(expect.objectContaining({ type: "function", name: "search" }));
+  });
+
+  it("forwards hosted web_search even when there are no function tools", () => {
+    const body = canonicalToResponsesBody({
+      model: "gpt-5.5", stream: false, messages: [{ role: "user", content: [{ type: "text", text: "x" }] }],
+      hostedTools: ["web_search"],
+    });
+    expect(body.tools).toEqual([{ type: "web_search" }]);
+  });
 });
 
 describe("parseResponsesResult", () => {

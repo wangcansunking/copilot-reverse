@@ -16,6 +16,10 @@ interface ResponsesInputItem {
   content?: { type: string; text?: string; image_url?: string }[];
   call_id?: string; name?: string; arguments?: string; output?: string;
 }
+// A Responses tool is either a function tool or a hosted tool (just a {type} marker, e.g. web_search).
+type ResponsesToolEntry =
+  | { type: "function"; name: string; description?: string; parameters: Record<string, unknown> }
+  | { type: string };
 export interface ResponsesBody {
   model: string;
   input: ResponsesInputItem[];
@@ -23,7 +27,7 @@ export interface ResponsesBody {
   stream?: boolean;
   temperature?: number;
   max_output_tokens?: number;
-  tools?: { type: "function"; name: string; description?: string; parameters: Record<string, unknown> }[];
+  tools?: ResponsesToolEntry[];
 }
 
 function textOf(content: ContentBlock[]): string {
@@ -55,12 +59,17 @@ export function canonicalToResponsesBody(req: CanonicalRequest): ResponsesBody {
   const system = req.messages.filter((m) => m.role === "system").map((m) => textOf(m.content)).filter(Boolean).join("\n");
   const input: ResponsesInputItem[] = [];
   for (const m of req.messages) { if (m.role === "system") continue; input.push(...messageToItems(m)); }
+  // Function tools translate to {type:"function",…}; hosted tools (web_search) pass through as {type}.
+  const tools: ResponsesToolEntry[] = [
+    ...(req.tools ?? []).map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters })),
+    ...(req.hostedTools ?? []).map((type) => ({ type })),
+  ];
   return {
     model: req.model, input, stream: req.stream,
     ...(system ? { instructions: system } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.maxTokens !== undefined ? { max_output_tokens: req.maxTokens } : {}),
-    ...(req.tools?.length ? { tools: req.tools.map((t) => ({ type: "function" as const, name: t.name, description: t.description, parameters: t.parameters })) } : {}),
+    ...(tools.length ? { tools } : {}),
   };
 }
 

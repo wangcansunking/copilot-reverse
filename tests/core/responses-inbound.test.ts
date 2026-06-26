@@ -24,7 +24,7 @@ describe("responsesRequestToCanonical", () => {
     expect(c.messages[2]).toEqual({ role: "tool", content: [{ type: "tool_result", toolUseId: "fc1", content: "12:00" }] });
   });
 
-  it("maps function tools to canonical tools and ignores non-function tools", () => {
+  it("maps function tools to canonical tools and passes hosted web_search through as a hostedTool", () => {
     const c = responsesRequestToCanonical({
       model: "gpt-5", stream: false, input: "hi",
       tools: [
@@ -34,6 +34,9 @@ describe("responsesRequestToCanonical", () => {
     });
     expect(c.tools).toHaveLength(1);
     expect(c.tools![0]).toMatchObject({ name: "search" });
+    // Codex asks for Copilot's native web_search — keep it as a hosted tool so the outbound /responses
+    // translator can forward it to Copilot (which runs it server-side), instead of dropping it.
+    expect(c.hostedTools).toEqual(["web_search"]);
   });
 });
 
