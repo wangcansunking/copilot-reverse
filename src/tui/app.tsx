@@ -71,9 +71,9 @@ export interface AppProps {
   // returned promise resolves with a completion message once the user authorizes. The two-phase
   // shape is required: a single blocking call would hide the code behind the token poll.
   login?: (show: (lines: string[]) => void) => Promise<string[]>;
-  // Web search backend control. Default is Copilot borrow (always on, no key). The hidden /webiq
-  // command opts into Microsoft Web IQ: enableWebiq stores the key + flips mode; disableWebiq (/webiq
-  // clean) clears the key + reverts to copilot. webSearchMode is read live so the HUD/status reflect it.
+  // Web search backend control. Default is Copilot borrow (always on, no key). The /webiq command
+  // opts into Microsoft Web IQ: enableWebiq stores the key + flips mode; disableWebiq (/webiq clean)
+  // clears the key + reverts to copilot. webSearchMode is read live so the HUD/status reflect it.
   enableWebiq?: (key: string) => void;
   disableWebiq?: () => void;
   webSearchMode?: () => WebSearchMode;
