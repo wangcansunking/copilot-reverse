@@ -17,7 +17,7 @@ describe("applyCodexToml", () => {
     expect(toml).toContain("model_context_window = 1050000");
     expect(toml).toContain("[model_providers.copilot-reverse]");
     expect(toml).toContain('base_url = "http://127.0.0.1:7891/v1"');
-    expect(toml).toContain('wire_api = "chat"');
+    expect(toml).toContain('wire_api = "responses"');
   });
 
   it("preserves unrelated existing keys and is idempotent", () => {

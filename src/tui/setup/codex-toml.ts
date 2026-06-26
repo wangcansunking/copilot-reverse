@@ -4,7 +4,9 @@ import { join, dirname } from "node:path";
 
 // Codex reads ~/.codex/config.toml. copilot-reverse writes a managed provider block there (model,
 // provider, context window) while preserving the user's other top-level keys. Mirrors
-// agent-maestro's `configureCodex`, but uses wire_api="chat" since our proxy is chat/completions.
+// agent-maestro's `configureCodex`. Codex removed wire_api="chat" (codex#7782), so we write
+// "responses" and serve the OpenAI Responses API at /openai/responses (Codex appends /responses to
+// base_url verbatim — no /v1 auto-added).
 export const PROVIDER_ID = "copilot-reverse";
 
 export function codexTomlPath(home = homedir()): string {
@@ -43,7 +45,7 @@ export function applyCodexToml(opts: CodexTomlOpts): { path: string; changed: st
     `[model_providers.${PROVIDER_ID}]`,
     `name = "copilot-reverse"`,
     `base_url = "${opts.baseUrl}"`,
-    `wire_api = "chat"`,
+    `wire_api = "responses"`,
   ].join("\n");
 
   const body = (head ? `${head}\n\n` : "") + managed + "\n";

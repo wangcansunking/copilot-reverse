@@ -45,3 +45,42 @@ describe("worker OpenAI endpoint", () => {
     expect(typeof res.body.data[0].id).toBe("string");
   });
 });
+
+describe("worker OpenAI Responses endpoint (/openai/responses — Codex)", () => {
+  it("non-stream: returns an output_text message item", async () => {
+    const res = await request(app()).post("/openai/responses").send({ model: "gpt-5", input: "hi" });
+    expect(res.status).toBe(200);
+    expect(res.body.object).toBe("response");
+    expect(res.body.status).toBe("completed");
+    const msg = res.body.output.find((o: any) => o.type === "message");
+    expect(msg.content[0]).toMatchObject({ type: "output_text", text: "hello" });
+  });
+
+  it("stream: begins with response.created and ends with response.completed", async () => {
+    const res = await request(app()).post("/openai/responses").send({ model: "gpt-5", stream: true, input: "hi" });
+    const events = res.text.split("\n\n").filter(Boolean).map((b) => JSON.parse(b.replace(/^data: /, "")));
+    expect(events[0].type).toBe("response.created");
+    expect(events.some((e) => e.type === "response.output_text.delta" && e.delta === "he")).toBe(true);
+    expect(events.at(-1).type).toBe("response.completed");
+  });
+
+  it("surfaces a function tool call as a function_call output item", async () => {
+    const toolProvider: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c", model: "gpt-5", content: [{ type: "tool_use", id: "fc1", name: "search", input: { q: "x" } }], finishReason: "tool_use", usage: { promptTokens: 1, completionTokens: 1 } }),
+      async *stream() { yield { kind: "done", done: true, finishReason: "stop" } as const; },
+    };
+    const res = await request(createWorkerApp(new Router([toolProvider], { "*": "gpt-5" }), () => {}))
+      .post("/openai/responses").send({ model: "gpt-5", input: "go", tools: [{ type: "function", name: "search", parameters: { type: "object", properties: {} } }] });
+    const fc = res.body.output.find((o: any) => o.type === "function_call");
+    expect(fc).toMatchObject({ type: "function_call", call_id: "fc1", name: "search" });
+  });
+
+  it("returns 502 with the upstream message when the provider fails", async () => {
+    const fail: ProviderAdapter = { name: "copilot", complete: async () => { throw new Error("boom: responses bad"); }, async *stream() { throw new Error("x"); } };
+    const res = await request(createWorkerApp(new Router([fail], { "*": "gpt-5" }), () => {}))
+      .post("/openai/responses").send({ model: "gpt-5", input: "hi" });
+    expect(res.status).toBe(502);
+    expect(res.body.error.message).toMatch(/boom: responses bad/);
+  });
+});
