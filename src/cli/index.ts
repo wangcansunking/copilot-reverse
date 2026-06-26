@@ -114,19 +114,21 @@ async function launchTui(): Promise<void> {
 
   // Apply a client's config (shared by the /setup wizard and the assistant's setup_* tools).
   // For Claude Code we also write the selected model's real context window so the client doesn't
+  // For Claude Code we also write the selected model's real context window so the client doesn't
   // assume the default 200K (which makes a 1M model read "context 100%" far too early). For Codex
-  // we write BOTH a .env (legacy) and ~/.codex/config.toml (the native Codex config, with the
-  // model's context window) so either Codex setup style works.
+  // the native config is ~/.codex/config.toml (what the standalone CLI actually reads); we also keep
+  // a legacy .env for older OpenAI-style tooling, but report the config.toml path since that's the
+  // one that matters.
   const applyClient = (clientKind: SetupClient, scope: Scope, model: string) => {
     if (clientKind === "claude") {
       const r = applyClaude(scope, claudeCopilotReverseEnv(anthropicBase, "copilot-reverse-local", model, modelLimits[model]));
       writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), claude: true });
       return r;
     }
-    const r = applyCodex(scope, { OPENAI_BASE_URL: openaiBase, OPENAI_API_KEY: "copilot-reverse-local", OPENAI_MODEL: model });
-    applyCodexToml({ baseUrl: openaiBase, model, contextWindow: modelLimits[model], apiKey: "copilot-reverse-local" });
+    applyCodex(scope, { OPENAI_BASE_URL: openaiBase, OPENAI_API_KEY: "copilot-reverse-local", OPENAI_MODEL: model }); // legacy .env
+    const toml = applyCodexToml({ baseUrl: openaiBase, model, contextWindow: modelLimits[model], apiKey: "copilot-reverse-local" });
     writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), codex: true });
-    return r;
+    return toml; // the native config Codex reads — surface this path in the setup card
   };
   const setup = { apply: async (clientKind: SetupClient, scope: Scope, model: string) => applyClient(clientKind, scope, model) };
 
