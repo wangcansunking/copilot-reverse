@@ -1,9 +1,11 @@
 import type { CanonicalTool } from "./canonical.js";
 import { webSearch, webFetch, formatSearchResults, formatFetchResult, type SearchOutcome, type FetchOutcome } from "../providers/webiq/client.js";
+import { formatBorrowSources, type BorrowOutcome } from "../providers/copilot/borrow-search.js";
+import type { WebSearchBackend } from "../shared/webiq-key.js";
 
-// Tools the GATEWAY executes itself (against WebIQ), rather than forwarding to the model's client.
-// These mirror Claude Code's server-side web_search / web_fetch, which a Copilot-backed gateway must
-// fulfil internally — the model calls them like normal function tools and we run them in-process.
+// Tools the GATEWAY executes itself, rather than forwarding to the model's client. These mirror Claude
+// Code's server-side web_search / web_fetch, which a Copilot-backed gateway must fulfil internally —
+// the model calls them like normal function tools and we run them in-process.
 export const GATEWAY_TOOL_DEFS: CanonicalTool[] = [
   {
     name: "web_search",
@@ -24,31 +26,55 @@ export function isGatewayTool(name: string): boolean { return GATEWAY_TOOL_NAMES
 // resolves to a string — failures become readable messages so the agentic loop never wedges.
 export type GatewayToolRunner = (name: string, input: unknown) => Promise<string>;
 
-// Injection seam: production passes the real WebIQ functions; tests pass fakes.
+// Injection seams: production passes the real backends; tests pass fakes.
 export interface WebIqClient {
   search: (key: string, params: { query: string }, fetchFn?: typeof fetch) => Promise<SearchOutcome>;
   fetchPage: (key: string, params: { url: string }, fetchFn?: typeof fetch) => Promise<FetchOutcome>;
 }
-const DEFAULT_CLIENT: WebIqClient = { search: webSearch, fetchPage: webFetch };
+export interface BorrowBackend {
+  run: (input: string) => Promise<BorrowOutcome>;
+}
+const DEFAULT_WEBIQ: WebIqClient = { search: webSearch, fetchPage: webFetch };
 
-const NO_KEY = "web search is not configured — run /web-search-support to add a WebIQ API key";
+// The gateway runner dispatches on a resolved backend (see resolveWebSearchBackend in webiq-key.ts),
+// supplied lazily per call so /webiq toggles need no worker restart:
+//   "copilot"     → borrow gpt-5-mini's native web_search (no key). Currently disabled by default.
+//   "webiq"       → run through WebIQ with the stored key.
+//   "unavailable" → no backend (Copilot search off + no WebIQ key): tell the user to run /webiq.
+export interface GatewayRunnerConfig {
+  backend: () => WebSearchBackend;
+  webiqKey: () => string | null;
+  borrow: BorrowBackend;
+  webiq?: WebIqClient;
+}
 
-export function makeGatewayRunner(getKey: () => string | null, client: WebIqClient = DEFAULT_CLIENT): GatewayToolRunner {
+// Shown when web search is unavailable (Copilot borrow disabled and no WebIQ key configured).
+const UNAVAILABLE = "web search/fetch not available, please run /webiq to use the key, to get the key please go to https://webiq.microsoft.ai/profiles/";
+
+export function makeGatewayRunner(cfg: GatewayRunnerConfig): GatewayToolRunner {
+  const webiq = cfg.webiq ?? DEFAULT_WEBIQ;
   return async (name, input) => {
-    const key = getKey();
-    if (!key) return NO_KEY;
     const arg = (input ?? {}) as Record<string, unknown>;
+    const backend = cfg.backend();
+    const key = cfg.webiqKey();
+
     if (name === "web_search") {
-      const query = typeof arg.query === "string" ? arg.query : "";
+      const query = typeof arg.query === "string" ? arg.query.trim() : "";
       if (!query) return "web_search error: missing 'query'";
-      const out = await client.search(key, { query });
-      return out.ok ? formatSearchResults(out.results) : out.error;
+      if (backend === "unavailable") return UNAVAILABLE;
+      if (backend === "webiq") { const out = await webiq.search(key!, { query }); return out.ok ? formatSearchResults(out.results) : out.error; }
+      const out = await cfg.borrow.run(query);
+      return out.ok ? formatBorrowSources(out.sources) : out.error;
     }
     if (name === "web_fetch") {
-      const url = typeof arg.url === "string" ? arg.url : "";
+      const url = typeof arg.url === "string" ? arg.url.trim() : "";
       if (!url) return "web_fetch error: missing 'url'";
-      const out = await client.fetchPage(key, { url });
-      return out.ok ? formatFetchResult(out) : out.error;
+      if (backend === "unavailable") return UNAVAILABLE;
+      if (backend === "webiq") { const out = await webiq.fetchPage(key!, { url }); return out.ok ? formatFetchResult(out) : out.error; }
+      // Copilot's web_search tool also fetches: "Open {url}…" makes gpt-5-mini open that exact page.
+      const out = await cfg.borrow.run(`Open ${url} and extract its main content.`);
+      if (!out.ok) return out.error;
+      return out.text || formatBorrowSources(out.sources);
     }
     return `unknown gateway tool: ${name}`;
   };

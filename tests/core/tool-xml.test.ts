@@ -78,4 +78,33 @@ describe("ToolCallExtractor", () => {
     const e = run([xml]);
     expect(tools(e)).toEqual([expect.objectContaining({ name: "Bash", input: { command: "echo hi" } })]);
   });
+
+  // Regression: Copilot streams Claude's antml-namespaced tool call token by token, so the opening
+  // sentinel `<invoke` is routinely split across chunks. The partial tail MUST be held back; if
+  // it leaks as text the remainder no longer matches the trigger and the whole call renders literally.
+  describe("antml sentinel split across chunks (regression)", () => {
+    const ns = "antml:", P = "parameter", I = "invoke", FC = "function_calls";
+    const invoke =
+      `<${ns}${I} name="TaskUpdate">` +
+      `<${ns}${P} name="status">completed</${ns}${P}>` +
+      `<${ns}${P} name="taskId">20</${ns}${P}>` +
+      `</${ns}${I}>`;
+    const expectTaskUpdate = (e: ExtractEvent[]) => {
+      expect(text(e)).toBe("");
+      expect(tools(e)).toEqual([expect.objectContaining({ name: "TaskUpdate", input: { status: "completed", taskId: 20 } })]);
+    };
+
+    // Split at every position inside the opening `<invoke` sentinel — each must reconstruct.
+    for (let cut = 1; cut <= `<${ns}${I}`.length; cut++) {
+      it(`bare invoke split after ${cut} char(s)`, () => {
+        expectTaskUpdate(run([invoke.slice(0, cut), invoke.slice(cut)]));
+      });
+    }
+
+    it("wrapper sentinel <function_calls> split after '<'", () => {
+      const wrapped = `<${ns}${FC}>` + invoke + `</${ns}${FC}>`;
+      const cut = "<".length;
+      expectTaskUpdate(run([wrapped.slice(0, cut), wrapped.slice(cut)]));
+    });
+  });
 });

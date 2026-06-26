@@ -15,18 +15,18 @@ describe("githubLoginState", () => {
 
 describe("summarizeStatus", () => {
   const base: StatusInputs = {
-    hasToken: true, tokenValid: true, webSearchReady: true,
+    hasToken: true, tokenValid: true, webSearch: "webiq",
     worker: "ready", clients: { claude: true, codex: false },
   };
-  it("maps a fully-configured environment", () => {
+  it("maps a fully-configured environment — reports the resolved backend", () => {
     const s = summarizeStatus(base);
     expect(s.github).toBe("connected");
-    expect(s.webSearch).toBe("ready");
+    expect(s.webSearch).toBe("webiq");
     expect(s.worker).toBe("ready");
     expect(s.clients).toEqual({ claude: true, codex: false });
   });
-  it("reports web search as not configured when no key is present", () => {
-    expect(summarizeStatus({ ...base, webSearchReady: false }).webSearch).toBe("not-configured");
+  it("passes through the unavailable backend (Copilot off, no key)", () => {
+    expect(summarizeStatus({ ...base, webSearch: "unavailable" }).webSearch).toBe("unavailable");
   });
   it("reports github expired when token present but invalid", () => {
     expect(summarizeStatus({ ...base, tokenValid: false }).github).toBe("expired");

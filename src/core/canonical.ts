@@ -20,6 +20,10 @@ export interface CanonicalRequest {
   temperature?: number;
   maxTokens?: number;
   tools?: CanonicalTool[];
+  // Hosted tool type names (e.g. "web_search") the gateway passes THROUGH to the upstream provider to
+  // run server-side, rather than translating to function tools or executing itself. Used for Copilot's
+  // native web_search on /responses (gpt-5 models), which Codex requests and Copilot fulfils directly.
+  hostedTools?: string[];
 }
 export interface CanonicalResponse {
   id: string;

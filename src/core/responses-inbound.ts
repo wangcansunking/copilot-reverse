@@ -58,6 +58,9 @@ export function responsesRequestToCanonical(req: ResponsesRequest): CanonicalReq
   return {
     model: req.model, stream: Boolean(req.stream), temperature: req.temperature, maxTokens: req.max_output_tokens,
     tools: req.tools?.filter((t) => t.type === "function" && t.name).map((t) => ({ name: t.name!, description: t.description, parameters: t.parameters ?? {} })),
+    // Hosted tools (web_search etc.) Codex requests for Copilot to run server-side. Keep them so the
+    // outbound /responses translator forwards them verbatim, instead of dropping them like before.
+    hostedTools: req.tools?.filter((t) => t.type !== "function" && t.type).map((t) => t.type),
     messages,
   };
 }

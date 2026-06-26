@@ -24,7 +24,15 @@ const TRIGGER_RE = /<(?:antml:)?(?:function_calls>|invoke\b)/;
 
 // Longest suffix of `s` that is a proper prefix of a trigger token — text we must hold back because
 // it might be the front of a sentinel split across chunk boundaries (e.g. "…<inv" then "oke name=").
-const PREFIX_TOKENS = ["<function_calls>", "<function_calls>", "<invoke", "<invoke"];
+// MUST list both the bare and the `antml:`-namespaced sentinels: Copilot streams Claude's tool call
+// token by token, so an opening `<invoke` is routinely split (e.g. "…<a" then "ntml:invoke");
+// if the namespaced forms are missing, that "<a" tail isn't recognized as a partial sentinel, leaks
+// as text, and the remainder no longer matches the trigger — the whole call renders literally.
+// Bare sentinel bodies, plus their namespaced variants built by inserting the prefix after "<" (the
+// literal is assembled here rather than written inline so the namespace can't be stripped from source).
+const NS = "antml" + ":";
+const BARE_TOKENS = ["<function_calls>", "<invoke"];
+const PREFIX_TOKENS = [...BARE_TOKENS, ...BARE_TOKENS.map((t) => "<" + NS + t.slice(1))];
 function heldBackLen(s: string): number {
   let max = 0;
   for (const t of PREFIX_TOKENS) {

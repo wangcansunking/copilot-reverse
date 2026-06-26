@@ -24,44 +24,74 @@ describe("isGatewayTool", () => {
   });
 });
 
-describe("makeGatewayRunner", () => {
-  it("dispatches web_search to the WebIQ client and returns formatted text", async () => {
-    const search = vi.fn(async () => ({ ok: true as const, results: [{ title: "T", url: "https://a", content: "C" }] }));
-    const fetchPage = vi.fn();
-    const run = makeGatewayRunner(() => "KEY", { search, fetchPage } as any);
+// Backend selection is resolved upstream (resolveWebSearchBackend, tested in webiq-key.test.ts) and
+// injected as `backend`. The runner just dispatches: "webiq" → WebIQ client, "copilot" → borrow,
+// "unavailable" → a fixed "run /webiq" message. mode/key are read lazily so toggles need no restart.
+const webiqClient = (over: any = {}) => ({ search: vi.fn(), fetchPage: vi.fn(), ...over });
+const borrow = (over: any = {}) => ({ run: vi.fn(), ...over });
+
+describe("makeGatewayRunner — copilot (borrow) backend", () => {
+  it("routes web_search through the borrow backend and formats its sources", async () => {
+    const borrowRun = vi.fn(async () => ({ ok: true, sources: [{ title: "T", url: "https://a" }], text: "answer" }));
+    const wiq = webiqClient();
+    const run = makeGatewayRunner({ backend: () => "copilot", webiqKey: () => null, borrow: { run: borrowRun }, webiq: wiq });
     const out = await run("web_search", { query: "hello" });
-    expect(search).toHaveBeenCalledWith("KEY", expect.objectContaining({ query: "hello" }));
-    expect(out).toMatch(/T/);
-    expect(out).toMatch(/https:\/\/a/);
+    expect(borrowRun).toHaveBeenCalledWith("hello");
+    expect(wiq.search).not.toHaveBeenCalled();
+    expect(out).toContain("T");
+    expect(out).toContain("https://a");
   });
 
-  it("dispatches web_fetch to the WebIQ client", async () => {
-    const search = vi.fn();
-    const fetchPage = vi.fn(async () => ({ ok: true as const, title: "P", url: "https://b", content: "BODY" }));
-    const run = makeGatewayRunner(() => "KEY", { search, fetchPage } as any);
+  it("routes web_fetch through the borrow backend as an 'open URL' instruction, returns extracted text", async () => {
+    const borrowRun = vi.fn(async () => ({ ok: true, sources: [{ title: "P", url: "https://b" }], text: "PAGE BODY" }));
+    const run = makeGatewayRunner({ backend: () => "copilot", webiqKey: () => null, borrow: { run: borrowRun }, webiq: webiqClient() });
     const out = await run("web_fetch", { url: "https://b" });
-    expect(fetchPage).toHaveBeenCalledWith("KEY", expect.objectContaining({ url: "https://b" }));
-    expect(out).toMatch(/BODY/);
+    expect(borrowRun.mock.calls[0][0]).toMatch(/https:\/\/b/);
+    expect(out).toContain("PAGE BODY");
   });
 
-  it("returns the WebIQ error string (not a throw) when the call fails", async () => {
-    const search = vi.fn(async () => ({ ok: false as const, error: "web search unavailable: key missing" }));
-    const run = makeGatewayRunner(() => "KEY", { search, fetchPage: vi.fn() } as any);
-    const out = await run("web_search", { query: "x" });
-    expect(out).toMatch(/key missing/);
-  });
-
-  it("tells the model when no key is configured, without calling the client", async () => {
-    const search = vi.fn();
-    const run = makeGatewayRunner(() => null, { search, fetchPage: vi.fn() } as any);
-    const out = await run("web_search", { query: "x" });
-    expect(search).not.toHaveBeenCalled();
-    expect(out).toMatch(/web-search-support/);
+  it("returns the borrow error string (not a throw) when borrowing fails", async () => {
+    const run = makeGatewayRunner({ backend: () => "copilot", webiqKey: () => null, borrow: { run: vi.fn(async () => ({ ok: false, error: "borrow search failed: 400" })) }, webiq: webiqClient() });
+    expect(await run("web_search", { query: "x" })).toMatch(/borrow search failed/);
   });
 
   it("guards against a malformed input (missing query)", async () => {
-    const run = makeGatewayRunner(() => "KEY", { search: vi.fn(), fetchPage: vi.fn() } as any);
-    const out = await run("web_search", {});
-    expect(out).toMatch(/query/i);
+    const run = makeGatewayRunner({ backend: () => "copilot", webiqKey: () => null, borrow: borrow(), webiq: webiqClient() });
+    expect(await run("web_search", {})).toMatch(/query/i);
+  });
+});
+
+describe("makeGatewayRunner — webiq backend", () => {
+  it("routes web_search through the WebIQ client", async () => {
+    const search = vi.fn(async () => ({ ok: true as const, results: [{ title: "W", url: "https://w", content: "C" }] }));
+    const borrowRun = vi.fn();
+    const run = makeGatewayRunner({ backend: () => "webiq", webiqKey: () => "KEY", borrow: { run: borrowRun }, webiq: { search, fetchPage: vi.fn() } as any });
+    const out = await run("web_search", { query: "hello" });
+    expect(search).toHaveBeenCalledWith("KEY", expect.objectContaining({ query: "hello" }));
+    expect(borrowRun).not.toHaveBeenCalled();
+    expect(out).toMatch(/W/);
+  });
+
+  it("routes web_fetch through the WebIQ client", async () => {
+    const fetchPage = vi.fn(async () => ({ ok: true as const, title: "P", url: "https://b", content: "BODY" }));
+    const run = makeGatewayRunner({ backend: () => "webiq", webiqKey: () => "KEY", borrow: borrow(), webiq: { search: vi.fn(), fetchPage } as any });
+    expect(await run("web_fetch", { url: "https://b" })).toMatch(/BODY/);
+  });
+});
+
+describe("makeGatewayRunner — unavailable backend (Copilot search off, no WebIQ key)", () => {
+  it("tells the user to run /webiq with the profile URL, calling neither backend", async () => {
+    const search = vi.fn(); const borrowRun = vi.fn();
+    const run = makeGatewayRunner({ backend: () => "unavailable", webiqKey: () => null, borrow: { run: borrowRun }, webiq: { search, fetchPage: vi.fn() } as any });
+    const out = await run("web_search", { query: "hello" });
+    expect(search).not.toHaveBeenCalled();
+    expect(borrowRun).not.toHaveBeenCalled();
+    expect(out).toMatch(/not available/i);
+    expect(out).toMatch(/\/webiq/);
+    expect(out).toContain("https://webiq.microsoft.ai/profiles/");
+  });
+  it("also reports unavailable for web_fetch", async () => {
+    const run = makeGatewayRunner({ backend: () => "unavailable", webiqKey: () => null, borrow: borrow(), webiq: webiqClient() });
+    expect(await run("web_fetch", { url: "https://b" })).toMatch(/not available/i);
   });
 });
