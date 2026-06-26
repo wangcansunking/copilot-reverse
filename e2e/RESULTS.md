@@ -3,6 +3,17 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-26 (split antml: sentinel)** — Fixed a recurrence of the text-emitted-tool-call bug: the
+  `ToolCallExtractor` split-sentinel hold-back (`PREFIX_TOKENS`) listed only the bare `<invoke` /
+  `<function_calls>` forms — the two namespaced slots were duplicated bare copies. Copilot streams
+  Claude's `antml:`-namespaced tool call token by token, so an opening `<invoke` is routinely split
+  across chunks; the partial tail wasn't held back, leaked as text, and the remainder no longer
+  matched the trigger — the whole call rendered as a literal `<invoke …>` block (seen live as a
+  `TaskUpdate` printed instead of executed). Derive the namespaced variants from the bare tokens so
+  both are held back; added split-at-every-offset regression tests. Affects both outbound paths
+  (Anthropic + the new `/responses` SSE) since they share the extractor. Full suite green: `npm test`
+  → **312 passed** (53 files), `npm run test:e2e` → **31 passed** (4 files), tsc build clean.
+
 - **2026-06-26 (Codex /responses)** — Fixed Codex startup: new Codex removed `wire_api = "chat"`
   (codex#7782) and requires `"responses"`, which makes it POST `{base_url}/responses`. Implemented the
   OpenAI Responses API at `POST /openai/responses` (new `src/core/responses-inbound.ts`: item-centric
