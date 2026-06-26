@@ -11,7 +11,7 @@ import { startSupervisor } from "../supervisor/index.js";
 import { runAssistantTurn } from "../tui/assistant/runtime.js";
 import { makeOnChat } from "../tui/assistant/on-chat.js";
 import { readGhToken, clearGhToken } from "../shared/creds.js";
-import { writeWebIqKey, readWebIqKey } from "../shared/webiq-key.js";
+import { writeWebIqKey, clearWebIqKey, readWebSearchMode, writeWebSearchMode } from "../shared/webiq-key.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
 import { readChatModel, writeChatModel } from "../shared/prefs.js";
 import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
@@ -160,7 +160,7 @@ async function launchTui(): Promise<void> {
   const startupStatus = summarizeStatus({
     hasToken: Boolean(readGhToken(dataDir())),
     tokenValid: true,
-    webSearchReady: Boolean(readWebIqKey(dataDir())),
+    webSearchMode: readWebSearchMode(dataDir()),
     worker: "ready",
     clients: { claude: clientStatus.claude.user || clientStatus.claude.project, codex: clientStatus.codex.user || clientStatus.codex.project },
   });
@@ -186,8 +186,9 @@ async function launchTui(): Promise<void> {
       onModelChange: (m: string) => writeChatModel(dataDir(), m),
       pickModelOnStart: !persistedModel,
       login: doLogin,
-      saveWebIqKey: (k: string) => writeWebIqKey(k, dataDir()),
-      webSearchReady: () => Boolean(readWebIqKey(dataDir())),
+      enableWebiq: (k: string) => { writeWebIqKey(k, dataDir()); writeWebSearchMode(dataDir(), "webiq"); },
+      disableWebiq: () => { clearWebIqKey(dataDir()); },
+      webSearchMode: () => readWebSearchMode(dataDir()),
       startupStatus,
       githubStatus: async () => {
         const token = readGhToken(dataDir());

@@ -34,6 +34,13 @@ describe("slash commands", () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/help");
     expect(out.join("\n")).toMatch(/\/status/);
   });
+  it("/help hides the /webiq command but it is still runnable", async () => {
+    const reg = buildRegistry(ctx() as any, endpoint);
+    expect((await reg.run("/help")).join("\n")).not.toMatch(/\/webiq/);   // hidden from help
+    expect(reg.list().map((c) => c.name)).not.toContain("/webiq");        // hidden from list/autocomplete
+    expect((await reg.run("/webiq")).join("\n")).not.toMatch(/unknown/i); // but recognized when typed
+    expect((await reg.run("/web-search-support")).join("\n")).toMatch(/unknown/i); // old command gone
+  });
   it("unknown command", async () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/nope");
     expect(out.join("\n")).toMatch(/unknown/i);

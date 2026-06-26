@@ -167,13 +167,13 @@ describe("TUI: /login surfaces the device code before the poll resolves", () => 
   });
 });
 
-describe("TUI: /web-search-support key entry", () => {
-  it("opens a masked key screen and persists the typed key via saveWebIqKey", async () => {
+describe("TUI: /webiq key entry (hidden command)", () => {
+  it("opens a masked key screen and enables WebIQ with the typed key", async () => {
     const saved: string[] = [];
-    const saveWebIqKey = (k: string) => { saved.push(k); };
-    const { stdin, lastFrame } = render(<App registry={reg()} title="m" saveWebIqKey={saveWebIqKey} />);
+    const enableWebiq = (k: string) => { saved.push(k); };
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" enableWebiq={enableWebiq} webSearchMode={() => "copilot"} />);
     await tick();
-    stdin.write("/web-search-support");
+    stdin.write("/webiq");
     await tick();
     stdin.write("\r");          // run the command -> opens the screen
     await tick(60);
@@ -186,6 +186,20 @@ describe("TUI: /web-search-support key entry", () => {
     stdin.write("\r");          // submit
     await tick(60);
     expect(saved).toEqual(["secret-key-123"]);
+    expect(lastFrame()).toMatch(/web .*✓ webiq/); // HUD flips to the webiq backend
+  });
+
+  it("/webiq clean disables WebIQ and reverts to the Copilot backend", async () => {
+    let cleaned = false;
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" enableWebiq={() => {}} disableWebiq={() => { cleaned = true; }} webSearchMode={() => "webiq"} />);
+    await tick();
+    stdin.write("/webiq clean");
+    await tick();
+    stdin.write("\r");
+    await tick(60);
+    expect(cleaned).toBe(true);
+    expect(lastFrame()).toMatch(/back to Copilot/i);
+    expect(lastFrame()).toMatch(/web .*✓ copilot/);
   });
 });
 
@@ -194,7 +208,7 @@ describe("TUI: /status command shows the live status card", () => {
     const { stdin, lastFrame } = render(
       <App registry={reg()} title="m"
         githubStatus={async () => "connected"}
-        webSearchReady={() => true} />,
+        webSearchMode={() => "copilot"} />,
     );
     await tick();
     stdin.write("/status");
@@ -203,47 +217,47 @@ describe("TUI: /status command shows the live status card", () => {
     await tick(80);
     const f = lastFrame() ?? "";
     expect(f).toMatch(/GitHub login.*connected/);
-    expect(f).toMatch(/web search.*✓ ready/);
+    expect(f).toMatch(/web search.*via Copilot/);
   });
 
-  it("steers to /web-search-support in the card when web search is unconfigured", async () => {
+  it("shows the WebIQ backend in the card when WebIQ is enabled", async () => {
     const { stdin, lastFrame } = render(
       <App registry={reg()} title="m"
         githubStatus={async () => "connected"}
-        webSearchReady={() => false} />,
+        webSearchMode={() => "webiq"} />,
     );
     await tick();
     stdin.write("/status");
     await tick();
     stdin.write("\r");
     await tick(80);
-    expect(lastFrame()).toMatch(/web search.*not configured.*\/web-search-support/);
+    expect(lastFrame()).toMatch(/web search.*via WebIQ/);
   });
 });
 
 describe("TUI: startup status card", () => {
   it("renders the GitHub/web-search/worker overview on startup", () => {
-    const startupStatus = { github: "connected" as const, webSearch: "not-configured" as const, worker: "ready" as const, clients: { claude: true, codex: false } };
+    const startupStatus = { github: "connected" as const, webSearch: "copilot" as const, worker: "ready" as const, clients: { claude: true, codex: false } };
     const { lastFrame } = render(<App registry={reg()} title="m" startupStatus={startupStatus} />);
     const f = lastFrame() ?? "";
     expect(f).toMatch(/status/);
     expect(f).toMatch(/GitHub login.*connected/);
-    expect(f).toMatch(/web search.*not configured.*\/web-search-support/);
+    expect(f).toMatch(/web search.*via Copilot/);
     expect(f).toMatch(/worker.*ready/);
   });
 });
 
 describe("TUI: HUD web search indicator", () => {
-  it("shows web ✗ with the command hint when no WebIQ key is configured", () => {
-    const { lastFrame } = render(<App registry={reg()} title="m" webSearchReady={() => false} />);
+  it("shows the Copilot backend by default (always available)", () => {
+    const { lastFrame } = render(<App registry={reg()} title="m" webSearchMode={() => "copilot"} />);
     const f = lastFrame() ?? "";
-    expect(f).toMatch(/web .*✗/);
-    expect(f).toContain("/web-search-support");
+    expect(f).toMatch(/web .*✓ copilot/);
+    expect(f).not.toContain("/web-search-support");
   });
-  it("shows web ✓ when a WebIQ key is configured", () => {
-    const { lastFrame } = render(<App registry={reg()} title="m" webSearchReady={() => true} />);
+  it("shows the webiq backend when WebIQ is enabled", () => {
+    const { lastFrame } = render(<App registry={reg()} title="m" webSearchMode={() => "webiq"} />);
     const f = lastFrame() ?? "";
-    expect(f).toMatch(/web .*✓/);
+    expect(f).toMatch(/web .*✓ webiq/);
   });
 });
 

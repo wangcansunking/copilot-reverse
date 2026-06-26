@@ -10,13 +10,15 @@ export interface SlashContext {
 export interface SlashCommand {
   name: string;
   describe: string;
+  hidden?: boolean; // omitted from list()/help & autocomplete, but still runnable (e.g. /webiq)
   run(args: string[], ctx: SlashContext): Promise<string[]>;
 }
 export class Registry {
   private cmds = new Map<string, SlashCommand>();
   constructor(private ctx: SlashContext) {}
   add(cmd: SlashCommand): this { this.cmds.set(cmd.name, cmd); return this; }
-  list(): SlashCommand[] { return [...this.cmds.values()]; }
+  // Visible commands only — hidden ones (e.g. /webiq) are runnable but never advertised.
+  list(): SlashCommand[] { return [...this.cmds.values()].filter((c) => !c.hidden); }
   async run(line: string): Promise<string[]> {
     const [name, ...args] = line.trim().split(/\s+/);
     const cmd = this.cmds.get(name);

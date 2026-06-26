@@ -18,7 +18,7 @@ const headers = (key: string) => ({ host: "api.microsoft.ai", "x-apikey": key, "
 // Status -> readable, model-facing reason. Kept identical across both endpoints so the model gets a
 // consistent, actionable string it can reason about (e.g. fall back to its own knowledge).
 function statusError(status: number, kind: "search" | "fetch"): string {
-  if (status === 401 || status === 403) return "web search unavailable: WebIQ API key missing or invalid — run /web-search-support to set it";
+  if (status === 401 || status === 403) return "web search unavailable: WebIQ API key missing or invalid — run /webiq to set it";
   if (status === 429) return "web search unavailable: WebIQ rate limit exceeded — try again shortly";
   if (status === 404 && kind === "fetch") return "web fetch failed: the page was not found or is not indexed";
   return `web ${kind} failed: WebIQ returned ${status}`;
