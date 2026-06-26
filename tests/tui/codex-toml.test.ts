@@ -18,6 +18,10 @@ describe("applyCodexToml", () => {
     expect(toml).toContain("[model_providers.copilot-reverse]");
     expect(toml).toContain('base_url = "http://127.0.0.1:7891/v1"');
     expect(toml).toContain('wire_api = "responses"');
+    // Auth: a static bearer token inlined so Codex uses our local proxy instead of falling back to
+    // the OpenAI login flow. The worker ignores the key value.
+    expect(toml).toContain('requires_openai_auth = false');
+    expect(toml).toContain('experimental_bearer_token = "copilot-reverse-local"');
   });
 
   it("preserves unrelated existing keys and is idempotent", () => {

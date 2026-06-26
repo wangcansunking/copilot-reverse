@@ -13,7 +13,7 @@ export function codexTomlPath(home = homedir()): string {
   return join(home, ".codex", "config.toml");
 }
 
-export interface CodexTomlOpts { home?: string; baseUrl: string; model: string; contextWindow?: number }
+export interface CodexTomlOpts { home?: string; baseUrl: string; model: string; contextWindow?: number; apiKey?: string }
 
 // The top-level keys we own (so re-applying replaces them instead of duplicating).
 const MANAGED_TOP_KEYS = ["model", "model_provider", "model_context_window"];
@@ -46,6 +46,11 @@ export function applyCodexToml(opts: CodexTomlOpts): { path: string; changed: st
     `name = "copilot-reverse"`,
     `base_url = "${opts.baseUrl}"`,
     `wire_api = "responses"`,
+    // Auth: inline a static bearer token so Codex talks to our local proxy instead of falling back
+    // to the OpenAI login flow. env_key is unreliable here (a standalone Codex CLI won't see our
+    // .env), so we embed the placeholder directly — the worker ignores the key value anyway.
+    `requires_openai_auth = false`,
+    `experimental_bearer_token = "${opts.apiKey ?? "copilot-reverse-local"}"`,
   ].join("\n");
 
   const body = (head ? `${head}\n\n` : "") + managed + "\n";

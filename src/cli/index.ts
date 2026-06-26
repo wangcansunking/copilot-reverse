@@ -124,7 +124,7 @@ async function launchTui(): Promise<void> {
       return r;
     }
     const r = applyCodex(scope, { OPENAI_BASE_URL: openaiBase, OPENAI_API_KEY: "copilot-reverse-local", OPENAI_MODEL: model });
-    applyCodexToml({ baseUrl: openaiBase, model, contextWindow: modelLimits[model] });
+    applyCodexToml({ baseUrl: openaiBase, model, contextWindow: modelLimits[model], apiKey: "copilot-reverse-local" });
     writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), codex: true });
     return r;
   };
