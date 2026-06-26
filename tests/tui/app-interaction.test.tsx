@@ -189,6 +189,32 @@ describe("TUI: /web-search-support key entry", () => {
   });
 });
 
+describe("TUI: startup status card", () => {
+  it("renders the GitHub/web-search/worker overview on startup", () => {
+    const startupStatus = { github: "connected" as const, webSearch: "not-configured" as const, worker: "ready" as const, clients: { claude: true, codex: false } };
+    const { lastFrame } = render(<App registry={reg()} title="m" startupStatus={startupStatus} />);
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/status/);
+    expect(f).toMatch(/GitHub login.*connected/);
+    expect(f).toMatch(/web search.*not configured.*\/web-search-support/);
+    expect(f).toMatch(/worker.*ready/);
+  });
+});
+
+describe("TUI: HUD web search indicator", () => {
+  it("shows web ✗ with the command hint when no WebIQ key is configured", () => {
+    const { lastFrame } = render(<App registry={reg()} title="m" webSearchReady={() => false} />);
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/web .*✗/);
+    expect(f).toContain("/web-search-support");
+  });
+  it("shows web ✓ when a WebIQ key is configured", () => {
+    const { lastFrame } = render(<App registry={reg()} title="m" webSearchReady={() => true} />);
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/web .*✓/);
+  });
+});
+
 describe("TUI: model picker", () => {
   it("/model opens the picker and lists models with context windows", async () => {
     const loadModels = async () => ["gpt-4o", "claude-opus-4.8"];

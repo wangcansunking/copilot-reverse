@@ -6,6 +6,7 @@ import { SetupWizard, type SetupClient } from "./setup/wizard.js";
 import { ModelScreen } from "./screens/model.js";
 import { ConfigScreen, type ConfigInfo } from "./screens/config.js";
 import { WebIqKeyScreen } from "./screens/webiq-key.js";
+import type { StatusSummary } from "./status-summary.js";
 import type { Scope, ApplyResult } from "./setup/apply.js";
 import type { ClientStatus } from "./setup/status.js";
 import { theme } from "./theme.js";
@@ -27,6 +28,21 @@ const stateColor: Record<WorkerState, string> = {
 
 const EMPTY_STATUS: ClientStatus = { claude: { user: false, project: false }, codex: { user: false, project: false } };
 const SPINNER = ["✶", "✸", "✹", "✺", "✹", "✷"];
+
+// Startup overview card. GitHub shows a login STATE (no real token expiry exists), web search shows
+// whether a WebIQ key is configured with the command to fix it when not.
+function statusCard(s: StatusSummary): Entry {
+  const gh = s.github === "connected" ? "✓ connected" : s.github === "expired" ? "✗ expired — run /login" : "✗ signed out — run /login";
+  const web = s.webSearch === "ready" ? "✓ ready" : "✗ not configured — run /web-search-support";
+  const clients = `claude ${s.clients.claude ? "✓" : "○"}  codex ${s.clients.codex ? "✓" : "○"}`;
+  const tone: "ok" | "error" = s.github === "connected" ? "ok" : "error";
+  return { type: "card", title: "status", tone, lines: [
+    `GitHub login   ${gh}`,
+    `web search     ${web}`,
+    `worker         ${s.worker}`,
+    `clients        ${clients}`,
+  ] };
+}
 
 const fmtElapsed = (ms: number): string => {
   const s = Math.floor(ms / 1000);
@@ -54,6 +70,10 @@ export interface AppProps {
   login?: (show: (lines: string[]) => void) => Promise<string[]>;
   // Persist a WebIQ API key entered via /web-search-support (enables gateway web_search/web_fetch).
   saveWebIqKey?: (key: string) => void;
+  // Whether web search is configured (a WebIQ key is present). Read live so the HUD reflects it.
+  webSearchReady?: () => boolean;
+  // One-time status overview shown as the first card on startup.
+  startupStatus?: StatusSummary;
 }
 
 function OutputCard({ title, lines, tone }: { title: string; lines: string[]; tone: "info" | "ok" | "error" }) {
@@ -108,21 +128,23 @@ function ClientBadge({ name, status }: { name: string; status: { user: boolean; 
 export function App({
   registry, title, workerState = "starting", initialModel = "—",
   statusSource, readStatus, modelLimits, onChat,
-  loadModels, setup, info, onModelChange, pickModelOnStart, login, saveWebIqKey,
+  loadModels, setup, info, onModelChange, pickModelOnStart, login, saveWebIqKey, webSearchReady, startupStatus,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
-  const [entries, setEntries] = useState<Entry[]>([
+  const [entries, setEntries] = useState<Entry[]>(() => [
+    ...(startupStatus ? [statusCard(startupStatus)] : []),
     { type: "system", text: "Type a message to chat with the assistant, or /help for commands." },
   ]);
   const [state, setState] = useState<WorkerState>(workerState);
   const [status, setStatus] = useState<ClientStatus>(() => readStatus?.() ?? EMPTY_STATUS);
+  const [webReady, setWebReady] = useState<boolean>(() => webSearchReady?.() ?? false);
   const [model, setModel] = useState(initialModel);
   const [screen, setScreen] = useState<Screen>(pickModelOnStart && loadModels ? { kind: "model" } : null);
   const [, setNow] = useState(0); // ticks the live loading line while the assistant streams
   const abortRef = useRef<AbortController | null>(null); // current turn's interrupt handle
   const loginInFlight = useRef(false); // guards against starting a second device-login flow
   const add = (e: Entry) => setEntries((p) => [...p, e].slice(-100));
-  const refreshStatus = () => { if (readStatus) setStatus(readStatus()); };
+  const refreshStatus = () => { if (readStatus) setStatus(readStatus()); if (webSearchReady) setWebReady(webSearchReady()); };
 
   // esc interrupts an in-flight assistant turn (the Repl doesn't use esc, so this is unambiguous).
   useInput((_input, key) => { if (key.escape) abortRef.current?.abort(); });
@@ -247,7 +269,7 @@ export function App({
   } else if (screen?.kind === "webiq-key" && saveWebIqKey) {
     body = (
       <WebIqKeyScreen
-        onSubmit={(k) => { saveWebIqKey(k); setScreen(null); add({ type: "card", title: "/web-search-support", tone: "ok", lines: ["✓ WebIQ key saved — web search is now enabled for connected clients"] }); }}
+        onSubmit={(k) => { saveWebIqKey(k); setWebReady(true); setScreen(null); add({ type: "card", title: "/web-search-support", tone: "ok", lines: ["✓ WebIQ key saved — web search is now enabled for connected clients"] }); }}
         onCancel={() => { setScreen(null); add({ type: "system", text: "web-search-support cancelled" }); }}
       />
     );
@@ -284,12 +306,17 @@ export function App({
 
       {body}
 
-      <Box paddingX={1}>
-        <Text color={theme.muted}>model </Text><Text color={theme.accent}>{model}</Text>
-        <Text color={theme.muted}>  ·  daemon </Text><Text color={stateColor[state]}>{state}</Text>
-        <Text color={theme.muted}>  ·  </Text><ClientBadge name="claude" status={status.claude} />
-        <Text color={theme.muted}>  </Text><ClientBadge name="codex" status={status.codex} />
-        <Text color={theme.muted}>  ·  /help</Text>
+      <Box flexDirection="column" paddingX={1}>
+        <Box>
+          <Text color={theme.muted}>model </Text><Text color={theme.accent}>{model}</Text>
+          <Text color={theme.muted}>  ·  daemon </Text><Text color={stateColor[state]}>{state}</Text>
+          <Text color={theme.muted}>  ·  web </Text><Text color={webReady ? theme.ready : theme.muted}>{webReady ? "✓" : "✗ /web-search-support"}</Text>
+        </Box>
+        <Box>
+          <ClientBadge name="claude" status={status.claude} />
+          <Text color={theme.muted}>  </Text><ClientBadge name="codex" status={status.codex} />
+          <Text color={theme.muted}>  ·  /help</Text>
+        </Box>
       </Box>
     </Box>
   );

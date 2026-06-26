@@ -11,13 +11,14 @@ import { startSupervisor } from "../supervisor/index.js";
 import { runAssistantTurn } from "../tui/assistant/runtime.js";
 import { makeOnChat } from "../tui/assistant/on-chat.js";
 import { readGhToken, clearGhToken } from "../shared/creds.js";
-import { writeWebIqKey } from "../shared/webiq-key.js";
+import { writeWebIqKey, readWebIqKey } from "../shared/webiq-key.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
 import { readChatModel, writeChatModel } from "../shared/prefs.js";
 import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
 import { fetchCopilotModels, fetchModelLimits } from "../providers/copilot/models.js";
 import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
 import { readClientStatus } from "../tui/setup/status.js";
+import { summarizeStatus } from "../tui/status-summary.js";
 import { applyCodexToml } from "../tui/setup/codex-toml.js";
 import type { SetupClient } from "../tui/setup/wizard.js";
 import { claudeCopilotReverseEnv } from "../tui/setup/clients.js";
@@ -151,6 +152,17 @@ async function launchTui(): Promise<void> {
 
   const persistedModel = readChatModel(dataDir());
 
+  // Startup overview. The token was already validated above (re-auth happens before we get here), so
+  // GitHub is connected; web search readiness and configured clients are read from disk.
+  const clientStatus = readClientStatus();
+  const startupStatus = summarizeStatus({
+    hasToken: Boolean(readGhToken(dataDir())),
+    tokenValid: true,
+    webSearchReady: Boolean(readWebIqKey(dataDir())),
+    worker: "ready",
+    clients: { claude: clientStatus.claude.user || clientStatus.claude.project, codex: clientStatus.codex.user || clientStatus.codex.project },
+  });
+
   app = render(
     React.createElement(App, {
       registry,
@@ -173,6 +185,8 @@ async function launchTui(): Promise<void> {
       pickModelOnStart: !persistedModel,
       login: doLogin,
       saveWebIqKey: (k: string) => writeWebIqKey(k, dataDir()),
+      webSearchReady: () => Boolean(readWebIqKey(dataDir())),
+      startupStatus,
     }),
   );
 }
