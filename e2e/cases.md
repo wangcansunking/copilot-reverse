@@ -36,6 +36,26 @@ provider so no live network/token is needed. Spec: [`copilot-reverse.e2e.test.ts
 | EP-25 | `setup-codex` | writes native `~/.codex/config.toml` with `model_context_window` |
 | EP-26 | reset after 1M setup | removes every key including the 1M-window keys |
 
+### Codex `/responses` (EP-27 … EP-38)
+
+The OpenAI Responses API end-to-end through a booted worker (Codex speaks only this). Hermetic — fake
+provider, no network. Spec: same `copilot-reverse.e2e.test.ts`, `describe("E2E: Codex /responses")`.
+
+| ID | Scenario | Expected result |
+|----|----------|-----------------|
+| EP-27 | non-stream `/openai/responses` | `object:"response"`, `status:"completed"`, an `output_text` message item, `usage` totals |
+| EP-28 | streaming `/openai/responses` | ordered `response.created → output_item.added → content_part.added → output_text.delta → …done → response.completed`, monotonic `sequence_number`, final `usage` |
+| EP-29 | streaming tool call | `function_call` item + `function_call_arguments.delta/.done`, args reassemble |
+| EP-30 | non-stream tool call | maps to a `function_call` output item with `call_id`/`name`/`arguments` |
+| EP-31 | prior `function_call` + `function_call_output` in `input` | round-trips to the provider as `tool_use` + `tool_result` |
+| EP-32 | `input_image` content part | round-trips to the provider as an image block |
+| EP-33 | `instructions` | becomes a `system` message |
+| EP-34 | hosted `web_search` tool + a function tool | `web_search` passes through as a hostedTool; the function tool is kept |
+| EP-35 | expired token | `401` with `error.type:"error"` (login hint) |
+| EP-36 | mid-stream failure | a `data: {"type":"error"}` frame, not a silent close |
+| EP-37 | a `/responses` request | recorded in the supervisor `request_log` with `endpoint:"/openai/responses"` |
+| EP-38 | `gpt-4o[1m]` model | the `[1m]` suffix is stripped before forwarding |
+
 ## What each case protects (regressions it would catch)
 
 - **EP-01/EP-02** — core proxy translation (OpenAI/Anthropic ⇄ Copilot canonical), streaming framing.
@@ -58,3 +78,21 @@ GitHub login is on disk (so CI stays hermetic). Coverage: token exchange, model 
 real 1M-window model), OpenAI completion, Anthropic streaming with **different questions → different
 answers** (the unique-id regression guard), real `message_delta` usage, and count_tokens.
 - **EP-07/EP-08/EP-09** — TUI command wiring: logs/error visibility, dashboard/report, config reset.
+
+## Real CLI Docker e2e (opt-in, real `claude` + `codex`)
+
+The fullest test: the **actual `claude` and `codex` CLIs** drive the **real worker daemon** inside a
+Linux container, with a real GitHub token (and optional WebIQ key) mounted. See
+[`docker/README.md`](./docker/README.md) — built/run via `e2e/docker/Dockerfile.cli` + `cli-e2e.sh`,
+not part of `npm test`. It writes a markdown report after each run. Checks:
+
+| Scenario | Path | Passes when |
+|----------|------|-------------|
+| `codex exec` | `/openai/responses` | the model returns `CODEX_OK` |
+| `claude -p` | `/anthropic/v1/messages` | the model returns `CLAUDE_OK` |
+| `claude` web search | gateway `web_search` loop → WebIQ | a grounded answer (a Rust `1.x` version), no error |
+
+This black-box path caught two bugs nothing else did: a Codex tool-translation `400` (a `custom`/
+`tool_search` tool forwarded nameless → Copilot rejects → "stream closed before response.completed"),
+and empty terminal Responses events (`output_*.done` carried no text → Codex rendered nothing).
+

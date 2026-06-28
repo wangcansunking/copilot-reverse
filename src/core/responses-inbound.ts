@@ -57,13 +57,22 @@ export function responsesRequestToCanonical(req: ResponsesRequest): CanonicalReq
   }
   return {
     model: req.model, stream: Boolean(req.stream), temperature: req.temperature, maxTokens: req.max_output_tokens,
-    tools: req.tools?.filter((t) => t.type === "function" && t.name).map((t) => ({ name: t.name!, description: t.description, parameters: t.parameters ?? {} })),
-    // Hosted tools (web_search etc.) Codex requests for Copilot to run server-side. Keep them so the
-    // outbound /responses translator forwards them verbatim, instead of dropping them like before.
-    hostedTools: req.tools?.filter((t) => t.type !== "function" && t.type).map((t) => t.type),
+    // Function tools and `custom` tools (e.g. Codex's apply_patch) both carry a name — keep them as
+    // named tools so Copilot doesn't reject a nameless tool. Only the KNOWN nameless server-side tools
+    // pass through as hostedTools; an unrecognized nameless tool is dropped rather than forwarded as a
+    // bare {type} (which makes Copilot 400 "Missing required parameter: tools[N].name" and kills the
+    // whole stream — surfaced to the Codex CLI as "stream closed before response.completed").
+    tools: req.tools?.filter((t) => (t.type === "function" || t.type === "custom") && t.name).map((t) => ({ name: t.name!, description: t.description, parameters: t.parameters ?? {} })),
+    hostedTools: req.tools?.filter((t) => HOSTED_TOOL_TYPES.has(t.type ?? "")).map((t) => t.type!),
     messages,
   };
 }
+
+// Copilot's /responses accepts these as standalone nameless hosted tools. NOTE: `tool_search` is
+// deliberately excluded — Copilot rejects it unless the request also defines "deferred" tools
+// ("tools.tool_search requires at least one deferred tool"), which we can't satisfy, so forwarding it
+// 400s the whole request. web_search is the one Codex hosted tool we can pass straight through.
+const HOSTED_TOOL_TYPES = new Set(["web_search", "web_search_preview"]);
 
 // Build the non-stream Responses object: text -> an output_text message item, tool_use -> function_call items.
 export function canonicalToResponsesResponse(r: CanonicalResponse) {
@@ -89,6 +98,7 @@ export class ResponsesSSE {
   private nextIndex = 0;
   private textIndex?: number;
   private textItemId?: string;
+  private accumulatedText = ""; // the full assistant text, replayed in the terminal done events
   private toolIndex = new Map<number, { outputIndex: number; itemId: string }>();
   constructor(private responseId: string, private model: string) {}
 
@@ -112,6 +122,7 @@ export class ResponsesSSE {
       out.push(this.ev("response.content_part.added", { item_id: this.textItemId, output_index: this.textIndex, content_index: 0, part: { type: "output_text", text: "", annotations: [] } }));
     }
     out.push(this.ev("response.output_text.delta", { item_id: this.textItemId, output_index: this.textIndex, content_index: 0, delta }));
+    this.accumulatedText += delta;
     return out;
   }
 
@@ -133,9 +144,10 @@ export class ResponsesSSE {
   finish(usage: { promptTokens: number; completionTokens: number } | undefined, _finishReason: string, argsByIdx?: Map<number, string>): string[] {
     const out: string[] = [];
     if (this.textIndex !== undefined) {
-      out.push(this.ev("response.output_text.done", { item_id: this.textItemId, output_index: this.textIndex, content_index: 0, text: "" }));
-      out.push(this.ev("response.content_part.done", { item_id: this.textItemId, output_index: this.textIndex, content_index: 0, part: { type: "output_text", text: "", annotations: [] } }));
-      out.push(this.ev("response.output_item.done", { output_index: this.textIndex, item: { type: "message", id: this.textItemId, role: "assistant", status: "completed", content: [] } }));
+      const text = this.accumulatedText;
+      out.push(this.ev("response.output_text.done", { item_id: this.textItemId, output_index: this.textIndex, content_index: 0, text }));
+      out.push(this.ev("response.content_part.done", { item_id: this.textItemId, output_index: this.textIndex, content_index: 0, part: { type: "output_text", text, annotations: [] } }));
+      out.push(this.ev("response.output_item.done", { output_index: this.textIndex, item: { type: "message", id: this.textItemId, role: "assistant", status: "completed", content: [{ type: "output_text", text, annotations: [] }] } }));
     }
     for (const [copilotIdx, t] of this.toolIndex) {
       const args = argsByIdx?.get(copilotIdx) ?? "";
@@ -143,7 +155,12 @@ export class ResponsesSSE {
       out.push(this.ev("response.output_item.done", { output_index: t.outputIndex, item: { type: "function_call", id: t.itemId, status: "completed" } }));
     }
     const u = usage ? { input_tokens: usage.promptTokens, output_tokens: usage.completionTokens, total_tokens: usage.promptTokens + usage.completionTokens } : undefined;
-    out.push(this.ev("response.completed", { response: { ...this.envelope("completed"), ...(u ? { usage: u } : {}) } }));
+    // Spec-correct clients reconstruct the final response from response.completed.response.output, so
+    // include the finished items (the text message + any function calls), not just an empty envelope.
+    const output: unknown[] = [];
+    if (this.textIndex !== undefined) output.push({ type: "message", id: this.textItemId, role: "assistant", status: "completed", content: [{ type: "output_text", text: this.accumulatedText, annotations: [] }] });
+    for (const [copilotIdx, t] of this.toolIndex) output.push({ type: "function_call", id: t.itemId, call_id: t.itemId.replace(/^fc_/, ""), arguments: argsByIdx?.get(copilotIdx) ?? "", status: "completed" });
+    out.push(this.ev("response.completed", { response: { ...this.envelope("completed"), output, ...(u ? { usage: u } : {}) } }));
     return out;
   }
 }

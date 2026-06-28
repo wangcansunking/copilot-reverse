@@ -8,7 +8,8 @@ import { createControlApp } from "./api.js";
 import { defaultConfig } from "../shared/config.js";
 import { dataDir, dbPath } from "../shared/paths.js";
 import { readGhToken } from "../shared/creds.js";
-import { CopilotTokenStore } from "../providers/copilot/token.js";
+import { probeGithubAuth } from "../providers/copilot/token.js";
+import { GithubHeartbeat, SIGNED_OUT_DETAIL } from "./github-heartbeat.js";
 import type { WorkerState, DoctorCheck } from "../shared/control-types.js";
 
 export function startSupervisor(): { stop: () => void } {
@@ -38,14 +39,19 @@ export function startSupervisor(): { stop: () => void } {
     const gh = readGhToken(dataDir());
     let auth: DoctorCheck;
     if (!gh) {
-      auth = { name: "github-auth", ok: false, detail: "not logged in — restart copilot-reverse to log in" };
+      auth = { name: "github-auth", ok: false, detail: SIGNED_OUT_DETAIL };
     } else {
-      // Validate the token actually exchanges, not just that it exists on disk.
-      try { await new CopilotTokenStore(gh).get(); auth = { name: "github-auth", ok: true, detail: "token valid" }; }
-      catch (e) { auth = { name: "github-auth", ok: false, detail: e instanceof Error ? e.message : String(e) }; }
+      // Validate the token actually exchanges, not just that it exists on disk. Shares the heartbeat's
+      // classifier so on-demand /doctor and the periodic probe agree.
+      const probe = await probeGithubAuth(gh);
+      auth = { name: "github-auth", ok: probe.ok, detail: probe.detail };
     }
     return [auth, { name: "worker", ok: state === "ready", detail: `worker is ${state}` }];
   };
+
+  // Periodically re-check the GitHub token so the UI reflects an expired/revoked login within ~60s,
+  // instead of only on the next failed request or a manual /status.
+  const heartbeat = new GithubHeartbeat(() => readGhToken(dataDir()));
 
   const app = createControlApp({
     db, getState: () => state,
@@ -53,13 +59,15 @@ export function startSupervisor(): { stop: () => void } {
     stop: () => monitor.stop(),
     start: () => monitor.start(),
     doctor,
+    github: () => heartbeat.current(),
     subscribe: (send) => bus.subscribe(send),
   });
 
   app.listen(config.supervisorPort, config.bindHost, () => monitor.start());
-  process.on("SIGINT", () => { monitor.stop(); process.exit(0); });
-  process.on("SIGTERM", () => { monitor.stop(); process.exit(0); });
-  return { stop: () => monitor.stop() };
+  heartbeat.start();
+  process.on("SIGINT", () => { heartbeat.stop(); monitor.stop(); process.exit(0); });
+  process.on("SIGTERM", () => { heartbeat.stop(); monitor.stop(); process.exit(0); });
+  return { stop: () => { heartbeat.stop(); monitor.stop(); } };
 }
 
 // Allow `node dist/supervisor/index.js` to boot the daemon directly.

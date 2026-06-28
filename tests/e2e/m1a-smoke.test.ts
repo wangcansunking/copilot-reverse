@@ -13,6 +13,7 @@ describe("M1a control-plane e2e", () => {
       db, getState: () => state,
       restart: () => { state = "ready"; recordRestart(db, { ts: Date.now(), reason: "manual", exitCode: null, stderrTail: "", backoffMs: 0, markedUnhealthy: 0 }); bus.emit("state", { state }); },
       stop: () => {}, start: () => {}, doctor: async () => [{ name: "x", ok: true, detail: "ok" }],
+      github: () => undefined,
       subscribe: (s) => bus.subscribe(s),
     });
     expect((await request(app).get("/api/status")).body.workerState).toBe("starting");

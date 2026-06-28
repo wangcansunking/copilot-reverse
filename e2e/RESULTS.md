@@ -3,6 +3,39 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-28 (real CLI Docker e2e + 2 Codex bugs fixed)** — Added a true black-box e2e: the actual
+  `claude` and `codex` CLIs run inside a `node:22` container against the real worker daemon
+  (`e2e/docker/Dockerfile.cli` + `cli-e2e.sh`), with a real token (+ WebIQ key) mounted. All three
+  checks pass: `codex exec → /openai/responses → CODEX_OK`, `claude -p → /anthropic → CLAUDE_OK`,
+  and `claude` gateway web search → a grounded answer ("1.96.0"). The driver writes a markdown report
+  after each run (`/out/report.md`). This path **caught two bugs nothing else did**: (1) Codex sends
+  `custom`/`tool_search` tools that the inbound translator forwarded nameless → Copilot 400 "Missing
+  required parameter: tools[N].name" → "stream closed before response.completed"; fixed by keeping
+  `custom` tools as named tools and allow-listing only nameless hosted tools (`web_search`). (2) The
+  `ResponsesSSE` terminal events carried empty text, so Codex completed the turn but rendered nothing;
+  fixed by replaying the accumulated text in `output_text.done` / `content_part.done` /
+  `output_item.done` and populating `response.completed.response.output`. Also added 12 hermetic
+  in-process Codex `/responses` cases (EP-27…EP-38) as fast regression. No secrets are committed —
+  the only key in any file is the placeholder `copilot-reverse-local`; real creds/keys mount at
+  runtime and report artifacts are gitignored. Full suite green: `npm test` → **394 passed**
+  (56 files), tsc build clean, real CLI Docker e2e → **all passed**.
+
+- **2026-06-28 (GitHub-token heartbeat)** — Added a supervisor-side heartbeat that periodically (every
+  60s, plus once ~2s after boot) checks whether the stored GitHub token still exchanges for a Copilot
+  token, and surfaces the result via a new optional `github` field on `/api/status`. The TUI's existing
+  2s status poll drives a live footer badge (`github ✓` / `✗ /login`), so an expired/revoked login
+  shows within ~60s instead of only on the next failed request or a manual `/status`. Key design: a
+  classifying `probeGithubAuth` distinguishes a definitive 401/403 (→ expired) from a transient
+  timeout/5xx/network error (→ keep last-known-good), so a single GitHub hiccup never flips the badge;
+  `nextGithubStatus` is a pure, sticky reducer. `signed-out` (no token) stays distinct from `expired`.
+  New files: `src/supervisor/github-heartbeat.ts`, `tests/supervisor/github-heartbeat.test.ts`.
+  **Real Linux container e2e** (`e2e/docker/`): a Docker image boots the real control API + a real
+  `GithubHeartbeat.start()`, listens on a real port, and drives it over real HTTP (`GET /api/status`)
+  against the real GitHub API — all four states pass, including `connected` (real token → real Copilot
+  token exchange, mounted read-only) and `expired` (bad token → a real GitHub 401). Only the probe
+  interval is shortened (now injectable) for the test. Full suite green: `npm test` → **378 passed**
+  (56 files), `npm run test:e2e` → **31 passed** (4 files), container e2e → **all passed**, tsc build clean.
+
 - **2026-06-26 (default to WebIQ; disable slow borrow)** — gpt-5-mini (the Claude "borrow" backend
   model) is badly congested on Copilot's `/responses`: repeated `503 "high demand"` and 20s–7min
   stalls measured live (one user search ran 437s). Same native search on gpt-5.4-mini/gpt-5.4/gpt-5.5

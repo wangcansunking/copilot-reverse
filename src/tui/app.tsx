@@ -6,7 +6,7 @@ import { SetupWizard, type SetupClient } from "./setup/wizard.js";
 import { ModelScreen } from "./screens/model.js";
 import { ConfigScreen, type ConfigInfo } from "./screens/config.js";
 import { WebIqKeyScreen } from "./screens/webiq-key.js";
-import { summarizeStatus, type StatusSummary, type GithubLoginState } from "./status-summary.js";
+import { summarizeStatus, githubLoginState, type StatusSummary, type GithubLoginState } from "./status-summary.js";
 import type { Scope, ApplyResult } from "./setup/apply.js";
 import type { ClientStatus } from "./setup/status.js";
 import { theme } from "./theme.js";
@@ -145,6 +145,8 @@ export function App({
   const [state, setState] = useState<WorkerState>(workerState);
   const [status, setStatus] = useState<ClientStatus>(() => readStatus?.() ?? EMPTY_STATUS);
   const [webBackend, setWebBackend] = useState<WebSearchBackend>(() => webSearchBackend?.() ?? "unavailable");
+  // GitHub login state, kept fresh by the supervisor heartbeat surfaced through the 2s status poll.
+  const [github, setGithub] = useState<GithubLoginState | undefined>(startupStatus?.github);
   const [model, setModel] = useState(initialModel);
   const [screen, setScreen] = useState<Screen>(pickModelOnStart && loadModels ? { kind: "model" } : null);
   const [, setNow] = useState(0); // ticks the live loading line while the assistant streams
@@ -160,7 +162,13 @@ export function App({
     if (!statusSource && !readStatus) return;
     let alive = true;
     const tick = async () => {
-      try { const s = await statusSource?.(); if (alive && s) setState(s.workerState); } catch { /* daemon momentarily down */ }
+      try {
+        const s = await statusSource?.();
+        if (alive && s) {
+          setState(s.workerState);
+          if (s.github) setGithub(githubLoginState(s.github.hasToken, s.github.ok)); // live login badge
+        }
+      } catch { /* daemon momentarily down */ }
       if (alive) refreshStatus(); // HUD reflects the real config files, even if edited externally
     };
     void tick();
@@ -196,14 +204,16 @@ export function App({
     if (t === "/webiq" && enableWebiq) { setScreen({ kind: "webiq-key" }); return; }
     if (t === "/status" && (startupStatus || githubStatus || webSearchBackend)) {
       // Render the live status overview (same card as startup), then the worker restart history.
-      const github = githubStatus ? await githubStatus() : (startupStatus?.github ?? "signed-out");
+      // /status is an explicit "is my login OK right now?" — do the live check when wired (the cached
+      // heartbeat can be up to ~60s stale), falling back to the cached/seed value only if it isn't.
+      const ghState = githubStatus ? await githubStatus() : (github ?? startupStatus?.github ?? "signed-out");
       let worker = state, restarts: string[] = [];
       try {
         const s = await statusSource?.();
         if (s) { worker = s.workerState; restarts = s.restarts.slice(0, 5).map((r) => `  ${r.reason} exit=${r.exitCode ?? "-"} ${r.stderrTail.slice(0, 60)}`); }
       } catch { /* daemon momentarily down — show what we have */ }
       const summary = summarizeStatus({
-        hasToken: github !== "signed-out", tokenValid: github === "connected",
+        hasToken: ghState !== "signed-out", tokenValid: ghState === "connected",
         webSearch: webSearchBackend?.() ?? webBackend, worker,
         clients: { claude: status.claude.user || status.claude.project, codex: status.codex.user || status.codex.project },
       });
@@ -338,12 +348,12 @@ export function App({
 
       <Box flexDirection="column" paddingX={1}>
         <Box>
-          <Text color={theme.muted}>model </Text><Text color={theme.accent}>{model}</Text>
-          <Text color={theme.muted}>  ·  daemon </Text><Text color={stateColor[state]}>{state}</Text>
-          <Text color={theme.muted}>  ·  web </Text><Text color={webBackend === "unavailable" ? theme.muted : theme.ready}>{webBackend === "webiq" ? "✓ webiq" : webBackend === "copilot" ? "✓ copilot" : "✗ /webiq"}</Text>
+          {github && <><Text color={theme.muted}>github </Text><Text color={github === "connected" ? theme.ready : theme.error}>{github === "connected" ? "✓" : "✗ /login"}</Text></>}
+          <Text color={theme.muted}>{github ? "  ·  " : ""}daemon </Text><Text color={stateColor[state]}>{state}</Text>
         </Box>
         <Box>
-          <ClientBadge name="claude" status={status.claude} />
+          <Text color={theme.muted}>web </Text><Text color={webBackend === "unavailable" ? theme.muted : theme.ready}>{webBackend === "webiq" ? "✓ webiq" : webBackend === "copilot" ? "✓ copilot" : "✗ /webiq"}</Text>
+          <Text color={theme.muted}>  ·  </Text><ClientBadge name="claude" status={status.claude} />
           <Text color={theme.muted}>  </Text><ClientBadge name="codex" status={status.codex} />
           <Text color={theme.muted}>  ·  /help</Text>
         </Box>
