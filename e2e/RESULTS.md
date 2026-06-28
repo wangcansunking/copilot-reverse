@@ -3,6 +3,19 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-28 (GitHub-token heartbeat)** — Added a supervisor-side heartbeat that periodically (every
+  60s, plus once ~2s after boot) checks whether the stored GitHub token still exchanges for a Copilot
+  token, and surfaces the result via a new optional `github` field on `/api/status`. The TUI's existing
+  2s status poll drives a live footer badge (`github ✓` / `✗ /login`), so an expired/revoked login
+  shows within ~60s instead of only on the next failed request or a manual `/status`. Key design: a
+  classifying `probeGithubAuth` distinguishes a definitive 401/403 (→ expired) from a transient
+  timeout/5xx/network error (→ keep last-known-good), so a single GitHub hiccup never flips the badge;
+  `nextGithubStatus` is a pure, sticky reducer. `signed-out` (no token) stays distinct from `expired`.
+  New files: `src/supervisor/github-heartbeat.ts`, `tests/supervisor/github-heartbeat.test.ts`.
+  Verified in-process against the real token: connected/signed-out/expired/sticky-on-transient all
+  correct. Full suite green: `npm test` → **377 passed** (56 files), `npm run test:e2e` → **31 passed**
+  (4 files), tsc build clean.
+
 - **2026-06-26 (default to WebIQ; disable slow borrow)** — gpt-5-mini (the Claude "borrow" backend
   model) is badly congested on Copilot's `/responses`: repeated `503 "high demand"` and 20s–7min
   stalls measured live (one user search ran 437s). Same native search on gpt-5.4-mini/gpt-5.4/gpt-5.5

@@ -39,7 +39,7 @@ const failing: ProviderAdapter = {
 function wired(provider: ProviderAdapter) {
   const db = openDb(":memory:");
   const worker = createWorkerApp(new Router([provider], { "*": "gpt-4o" }), (m) => recordRequest(db, { ts: Date.now(), ...m }));
-  const control = createControlApp({ db, getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [{ name: "worker", ok: true, detail: "ready" }], subscribe: () => () => {} });
+  const control = createControlApp({ db, getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [{ name: "worker", ok: true, detail: "ready" }], github: () => undefined, subscribe: () => () => {} });
   return { worker, control, db };
 }
 

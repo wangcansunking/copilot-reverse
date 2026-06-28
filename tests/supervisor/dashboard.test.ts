@@ -17,6 +17,7 @@ describe("dashboard", () => {
     const app = createControlApp({
       db: openDb(":memory:"), getState: () => "ready",
       restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [],
+      github: () => undefined,
       subscribe: () => () => {},
     });
     const res = await request(app).get("/");

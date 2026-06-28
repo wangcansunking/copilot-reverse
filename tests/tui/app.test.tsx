@@ -64,4 +64,33 @@ describe("App", () => {
     expect(frame).toContain("ran-claude");
     expect(frame).not.toContain("unknown command");
   });
+
+  it("reflects the heartbeat github state in the footer (expired → ✗ /login)", async () => {
+    const statusSource = async () => ({ workerState: "ready" as const, restarts: [], github: { ok: false, hasToken: true, checkedAt: 1, detail: "expired" } });
+    const { lastFrame } = render(<App registry={reg()} title="m" statusSource={statusSource} />);
+    await new Promise((r) => setTimeout(r, 60)); // let the immediate poll tick land
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/github.*✗ \/login/);
+  });
+
+  it("footer shows github ✓ when the heartbeat reports connected", async () => {
+    const statusSource = async () => ({ workerState: "ready" as const, restarts: [], github: { ok: true, hasToken: true, checkedAt: 1, detail: "token valid" } });
+    const { lastFrame } = render(<App registry={reg()} title="m" statusSource={statusSource} />);
+    await new Promise((r) => setTimeout(r, 60));
+    expect(lastFrame() ?? "").toMatch(/github.*✓/);
+  });
+
+  it("/status uses the cached heartbeat value and does NOT make a redundant githubStatus call", async () => {
+    const githubStatus = vi.fn(async () => "connected" as const);
+    const statusSource = async () => ({ workerState: "ready" as const, restarts: [], github: { ok: false, hasToken: true, checkedAt: 1, detail: "expired" } });
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" statusSource={statusSource} githubStatus={githubStatus} startupStatus={{ github: "connected", webSearch: "webiq", worker: "ready", clients: { claude: false, codex: false } } as any} />);
+    await new Promise((r) => setTimeout(r, 60)); // poll populates the cached 'expired' state
+    stdin.write("/status");
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\r");
+    await new Promise((r) => setTimeout(r, 80));
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/expired/i);       // card reflects the cached heartbeat value, not startup's "connected"
+    expect(githubStatus).not.toHaveBeenCalled(); // cached → no redundant network check
+  });
 });

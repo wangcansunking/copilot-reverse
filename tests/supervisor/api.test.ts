@@ -16,6 +16,7 @@ function fixture() {
     stop: () => calls.push("stop"),
     start: () => calls.push("start"),
     doctor: async () => [{ name: "copilot-auth", ok: true, detail: "token present" }],
+    github: () => undefined,
     subscribe: () => () => {},
   });
   return { app, calls };
@@ -26,6 +27,19 @@ describe("control api", () => {
     const res = await request(fixture().app).get("/api/status");
     expect(res.body.workerState).toBe("ready");
     expect(res.body.restarts[0].stderrTail).toBe("boom");
+  });
+  it("status includes the github heartbeat when it has a result", async () => {
+    const db = openDb(":memory:");
+    const app = createControlApp({
+      db, getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {},
+      doctor: async () => [], github: () => ({ ok: false, hasToken: true, checkedAt: 5, detail: "GitHub login expired" }), subscribe: () => () => {},
+    });
+    const res = await request(app).get("/api/status");
+    expect(res.body.github).toEqual({ ok: false, hasToken: true, checkedAt: 5, detail: "GitHub login expired" });
+  });
+  it("status omits github before the first probe (undefined)", async () => {
+    const res = await request(fixture().app).get("/api/status"); // fixture's github() returns undefined
+    expect(res.body.github).toBeUndefined();
   });
   it("restart action", async () => {
     const fx = fixture();
@@ -69,7 +83,7 @@ describe("control api /api/events (SSE)", () => {
   it("streams an initial hello then live bus events to a connected client", async () => {
     const bus = new EventBus();
     await withServer(
-      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], subscribe: (send) => bus.subscribe(send) },
+      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], github: () => undefined, subscribe: (send) => bus.subscribe(send) },
       async (base) => {
         const ctrl = new AbortController();
         const res = await fetch(`${base}/api/events`, { signal: ctrl.signal });
@@ -94,7 +108,7 @@ describe("control api /api/events (SSE)", () => {
   it("unsubscribes the listener when the client disconnects", async () => {
     const bus = new EventBus();
     await withServer(
-      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], subscribe: (send) => bus.subscribe(send) },
+      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], github: () => undefined, subscribe: (send) => bus.subscribe(send) },
       async (base) => {
         const ctrl = new AbortController();
         const res = await fetch(`${base}/api/events`, { signal: ctrl.signal });
