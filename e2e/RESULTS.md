@@ -3,6 +3,24 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-29 (crash-guard hardening + code-review fixes)** — Guarded the synchronous throw sites
+  that could kill the single-process TUI+supervisor app (a dead-socket SSE write inside `EventBus.emit`,
+  a corrupt/locked `creds.json` read on the heartbeat tick), and added a process-level
+  `unhandledRejection`/`uncaughtException` backstop that logs to `~/.copilot-reverse/crash.log` and keeps
+  the TUI alive. A `/code-review` pass surfaced six follow-ups, all fixed: `CopilotTokenStore` now reads
+  its GitHub token through a provider (a transient null can't poison the store for the session — it
+  raises a clean 401 and recovers on the next read, instead of sending `authorization: token null`); the
+  backstop uses a shared, size-capped/rotating crash logger and a 5-in-10s circuit breaker that exits for
+  a clean restart on a storm; the heartbeat's defensive catch now logs instead of swallowing silently;
+  the signed-out gate checks token-file existence (`hasGhTokenFile`) so a transient lock no longer reads
+  as "signed out"; and the SSE route subscribes before the hello frame. Full suite green: `npm test` →
+  **406 passed** (57 files), tsc build clean. Both Docker e2e suites pass against real services with a
+  token (+ WebIQ key) mounted: heartbeat container (`e2e/docker/Dockerfile`) → **all 4 states passed**
+  (connected/signed-out/expired/HTTP, real GitHub 401); real CLI container (`Dockerfile.cli`) →
+  **4/4 passed** (`codex exec → /openai/responses → CODEX_OK`, `claude -p → /anthropic → CLAUDE_OK`,
+  `claude` gateway web search → grounded "1.96.0", no tool leak) — confirming the worker's plain-string
+  `CopilotTokenStore` path still works under the new union-typed constructor.
+
 - **2026-06-28 (real CLI Docker e2e + 2 Codex bugs fixed)** — Added a true black-box e2e: the actual
   `claude` and `codex` CLIs run inside a `node:22` container against the real worker daemon
   (`e2e/docker/Dockerfile.cli` + `cli-e2e.sh`), with a real token (+ WebIQ key) mounted. All three

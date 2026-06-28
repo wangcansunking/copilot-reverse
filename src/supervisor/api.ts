@@ -37,8 +37,11 @@ export function createControlApp(deps: ControlDeps): Express {
       try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
       catch { off(); }
     };
-    send("hello", { state: deps.getState() });
+    // Subscribe BEFORE the first write so that if the hello frame throws (socket already dead), the
+    // catch's off() refers to the real unsubscribe rather than the no-op default — otherwise a dead
+    // connection would stay subscribed until the next emit or 'close'.
     off = deps.subscribe(send);
+    send("hello", { state: deps.getState() });
     req.on("close", off);
   });
   return app;

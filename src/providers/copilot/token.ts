@@ -16,14 +16,25 @@ export class CopilotAuthError extends Error {
 
 export class CopilotTokenStore {
   private cached?: { token: string; expiresAtMs: number };
-  constructor(private ghToken: string, private fetchFn: typeof fetch = fetch, private nowMs: () => number = () => Date.now()) {}
+  private readGhToken: () => string | null;
+  // Accepts either a fixed token string or a provider that is re-read on each exchange. The provider
+  // form matters when the GitHub token can change or be momentarily unreadable: a captured-once null
+  // (e.g. from a transient locked-file read at construction) would otherwise poison the store for its
+  // whole lifetime, sending `authorization: token null` forever. Re-reading recovers on the next call.
+  constructor(ghToken: string | (() => string | null), private fetchFn: typeof fetch = fetch, private nowMs: () => number = () => Date.now()) {
+    this.readGhToken = typeof ghToken === "function" ? ghToken : () => ghToken;
+  }
   async get(): Promise<string> {
     const skewMs = 60_000;
     if (this.cached && this.cached.expiresAtMs - skewMs > this.nowMs()) return this.cached.token;
+    const ghToken = this.readGhToken();
+    // No GitHub token (absent / unreadable on this read) is an auth failure, not a request with a
+    // literal "null" credential — surface it the same way an expired token would be.
+    if (!ghToken) throw new CopilotAuthError(401);
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(), 8000);
     let res: Response;
-    try { res = await this.fetchFn(COPILOT_TOKEN_URL, { headers: { authorization: `token ${this.ghToken}`, accept: "application/json" }, signal: ctrl.signal }); }
+    try { res = await this.fetchFn(COPILOT_TOKEN_URL, { headers: { authorization: `token ${ghToken}`, accept: "application/json" }, signal: ctrl.signal }); }
     finally { clearTimeout(timer); }
     if (!res.ok) throw new CopilotAuthError(res.status);
     const data = (await res.json()) as CopilotTokenResponse;

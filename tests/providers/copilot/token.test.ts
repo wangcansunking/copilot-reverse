@@ -25,6 +25,23 @@ describe("CopilotTokenStore", () => {
     await expect(s.get()).rejects.toBeInstanceOf(CopilotAuthError);
     await expect(s.get()).rejects.toThrow(/login expired/i);
   });
+  it("re-reads a token provider on each exchange (a transient null does not poison the store)", async () => {
+    // Provider returns null first (e.g. creds.json momentarily locked at construction), then a real
+    // token. Pre-fix, a string captured null and sent `token null` forever; now get() re-reads.
+    let token: string | null = null;
+    const f = vi.fn(async () => json({ token: "cop_ok", expires_at: 9_999_999_999 }));
+    const s = new CopilotTokenStore(() => token, f as unknown as typeof fetch);
+    await expect(s.get()).rejects.toBeInstanceOf(CopilotAuthError); // null → 401, no fetch with "null"
+    expect(f).not.toHaveBeenCalled();
+    token = "gho_real";
+    expect(await s.get()).toBe("cop_ok"); // recovered on the next read
+  });
+  it("a null/absent token raises 401 instead of sending `authorization: token null`", async () => {
+    const f = vi.fn(async () => json({ token: "cop", expires_at: 9_999_999_999 }));
+    const s = new CopilotTokenStore(() => null, f as unknown as typeof fetch);
+    await expect(s.get()).rejects.toThrow(/login expired/i);
+    expect(f).not.toHaveBeenCalled(); // never hits the network with a bogus credential
+  });
 });
 
 describe("isCopilotTokenValid", () => {

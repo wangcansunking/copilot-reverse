@@ -19,6 +19,13 @@ export function readGhToken(dir: string): string | null {
     return null;
   }
 }
+// Whether a stored-token file exists at all — distinct from readGhToken, which also returns null when
+// the file is present but momentarily unreadable. The "are you signed out?" gate wants existence (a
+// transient lock on a real login should not read as signed out); the actual token validity is checked
+// separately by exchanging it.
+export function hasGhTokenFile(dir: string): boolean {
+  return existsSync(file(dir));
+}
 // Remove the stored token (logout). No-op if there's nothing to remove.
 export function clearGhToken(dir: string): void {
   rmSync(file(dir), { force: true });

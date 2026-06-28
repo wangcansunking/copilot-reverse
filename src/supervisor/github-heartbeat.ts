@@ -1,5 +1,6 @@
 import { probeGithubAuth, type AuthProbe } from "../providers/copilot/token.js";
 import type { GithubStatus } from "../shared/control-types.js";
+import { appendCrashLog } from "../shared/crash-log.js";
 
 // How often the supervisor re-checks the GitHub token. Token failure is rare (revoke / re-auth) and
 // GitHub rate-limits, so a slow cadence is plenty; an initial short delay populates the status soon
@@ -60,10 +61,13 @@ export class GithubHeartbeat {
       const probe = token ? await this.probe(token) : null;
       if (this.stopped) return; // a late result after stop() must not resurrect the timer/state
       this.status = nextGithubStatus(this.status, Boolean(token), probe, this.now());
-    } catch {
+    } catch (e) {
       // Defense in depth: readToken()/probe() are not expected to throw (readGhToken returns null on a
       // bad read, probeGithubAuth never throws), but the timer fires this as `void runOnce()` — an
-      // unhandled rejection here would kill the in-process supervisor + TUI. Keep the last-known status.
+      // unhandled rejection here would kill the in-process supervisor + TUI. Keep the last-known status,
+      // but log it: a throw here means a real (unexpected) defect, and swallowing it silently would
+      // freeze the badge with no trace.
+      appendCrashLog("github-heartbeat", e);
     } finally {
       this.inFlight = false;
     }
