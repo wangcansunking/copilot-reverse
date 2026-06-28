@@ -93,4 +93,23 @@ describe("GithubHeartbeat", () => {
       vi.useRealTimers();
     }
   });
+
+  it("start() is idempotent — a second start() without stop() does not leak a second timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const probe = vi.fn(async () => ok);
+      const hb = new GithubHeartbeat(() => "gho", probe, () => 1, { intervalMs: 500, initialDelayMs: 100 });
+      hb.start();
+      hb.start(); // second call must be a no-op, not a leaked parallel timer
+      await vi.advanceTimersByTimeAsync(100);
+      expect(probe).toHaveBeenCalledTimes(1); // one probe, not two
+      await vi.advanceTimersByTimeAsync(500);
+      expect(probe).toHaveBeenCalledTimes(2); // single cadence, not doubled
+      hb.stop();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(probe).toHaveBeenCalledTimes(2); // stop() halts the single timer
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

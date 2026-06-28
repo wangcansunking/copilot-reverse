@@ -80,17 +80,19 @@ describe("App", () => {
     expect(lastFrame() ?? "").toMatch(/github.*✓/);
   });
 
-  it("/status uses the cached heartbeat value and does NOT make a redundant githubStatus call", async () => {
-    const githubStatus = vi.fn(async () => "connected" as const);
-    const statusSource = async () => ({ workerState: "ready" as const, restarts: [], github: { ok: false, hasToken: true, checkedAt: 1, detail: "expired" } });
+  it("/status does a live githubStatus() check rather than trusting the cached heartbeat (which can be stale)", async () => {
+    // Live check says "expired" (token just revoked); the cached heartbeat still reads "connected".
+    // /status must reflect the fresh live result, not the up-to-60s-stale cache.
+    const githubStatus = vi.fn(async () => "expired" as const);
+    const statusSource = async () => ({ workerState: "ready" as const, restarts: [], github: { ok: true, hasToken: true, checkedAt: 1, detail: "token valid" } });
     const { stdin, lastFrame } = render(<App registry={reg()} title="m" statusSource={statusSource} githubStatus={githubStatus} startupStatus={{ github: "connected", webSearch: "webiq", worker: "ready", clients: { claude: false, codex: false } } as any} />);
-    await new Promise((r) => setTimeout(r, 60)); // poll populates the cached 'expired' state
+    await new Promise((r) => setTimeout(r, 60)); // poll populates the cached 'connected' state
     stdin.write("/status");
     await new Promise((r) => setTimeout(r, 20));
     stdin.write("\r");
     await new Promise((r) => setTimeout(r, 80));
     const f = lastFrame() ?? "";
-    expect(f).toMatch(/expired/i);       // card reflects the cached heartbeat value, not startup's "connected"
-    expect(githubStatus).not.toHaveBeenCalled(); // cached → no redundant network check
+    expect(githubStatus).toHaveBeenCalled();  // /status is authoritative: it runs the live check
+    expect(f).toMatch(/expired/i);            // and reflects the live result, not the stale cache
   });
 });

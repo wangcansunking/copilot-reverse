@@ -9,7 +9,7 @@ import { defaultConfig } from "../shared/config.js";
 import { dataDir, dbPath } from "../shared/paths.js";
 import { readGhToken } from "../shared/creds.js";
 import { probeGithubAuth } from "../providers/copilot/token.js";
-import { GithubHeartbeat } from "./github-heartbeat.js";
+import { GithubHeartbeat, SIGNED_OUT_DETAIL } from "./github-heartbeat.js";
 import type { WorkerState, DoctorCheck } from "../shared/control-types.js";
 
 export function startSupervisor(): { stop: () => void } {
@@ -39,7 +39,7 @@ export function startSupervisor(): { stop: () => void } {
     const gh = readGhToken(dataDir());
     let auth: DoctorCheck;
     if (!gh) {
-      auth = { name: "github-auth", ok: false, detail: "not logged in — restart copilot-reverse to log in" };
+      auth = { name: "github-auth", ok: false, detail: SIGNED_OUT_DETAIL };
     } else {
       // Validate the token actually exchanges, not just that it exists on disk. Shares the heartbeat's
       // classifier so on-demand /doctor and the periodic probe agree.

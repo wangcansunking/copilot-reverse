@@ -7,16 +7,22 @@ import type { GithubStatus } from "../shared/control-types.js";
 export const GITHUB_HEARTBEAT_INTERVAL_MS = 60_000;
 export const GITHUB_HEARTBEAT_INITIAL_DELAY_MS = 2_000;
 
+// Shared so /doctor and the heartbeat show the same remediation hint for the signed-out state.
+export const SIGNED_OUT_DETAIL = "not logged in — run /login";
+
 // Pure reducer: given the prior cached status, whether a token is on disk, and the latest probe
-// result, decide the next cached status. Sticky on transient errors so a single hiccup never flips a
-// connected session to "expired".
+// result, decide the next cached status. Transient errors are sticky — they keep the prior status —
+// so a brief blip doesn't flip a connected session to "expired". Caveat (see probeGithubAuth): the
+// stickiness is unbounded, and if the FIRST probe is transient (prev still undefined) the status stays
+// undefined / "pending", so /api/status omits `github` and the HUD shows no badge until a non-transient
+// result lands.
 export function nextGithubStatus(
   prev: GithubStatus | undefined,
   hasToken: boolean,
   probe: AuthProbe | null,
   now: number,
 ): GithubStatus | undefined {
-  if (!hasToken) return { ok: false, hasToken: false, checkedAt: now, detail: "not logged in — run /login" };
+  if (!hasToken) return { ok: false, hasToken: false, checkedAt: now, detail: SIGNED_OUT_DETAIL };
   if (probe && probe.transient) return prev; // keep last-known-good (or stay pending if none yet)
   if (!probe) return prev;
   return { ok: probe.ok, hasToken: true, checkedAt: now, detail: probe.detail };
@@ -60,6 +66,7 @@ export class GithubHeartbeat {
   }
 
   start(): void {
+    if (this.timer) return; // idempotent: don't leak a second timer if start() is called twice
     this.stopped = false;
     const tick = () => { void this.runOnce(); };
     this.timer = setTimeout(() => {

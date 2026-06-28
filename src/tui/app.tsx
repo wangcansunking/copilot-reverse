@@ -204,8 +204,9 @@ export function App({
     if (t === "/webiq" && enableWebiq) { setScreen({ kind: "webiq-key" }); return; }
     if (t === "/status" && (startupStatus || githubStatus || webSearchBackend)) {
       // Render the live status overview (same card as startup), then the worker restart history.
-      // Prefer the heartbeat value the poll already cached; only fall back to a live check if absent.
-      const ghState = github ?? (githubStatus ? await githubStatus() : (startupStatus?.github ?? "signed-out"));
+      // /status is an explicit "is my login OK right now?" — do the live check when wired (the cached
+      // heartbeat can be up to ~60s stale), falling back to the cached/seed value only if it isn't.
+      const ghState = githubStatus ? await githubStatus() : (github ?? startupStatus?.github ?? "signed-out");
       let worker = state, restarts: string[] = [];
       try {
         const s = await statusSource?.();

@@ -32,16 +32,21 @@ export class CopilotTokenStore {
   }
 }
 
-// True if the stored GitHub token still exchanges for a Copilot token.
+// True if the stored GitHub token still exchanges for a Copilot token. A thin wrapper over
+// probeGithubAuth so the token-exchange logic lives in exactly one place.
 export async function isCopilotTokenValid(ghToken: string, fetchFn: typeof fetch = fetch): Promise<boolean> {
-  try { await new CopilotTokenStore(ghToken, fetchFn).get(); return true; }
-  catch { return false; }
+  return (await probeGithubAuth(ghToken, fetchFn)).ok;
 }
 
 // A classified auth check for the heartbeat. Unlike isCopilotTokenValid (a bare boolean), this
-// distinguishes a DEFINITIVE auth failure (401/403 — the login was revoked/expired) from a TRANSIENT
-// one (timeout / 5xx / network blip). The heartbeat keeps the last-known-good status on transient
-// errors so a single GitHub rate-limit or hiccup never flips the UI to "expired".
+// distinguishes a DEFINITIVE auth failure (401/403) from a TRANSIENT one (timeout / 5xx / network /
+// other). The heartbeat keeps the last-known-good status on transient errors, so a brief blip doesn't
+// flip the UI to "expired". Known limitations of this code:
+//   - The stickiness is UNBOUNDED: a SUSTAINED transient fault (a long GitHub outage, DNS down, a
+//     persistently malformed body) also never surfaces — a connected badge stays green the whole time.
+//     Only 401/403 ever flips the UI to "expired".
+//   - 403 is treated as definitive here, but GitHub also returns 403 for some rate-limits; a rate-
+//     limited 403 would therefore (incorrectly) read as "expired". (429 is correctly transient.)
 export interface AuthProbe { ok: boolean; transient: boolean; detail: string }
 export async function probeGithubAuth(ghToken: string, fetchFn: typeof fetch = fetch): Promise<AuthProbe> {
   try {
@@ -49,7 +54,8 @@ export async function probeGithubAuth(ghToken: string, fetchFn: typeof fetch = f
     return { ok: true, transient: false, detail: "token valid" };
   } catch (e) {
     // CopilotTokenStore throws CopilotAuthError(status) for any non-ok response, and other errors
-    // (AbortError on timeout, network failures) for the rest. Only 401/403 is a real auth failure.
+    // (AbortError on timeout, network failures) for the rest. We treat 401/403 as definitive auth
+    // failures; everything else is transient. See the limitations noted above.
     if (e instanceof CopilotAuthError && (e.status === 401 || e.status === 403)) {
       return { ok: false, transient: false, detail: e.message };
     }
