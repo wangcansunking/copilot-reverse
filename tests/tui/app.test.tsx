@@ -70,14 +70,14 @@ describe("App", () => {
     const { lastFrame } = render(<App registry={reg()} title="m" statusSource={statusSource} />);
     await new Promise((r) => setTimeout(r, 60)); // let the immediate poll tick land
     const f = lastFrame() ?? "";
-    expect(f).toMatch(/登录.*✗ \/login/);
+    expect(f).toMatch(/github.*✗ \/login/);
   });
 
-  it("footer shows 登录 ✓ when the heartbeat reports connected", async () => {
+  it("footer shows github ✓ when the heartbeat reports connected", async () => {
     const statusSource = async () => ({ workerState: "ready" as const, restarts: [], github: { ok: true, hasToken: true, checkedAt: 1, detail: "token valid" } });
     const { lastFrame } = render(<App registry={reg()} title="m" statusSource={statusSource} />);
     await new Promise((r) => setTimeout(r, 60));
-    expect(lastFrame() ?? "").toMatch(/登录.*✓/);
+    expect(lastFrame() ?? "").toMatch(/github.*✓/);
   });
 
   it("/status uses the cached heartbeat value and does NOT make a redundant githubStatus call", async () => {
