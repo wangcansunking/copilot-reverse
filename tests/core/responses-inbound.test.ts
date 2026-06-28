@@ -38,6 +38,37 @@ describe("responsesRequestToCanonical", () => {
     // translator can forward it to Copilot (which runs it server-side), instead of dropping it.
     expect(c.hostedTools).toEqual(["web_search"]);
   });
+
+  it("handles Codex's real tool mix without producing a nameless hosted tool (regression)", () => {
+    // Codex sends function tools, a `custom` tool (apply_patch — HAS a name), and nameless hosted
+    // tools (tool_search, web_search). Forwarding `custom` as a bare {type:"custom"} made Copilot
+    // reject the whole request with 400 "Missing required parameter: tools[N].name", which surfaced
+    // to the codex CLI as "stream closed before response.completed".
+    const c = responsesRequestToCanonical({
+      model: "gpt-5.5", stream: true, input: "hi",
+      tools: [
+        { type: "function", name: "exec_command", parameters: { type: "object", properties: {} } },
+        { type: "custom", name: "apply_patch", description: "patch" },
+        { type: "tool_search" },
+        { type: "web_search" },
+      ] as any,
+    });
+    // custom tools carry a name → treated as function tools (kept, with their name)
+    expect(c.tools?.map((t) => t.name).sort()).toEqual(["apply_patch", "exec_command"]);
+    // only web_search passes through; tool_search is NOT forwarded (Copilot 400s it without a
+    // deferred tool), and a nameless `custom` is never forwarded.
+    expect(c.hostedTools).toEqual(["web_search"]);
+    expect(c.hostedTools).not.toContain("custom");
+    expect(c.hostedTools).not.toContain("tool_search");
+  });
+
+  it("drops an unrecognized nameless tool rather than forwarding a malformed one", () => {
+    const c = responsesRequestToCanonical({
+      model: "gpt-5", stream: false, input: "hi",
+      tools: [{ type: "some_future_hosted_tool" }] as any, // no name, not on the allowlist
+    });
+    expect(c.hostedTools ?? []).toEqual([]); // dropped, not forwarded as {type} with no name
+  });
 });
 
 describe("canonicalToResponsesResponse", () => {
@@ -78,6 +109,19 @@ describe("ResponsesSSE emitter", () => {
     // sequence_number is present and strictly increasing
     const seqs = events.map((e) => e.sequence_number);
     expect(seqs.every((n, i) => i === 0 || n > seqs[i - 1])).toBe(true);
+  });
+
+  it("carries the accumulated text in the terminal done events (so codex can reconstruct the message)", () => {
+    // Regression: the done events used to send empty text, so the codex CLI completed the turn but
+    // rendered NO assistant text (it reconstructs the final message from output_text.done /
+    // content_part.done / output_item.done, not just the deltas).
+    const sse = new ResponsesSSE("resp_x", "gpt-5");
+    const out = [sse.start(), ...sse.text("Hel"), ...sse.text("lo"), ...sse.finish({ promptTokens: 1, completionTokens: 1 }, "stop")];
+    const events = out.join("").split("\n\n").filter(Boolean).map((b) => JSON.parse(b.replace(/^data: /, "")));
+    const byType = (t: string) => events.find((e) => e.type === t);
+    expect(byType("response.output_text.done").text).toBe("Hello");
+    expect(byType("response.content_part.done").part.text).toBe("Hello");
+    expect(byType("response.output_item.done").item.content[0]).toMatchObject({ type: "output_text", text: "Hello" });
   });
 
   it("emits function_call argument events for a tool call", () => {
