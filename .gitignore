@@ -5,3 +5,11 @@ coverage
 .vitest
 .playwright-mcp
 .claude
+
+# Never commit credentials or e2e run artifacts (the real token/WebIQ key are mounted at runtime).
+creds.json
+webiq.json
+.copilot-reverse/
+*.report.md
+e2e/docker/out/
+report.md

@@ -1,0 +1,61 @@
+# Real CLI end-to-end test image.
+#
+# Runs the ACTUAL copilot-reverse worker daemon plus the REAL `claude` (Claude Code) and `codex`
+# CLIs inside one Linux container. The CLIs are pointed at the local daemon (:7891) and driven with
+# real prompts, so this is a true black-box e2e: real Copilot calls flow CLI -> daemon -> Copilot.
+#
+# node:22 (not 20) because @openai/codex requires Node >=22. better-sqlite3 compiles here.
+#
+# Build:  docker build -f e2e/docker/Dockerfile.cli -t copilot-reverse-cli-e2e .
+# Run:    docker run --rm \
+#           -v "$HOME/.copilot-reverse/creds.json:/root/.copilot-reverse/creds.json:ro" \
+#           copilot-reverse-cli-e2e
+# (Windows Git Bash: MSYS_NO_PATHCONV=1 + a C:/Users/... path — see e2e/docker/README.md.)
+
+FROM node:22
+
+# jq for asserting on claude --output-format json; curl for the readiness probe.
+RUN apt-get update && apt-get install -y --no-install-recommends jq curl && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Build copilot-reverse (deps layer cached unless the lockfile changes; better-sqlite3 compiles).
+COPY package.json package-lock.json ./
+RUN npm ci
+COPY tsconfig.json ./
+COPY scripts ./scripts
+COPY src ./src
+RUN npm run build
+
+# Install the real CLIs we drive against the daemon.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex
+
+# Headless config for both CLIs (no vendor login — they talk only to the local daemon).
+ENV DISABLE_AUTOUPDATER=1 \
+    DISABLE_TELEMETRY=1 \
+    DISABLE_ERROR_REPORTING=1 \
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 \
+    ANTHROPIC_BASE_URL=http://127.0.0.1:7891/anthropic \
+    ANTHROPIC_API_KEY=copilot-reverse-local \
+    ANTHROPIC_MODEL=gpt-4o
+
+# Seed Claude Code's onboarding state so `claude -p` doesn't prompt on first run.
+RUN echo '{"hasCompletedOnboarding":true,"installMethod":"unknown","autoUpdates":false}' > /root/.claude.json
+
+# Codex points at the daemon's Responses API (mirrors what the TUI's setup-codex writes).
+RUN mkdir -p /root/.codex && printf '%s\n' \
+  'model = "gpt-5.5"' \
+  'model_provider = "copilot-reverse"' \
+  '' \
+  '[model_providers.copilot-reverse]' \
+  'name = "copilot-reverse"' \
+  'base_url = "http://127.0.0.1:7891/openai"' \
+  'wire_api = "responses"' \
+  'requires_openai_auth = false' \
+  'experimental_bearer_token = "copilot-reverse-local"' \
+  > /root/.codex/config.toml
+
+COPY e2e/docker/cli-e2e.sh ./e2e/docker/cli-e2e.sh
+RUN chmod +x ./e2e/docker/cli-e2e.sh
+
+ENTRYPOINT ["./e2e/docker/cli-e2e.sh"]

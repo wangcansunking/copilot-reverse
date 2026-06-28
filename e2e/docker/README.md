@@ -45,3 +45,56 @@ dir (`/tmp/cr-e2e`) so the signed-out / expired cases can rewrite creds without 
 Override the source path with `-e TOKEN_FILE=/some/path`.
 
 Exit code `0` = all asserted states observed; non-zero = a failure (the failing check is printed).
+
+---
+
+# Real CLI e2e — claude + codex against the daemon
+
+A true black-box end-to-end: the **actual `claude` (Claude Code) and `codex` CLIs** run inside the
+container against the **real copilot-reverse worker daemon**, driven with real prompts, making real
+Copilot (and WebIQ) calls. This is the only test that exercises the proxy exactly as the real clients
+do — and it has already caught two bugs that curl and unit tests could not (a Codex tool-translation
+400, and empty terminal Responses events that left Codex with no text). See
+[`Dockerfile.cli`](Dockerfile.cli) + [`cli-e2e.sh`](cli-e2e.sh).
+
+Uses `node:22` (Codex requires Node ≥22). Installs `@anthropic-ai/claude-code` + `@openai/codex`,
+points Claude at `…/anthropic` (env) and Codex at `…/openai` (`~/.codex/config.toml`,
+`wire_api="responses"`), boots `node dist/worker/index.js`, then asserts:
+
+| check | path exercised | passes when |
+|-------|----------------|-------------|
+| `codex exec` | `/openai/responses` (real Codex CLI) | model returns `CODEX_OK` |
+| `claude -p` | `/anthropic/v1/messages` (real Claude Code CLI) | model returns `CLAUDE_OK` |
+| `claude` web search | gateway `web_search` loop → WebIQ | grounded answer (a Rust `1.x` version), no error |
+
+The web-search check is skipped unless a WebIQ key is also mounted.
+
+**No secrets are baked into the image** — the only key in any file is the placeholder
+`copilot-reverse-local`. The real GitHub token and WebIQ key are mounted at runtime via `-v`.
+
+```bash
+docker build -f e2e/docker/Dockerfile.cli -t copilot-reverse-cli-e2e .
+
+# Windows (Git Bash): MSYS_NO_PATHCONV=1 + native C:/ paths.
+MSYS_NO_PATHCONV=1 docker run --rm \
+  -v "C:/Users/<you>/.copilot-reverse/creds.json:/root/.copilot-reverse/creds.json:ro" \
+  -v "C:/Users/<you>/.copilot-reverse/webiq.json:/root/.copilot-reverse/webiq.json:ro" \
+  -v "C:/some/host/dir:/out" \
+  copilot-reverse-cli-e2e
+
+# Linux/macOS:
+docker run --rm \
+  -v "$HOME/.copilot-reverse/creds.json:/root/.copilot-reverse/creds.json:ro" \
+  -v "$HOME/.copilot-reverse/webiq.json:/root/.copilot-reverse/webiq.json:ro" \
+  -v "$PWD/out:/out" \
+  copilot-reverse-cli-e2e
+```
+
+## Report
+
+After every run the driver writes a markdown report to **`/out/report.md`** (mount `-v <hostdir>:/out`
+to capture it on the host; also always at `/tmp/cli-e2e-report.md` inside the container). It records
+the result, the component versions (copilot-reverse / codex / claude), and each check's status +
+the real CLI reply. The report contains only CLI output (e.g. `CODEX_OK`, a version number) — never a
+token. Report files are gitignored.
+
