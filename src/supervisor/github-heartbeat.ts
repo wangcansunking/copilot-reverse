@@ -29,12 +29,18 @@ export class GithubHeartbeat {
   private timer: ReturnType<typeof setTimeout> | undefined;
   private stopped = false;
   private inFlight = false;
+  private intervalMs: number;
+  private initialDelayMs: number;
 
   constructor(
     private readToken: () => string | null,
     private probe: (ghToken: string) => Promise<AuthProbe> = probeGithubAuth,
     private now: () => number = () => Date.now(),
-  ) {}
+    opts: { intervalMs?: number; initialDelayMs?: number } = {},
+  ) {
+    this.intervalMs = opts.intervalMs ?? GITHUB_HEARTBEAT_INTERVAL_MS;
+    this.initialDelayMs = opts.initialDelayMs ?? GITHUB_HEARTBEAT_INITIAL_DELAY_MS;
+  }
 
   current(): GithubStatus | undefined { return this.status; }
 
@@ -58,8 +64,8 @@ export class GithubHeartbeat {
     const tick = () => { void this.runOnce(); };
     this.timer = setTimeout(() => {
       tick();
-      this.timer = setInterval(tick, GITHUB_HEARTBEAT_INTERVAL_MS);
-    }, GITHUB_HEARTBEAT_INITIAL_DELAY_MS);
+      this.timer = setInterval(tick, this.intervalMs);
+    }, this.initialDelayMs);
   }
 
   stop(): void {

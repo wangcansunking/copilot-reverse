@@ -12,9 +12,12 @@ and update this file (paste the summary).
   timeout/5xx/network error (→ keep last-known-good), so a single GitHub hiccup never flips the badge;
   `nextGithubStatus` is a pure, sticky reducer. `signed-out` (no token) stays distinct from `expired`.
   New files: `src/supervisor/github-heartbeat.ts`, `tests/supervisor/github-heartbeat.test.ts`.
-  Verified in-process against the real token: connected/signed-out/expired/sticky-on-transient all
-  correct. Full suite green: `npm test` → **377 passed** (56 files), `npm run test:e2e` → **31 passed**
-  (4 files), tsc build clean.
+  **Real Linux container e2e** (`e2e/docker/`): a Docker image boots the real control API + a real
+  `GithubHeartbeat.start()`, listens on a real port, and drives it over real HTTP (`GET /api/status`)
+  against the real GitHub API — all four states pass, including `connected` (real token → real Copilot
+  token exchange, mounted read-only) and `expired` (bad token → a real GitHub 401). Only the probe
+  interval is shortened (now injectable) for the test. Full suite green: `npm test` → **378 passed**
+  (56 files), `npm run test:e2e` → **31 passed** (4 files), container e2e → **all passed**, tsc build clean.
 
 - **2026-06-26 (default to WebIQ; disable slow borrow)** — gpt-5-mini (the Claude "borrow" backend
   model) is badly congested on Copilot's `/responses`: repeated `503 "high demand"` and 20s–7min

@@ -1,0 +1,9 @@
+# Keep the build context small and avoid copying host-built artifacts into the Linux image.
+# better-sqlite3 in particular is a native module — the host's (Windows) build must NOT leak in;
+# the image recompiles it via `npm ci`.
+node_modules
+dist
+.git
+.claude
+coverage
+*.log

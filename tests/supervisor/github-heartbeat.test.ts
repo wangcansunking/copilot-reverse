@@ -77,4 +77,20 @@ describe("GithubHeartbeat", () => {
       vi.useRealTimers();
     }
   });
+
+  it("honors a custom interval/initial-delay (used by the container e2e for a fast cadence)", async () => {
+    vi.useFakeTimers();
+    try {
+      const probe = vi.fn(async () => ok);
+      const hb = new GithubHeartbeat(() => "gho", probe, () => 1, { intervalMs: 500, initialDelayMs: 100 });
+      hb.start();
+      await vi.advanceTimersByTimeAsync(100);
+      expect(probe).toHaveBeenCalledTimes(1);
+      await vi.advanceTimersByTimeAsync(500);
+      expect(probe).toHaveBeenCalledTimes(2);
+      hb.stop();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
