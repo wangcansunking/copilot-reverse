@@ -348,9 +348,9 @@ export function App({
       <Box flexDirection="column" paddingX={1}>
         <Box>
           <Text color={theme.muted}>model </Text><Text color={theme.accent}>{model}</Text>
+          {github && <><Text color={theme.muted}>  ·  登录 </Text><Text color={github === "connected" ? theme.ready : theme.error}>{github === "connected" ? "✓" : "✗ /login"}</Text></>}
           <Text color={theme.muted}>  ·  daemon </Text><Text color={stateColor[state]}>{state}</Text>
           <Text color={theme.muted}>  ·  web </Text><Text color={webBackend === "unavailable" ? theme.muted : theme.ready}>{webBackend === "webiq" ? "✓ webiq" : webBackend === "copilot" ? "✓ copilot" : "✗ /webiq"}</Text>
-          {github && <><Text color={theme.muted}>  ·  github </Text><Text color={github === "connected" ? theme.ready : theme.error}>{github === "connected" ? "✓" : "✗ /login"}</Text></>}
         </Box>
         <Box>
           <ClientBadge name="claude" status={status.claude} />
