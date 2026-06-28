@@ -1,3 +1,7 @@
+## v0.5.0 — 2026-06-28
+
+Add a GitHub-token heartbeat: the supervisor now re-checks every ~60s whether the stored GitHub login still works, and the TUI footer shows a live `github ✓` / `✗ /login` badge — so an expired or revoked login surfaces within ~60s instead of only on the next failed request or a manual `/status`. A transient network/rate-limit hiccup is distinguished from a real auth failure, so the badge never flips on a single blip.
+
 ## v0.4.0 — 2026-06-26
 
 Codex `/responses` support, web search via Microsoft Web IQ, and a tool-call recovery fix:
