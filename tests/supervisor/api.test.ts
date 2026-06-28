@@ -120,6 +120,41 @@ describe("control api /api/events (SSE)", () => {
       },
     );
   });
+
+  it("a write to a socket that died between broadcasts is swallowed and unsubscribes (no crash)", async () => {
+    // Reproduces the concurrency crash: multiple clients each hold an SSE connection; one dies and the
+    // next broadcast writes to its destroyed socket, which throws synchronously inside emit(). With the
+    // guard, the write is caught and the dead client is dropped so it isn't written to again.
+    const bus = new EventBus();
+    await withServer(
+      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], github: () => undefined, subscribe: (send) => bus.subscribe(send) },
+      async (base) => {
+        // A live client keeps the stream working; a second client disconnects abruptly.
+        const liveCtrl = new AbortController();
+        const live = await fetch(`${base}/api/events`, { signal: liveCtrl.signal });
+        const liveReader = live.body!.getReader();
+        await liveReader.read();
+
+        const deadCtrl = new AbortController();
+        const dead = await fetch(`${base}/api/events`, { signal: deadCtrl.signal });
+        await dead.body!.getReader().read();
+        deadCtrl.abort();
+        // Broadcast immediately — racing the server's 'close' handler so a write to the dead socket can
+        // still fire. This must neither throw nor stop the live client from receiving the event.
+        expect(() => { for (let i = 0; i < 5; i++) bus.emit("metric", { i }); }).not.toThrow();
+
+        const decoder = new TextDecoder();
+        let body = "";
+        while (!body.includes("event: metric")) {
+          const { value, done } = await liveReader.read();
+          if (done) break;
+          body += decoder.decode(value, { stream: true });
+        }
+        expect(body).toContain("event: metric"); // live client still served
+        liveCtrl.abort();
+      },
+    );
+  });
 });
 
 describe("EventBus", () => {

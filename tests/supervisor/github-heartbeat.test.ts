@@ -59,6 +59,24 @@ describe("GithubHeartbeat", () => {
     expect(hb.current()).toBeUndefined();
   });
 
+  it("runOnce swallows an unexpected throw (so `void runOnce()` never becomes an unhandled rejection)", async () => {
+    // The timer fires runOnce() unawaited; a throw escaping it would kill the in-process supervisor +
+    // TUI. Simulate readToken throwing (e.g. a read race the source guard didn't cover).
+    const readToken = () => { throw new Error("EBUSY"); };
+    const hb = new GithubHeartbeat(readToken, async () => ok, () => 1);
+    await expect(hb.runOnce()).resolves.toBeUndefined();
+    expect(hb.current()).toBeUndefined(); // last-known status preserved (here: still pending)
+  });
+  it("runOnce clears inFlight after a throw so the next tick can still probe", async () => {
+    const readToken = vi.fn()
+      .mockImplementationOnce(() => { throw new Error("EBUSY"); })
+      .mockImplementationOnce(() => "gho");
+    const hb = new GithubHeartbeat(readToken as unknown as () => string | null, async () => ok, () => 1);
+    await hb.runOnce(); // throws internally, swallowed
+    await hb.runOnce(); // must not be blocked by a stuck inFlight flag
+    expect(hb.current()).toMatchObject({ ok: true });
+  });
+
   it("start() probes after the initial delay, then every interval; stop() halts it", async () => {
     vi.useFakeTimers();
     try {

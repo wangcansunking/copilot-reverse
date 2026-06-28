@@ -25,6 +25,8 @@ import { claudeCopilotReverseEnv } from "../tui/setup/clients.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 import { APP_VERSION } from "../version.js";
+import { appendFileSync, mkdirSync } from "node:fs";
+import { join } from "node:path";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEFAULT_MODEL = "gpt-4o"; // a valid Copilot model id; pass-through routing uses it as-is
@@ -33,7 +35,25 @@ const DEFAULT_MODEL = "gpt-4o"; // a valid Copilot model id; pass-through routin
 // rejects an over-long turn. TODO: read each model's real max_prompt_tokens from /models.
 const DEFAULT_MAX_INPUT_TOKENS = 110_000;
 
+// Process-level backstop. The TUI and the supervisor run in ONE process, so a stray throw or an
+// unhandled rejection anywhere (a dead SSE socket, a bad creds read, an SDK stream) would otherwise
+// terminate the whole app and drop the user back to the shell — especially on Node ≥15, where an
+// unhandled rejection is fatal by default. We log to a file (Ink owns stdout, so console writes would
+// corrupt the render) and keep running; the specific throw sites are also guarded at their source.
+function installProcessBackstop(): void {
+  const log = (kind: string, err: unknown) => {
+    const e = err instanceof Error ? `${err.message}\n${err.stack ?? ""}` : String(err);
+    try {
+      mkdirSync(dataDir(), { recursive: true });
+      appendFileSync(join(dataDir(), "crash.log"), `[${new Date().toISOString()}] ${kind}: ${e}\n`);
+    } catch { /* logging must never itself crash the backstop */ }
+  };
+  process.on("unhandledRejection", (reason) => log("unhandledRejection", reason));
+  process.on("uncaughtException", (err) => log("uncaughtException", err));
+}
+
 async function launchTui(): Promise<void> {
+  installProcessBackstop();
   const cfg = defaultConfig();
   const existingToken = readGhToken(dataDir());
   if (!existingToken) {

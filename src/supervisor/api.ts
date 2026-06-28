@@ -28,9 +28,17 @@ export function createControlApp(deps: ControlDeps): Express {
     res.setHeader("content-type", "text/event-stream");
     res.setHeader("cache-control", "no-cache");
     res.flushHeaders?.();
-    const send = (event: string, data: unknown) => res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+    let off = () => {};
+    // Writing to a socket that died between broadcasts throws synchronously (ERR_STREAM_DESTROYED /
+    // EPIPE). emit() calls this on the worker-message path, so an uncaught throw would crash the
+    // in-process supervisor + TUI. Swallow the write error and unsubscribe — a dead connection should
+    // be dropped, not retried.
+    const send = (event: string, data: unknown) => {
+      try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); }
+      catch { off(); }
+    };
     send("hello", { state: deps.getState() });
-    const off = deps.subscribe(send);
+    off = deps.subscribe(send);
     req.on("close", off);
   });
   return app;

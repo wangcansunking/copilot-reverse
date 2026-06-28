@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { readGhToken, writeGhToken, clearGhToken } from "../../src/shared/creds.js";
@@ -12,6 +12,14 @@ describe("creds", () => {
   });
   it("null when absent", () => {
     expect(readGhToken(mkdtempSync(join(tmpdir(), "m-")))).toBeNull();
+  });
+  it("returns null (does not throw) on a corrupt creds.json", () => {
+    // A partial write / locked read must not throw: readGhToken runs on the heartbeat tick whose
+    // rejection would kill the TUI. An unreadable file reads as "no token".
+    const d = mkdtempSync(join(tmpdir(), "m-"));
+    writeFileSync(join(d, "creds.json"), "{ this is not valid json");
+    expect(() => readGhToken(d)).not.toThrow();
+    expect(readGhToken(d)).toBeNull();
   });
   it("clearGhToken removes the stored token (and is a no-op when absent)", () => {
     const d = mkdtempSync(join(tmpdir(), "m-"));

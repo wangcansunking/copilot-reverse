@@ -60,6 +60,10 @@ export class GithubHeartbeat {
       const probe = token ? await this.probe(token) : null;
       if (this.stopped) return; // a late result after stop() must not resurrect the timer/state
       this.status = nextGithubStatus(this.status, Boolean(token), probe, this.now());
+    } catch {
+      // Defense in depth: readToken()/probe() are not expected to throw (readGhToken returns null on a
+      // bad read, probeGithubAuth never throws), but the timer fires this as `void runOnce()` — an
+      // unhandled rejection here would kill the in-process supervisor + TUI. Keep the last-known status.
     } finally {
       this.inFlight = false;
     }
