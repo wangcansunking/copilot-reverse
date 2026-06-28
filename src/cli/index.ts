@@ -10,7 +10,7 @@ import { probeSupervisor } from "../daemon/lifecycle.js";
 import { startSupervisor } from "../supervisor/index.js";
 import { runAssistantTurn } from "../tui/assistant/runtime.js";
 import { makeOnChat } from "../tui/assistant/on-chat.js";
-import { readGhToken, clearGhToken } from "../shared/creds.js";
+import { readGhToken, clearGhToken, hasGhTokenFile } from "../shared/creds.js";
 import { writeWebIqKey, readWebIqKey, clearWebIqKey, readWebSearchMode, writeWebSearchMode, resolveWebSearchBackend } from "../shared/webiq-key.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
 import { readChatModel, writeChatModel } from "../shared/prefs.js";
@@ -25,6 +25,7 @@ import { claudeCopilotReverseEnv } from "../tui/setup/clients.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 import { APP_VERSION } from "../version.js";
+import { appendCrashLog } from "../shared/crash-log.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const DEFAULT_MODEL = "gpt-4o"; // a valid Copilot model id; pass-through routing uses it as-is
@@ -33,7 +34,36 @@ const DEFAULT_MODEL = "gpt-4o"; // a valid Copilot model id; pass-through routin
 // rejects an over-long turn. TODO: read each model's real max_prompt_tokens from /models.
 const DEFAULT_MAX_INPUT_TOKENS = 110_000;
 
+// Process-level backstop. The TUI and the supervisor run in ONE process, so a stray throw or an
+// unhandled rejection anywhere (a dead SSE socket, a bad creds read, an SDK stream) would otherwise
+// terminate the whole app and drop the user back to the shell — especially on Node ≥15, where an
+// unhandled rejection is fatal by default. We log to a file (Ink owns stdout, so console writes would
+// corrupt the render) and keep running; the specific throw sites are also guarded at their source.
+//
+// uncaughtException is treated differently from unhandledRejection: Node documents the process as
+// being in an undefined state afterward, so swallowing it indefinitely risks spinning forever on a
+// recurring throw against corrupted state. A circuit breaker counts exceptions in a short window and
+// lets the process die once they storm, so a user/supervisor restart gets a clean process — while a
+// lone transient exception is still survived.
+const UNCAUGHT_STORM_COUNT = 5;
+const UNCAUGHT_STORM_WINDOW_MS = 10_000;
+function installProcessBackstop(): void {
+  process.on("unhandledRejection", (reason) => appendCrashLog("unhandledRejection", reason));
+  let recent: number[] = [];
+  process.on("uncaughtException", (err) => {
+    appendCrashLog("uncaughtException", err);
+    const now = Date.now();
+    recent = recent.filter((t) => now - t < UNCAUGHT_STORM_WINDOW_MS);
+    recent.push(now);
+    if (recent.length >= UNCAUGHT_STORM_COUNT) {
+      appendCrashLog("uncaughtException", `${UNCAUGHT_STORM_COUNT} exceptions within ${UNCAUGHT_STORM_WINDOW_MS}ms — exiting for a clean restart`);
+      process.exit(1);
+    }
+  });
+}
+
 async function launchTui(): Promise<void> {
+  installProcessBackstop();
   const cfg = defaultConfig();
   const existingToken = readGhToken(dataDir());
   if (!existingToken) {
@@ -94,15 +124,19 @@ async function launchTui(): Promise<void> {
     const { code, complete } = await beginDeviceLogin(dataDir());
     show([`Open ${code.verification_uri} and enter code: ${code.user_code}`, "waiting for authorization…"]);
     await complete();
-    // Re-point the token store at the freshly written GitHub token; the old store still holds the
-    // expired one and would 401 once its cached Copilot token rotates, breaking the model picker.
-    tokenStore = new CopilotTokenStore(readGhToken(dataDir())!);
+    // Drop the cached Copilot token so the next get() does a fresh exchange with the just-written
+    // GitHub token (the store re-reads the token on each exchange, so a new instance isn't required —
+    // but resetting clears any Copilot token cached against the old login).
+    tokenStore = new CopilotTokenStore(() => readGhToken(dataDir()));
     await client.restart().catch(() => {});
     return ["GitHub authorization complete — worker restarting with the new token"];
   };
   // Filled in below once we have a token; the assistant prefers a model's real window over the default.
   const modelLimits: Record<string, number> = {};
-  let tokenStore = new CopilotTokenStore(readGhToken(dataDir())!);
+  // Provider form: the store re-reads the GitHub token on each exchange, so a transient unreadable
+  // creds.json (Windows lock / partial write) can't poison the store for the session — it recovers on
+  // the next clean read, and a genuinely absent token surfaces as a 401 instead of a `token null` send.
+  let tokenStore = new CopilotTokenStore(() => readGhToken(dataDir()));
   const loadModels = async () => {
     const token = await tokenStore.get();
     const [ids, limits] = await Promise.all([fetchCopilotModels(token), fetchModelLimits(token)]);
@@ -146,7 +180,7 @@ async function launchTui(): Promise<void> {
     // hangs until the turn timeout. Reuses the long-lived tokenStore so a valid login is a cached,
     // round-trip-free check between message bursts (its get() caches with a 60s skew).
     async () => {
-      if (!readGhToken(dataDir())) return "you're signed out — run /login to sign in before chatting";
+      if (!hasGhTokenFile(dataDir())) return "you're signed out — run /login to sign in before chatting";
       try { await tokenStore.get(); return null; }
       catch { return "your GitHub login has expired — run /login to sign in again"; }
     },
