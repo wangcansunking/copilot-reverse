@@ -105,4 +105,15 @@ describe("slash commands", () => {
     expect((await reg.run("/login")).join("\n")).toMatch(/not available/);
     expect((await reg.run("/logout")).join("\n")).toMatch(/not available/);
   });
+  it("/changes lists recent versions and ends with the changelog url", async () => {
+    const out = await buildRegistry(ctx() as any, endpoint).run("/changes");
+    expect(out.length).toBeGreaterThan(1);
+    expect(out.length).toBeLessThanOrEqual(12); // <=10 entries + blank + url
+    expect(out[0]).toMatch(/^v\d+\.\d+\.\d+ \(/);
+    expect(out.at(-1)).toMatch(/blob\/master\/CHANGELOG\.md$/);
+  });
+  it("/changes uses the configured repo for the changelog url", async () => {
+    const out = await buildRegistry(ctx() as any, endpoint, { reportRepo: "octo/copilot-reverse" }).run("/changes");
+    expect(out.at(-1)).toMatch(/github\.com\/octo\/copilot-reverse\/blob\/master\/CHANGELOG\.md/);
+  });
 });
