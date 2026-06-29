@@ -92,6 +92,29 @@ async function main() {
     check("throwing listener does not escape emit", !escaped);
     check("live subscriber still served after a peer throws", live > 0);
 
+    // Access modes (#25): the worker auth gate reads network.json LAZILY per request, so we can flip
+    // the posture on disk without a restart and assert the gate's behavior over real HTTP. /openai/models
+    // is gated but needs no upstream call, so these are deterministic on a dummy token. We restore
+    // localhost at the end so the golden round-trips below run unauthenticated as before.
+    log("\n[access-modes] LAN mode requires a key; localhost stays open");
+    const NET = join(DATA_DIR, "network.json");
+    const withKey = (k) => ({ authorization: `Bearer ${k}` });
+    // localhost (default): open, no key needed.
+    check("localhost: /openai/models open (no key)", (await fetch(wrkUrl("/openai/models"))).status === 200);
+    // Flip to LAN with a key — every request must now carry it.
+    writeFileSync(NET, JSON.stringify({ mode: "lan", key: "e2e-secret" }));
+    check("lan: no key → 401", (await fetch(wrkUrl("/openai/models"))).status === 401);
+    check("lan: wrong key → 401", (await fetch(wrkUrl("/openai/models"), { headers: withKey("nope") })).status === 401);
+    check("lan: valid Bearer key → 200", (await fetch(wrkUrl("/openai/models"), { headers: withKey("e2e-secret") })).status === 200);
+    check("lan: valid x-api-key → 200", (await fetch(wrkUrl("/openai/models"), { headers: { "x-api-key": "e2e-secret" } })).status === 200);
+    check("lan: /healthz stays OPEN (supervisor probe)", (await fetch(wrkUrl("/healthz"))).status === 200);
+    // Fail-closed: LAN with no key configured refuses ALL requests (503), never an open proxy.
+    writeFileSync(NET, JSON.stringify({ mode: "lan" }));
+    check("lan + no key → 503 fail-closed", (await fetch(wrkUrl("/openai/models"), { headers: withKey("anything") })).status === 503);
+    // Restore the safe default for the golden round-trips.
+    writeFileSync(NET, JSON.stringify({ mode: "localhost", key: "e2e-secret" }));
+    check("back to localhost: open again (no key)", (await fetch(wrkUrl("/openai/models"))).status === 200);
+
     if (token) {
       log("\n[golden] real round-trips");
       const a = await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "gpt-4o", max_tokens: 16, messages: [{ role: "user", content: "say OK" }] }));

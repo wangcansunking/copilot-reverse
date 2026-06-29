@@ -11,12 +11,13 @@ export interface ConfigInfo {
   dataDir: string;
 }
 
-export type ConfigAction = "model" | "setup-claude" | "setup-codex" | "back";
+export type ConfigAction = "model" | "setup-claude" | "setup-codex" | "network" | "back";
 
-export function ConfigScreen({ info, model, clients, onAction }: {
+export function ConfigScreen({ info, model, clients, accessMode, onAction }: {
   info: ConfigInfo;
   model: string;
   clients: { claude: boolean; codex: boolean };
+  accessMode?: "localhost" | "lan";
   onAction: (action: ConfigAction) => void;
 }) {
   const row = (k: string, v: string) => (
@@ -29,12 +30,14 @@ export function ConfigScreen({ info, model, clients, onAction }: {
       {row("OpenAI", info.openai)}
       {row("Anthropic", info.anthropic)}
       {row("ports", `supervisor ${info.supervisorPort} · worker ${info.workerPort}`)}
+      {accessMode && row("network", accessMode === "lan" ? "LAN (key required)" : "localhost (private)")}
       {row("clients", `claude ${clients.claude ? "✓" : "○"}  codex ${clients.codex ? "✓" : "○"}`)}
       {row("data dir", info.dataDir)}
       <Text> </Text>
       <Select
         items={[
           { label: "change chat model", value: "model" },
+          { label: "network access mode", value: "network" },
           { label: "configure Claude Code", value: "setup-claude" },
           { label: "configure Codex", value: "setup-codex" },
           { label: "back", value: "back" },

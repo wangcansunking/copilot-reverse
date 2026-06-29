@@ -5,6 +5,7 @@ import { CopilotTokenStore } from "../providers/copilot/token.js";
 import { fetchCopilotModels, fetchModelEndpoints } from "../providers/copilot/models.js";
 import { readGhToken } from "../shared/creds.js";
 import { readWebIqKey, readWebSearchMode, resolveWebSearchBackend } from "../shared/webiq-key.js";
+import { readAccessMode, readAccessKey } from "../shared/network.js";
 import { makeGatewayRunner } from "../core/server-tools.js";
 import { borrowSearch } from "../providers/copilot/borrow-search.js";
 import { dataDir } from "../shared/paths.js";
@@ -43,7 +44,15 @@ const gatewayRunner = makeGatewayRunner({
   webiqKey: () => readWebIqKey(dataDir()),
   borrow: { run: (input) => borrowSearch(tokenStore, input) },
 });
-const app = createWorkerApp(router, (m) => send({ type: "request-metric", ...m }), gatewayRunner);
+// Access control read LAZILY from disk per request (so /network toggles + key rotation need no worker
+// restart). The gate requires a key whenever this worker is reachable off-box: either the live mode is
+// `lan`, or this process is `exposed` — bound to a non-loopback host. `exposed` is fixed at spawn from
+// the BIND_HOST the supervisor handed us (a live socket can't rebind), and it closes the lan→localhost
+// fail-open window: the mode file flips instantly but this socket stays on 0.0.0.0 until the supervisor
+// restarts it, so we keep enforcing the key until a fresh loopback-bound worker takes over.
+const exposed = host !== "127.0.0.1" && host !== "::1" && host !== "localhost";
+const access = { mode: () => readAccessMode(dataDir()), key: () => readAccessKey(dataDir()), exposed };
+const app = createWorkerApp(router, (m) => send({ type: "request-metric", ...m }), gatewayRunner, access);
 const server = app.listen(port, host, () => send({ type: "ready", port }));
 const hb = setInterval(() => send({ type: "heartbeat", ts: Date.now() }), 5_000);
 

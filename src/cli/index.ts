@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import React from "react";
+import { networkInterfaces as osNetworkInterfaces } from "node:os";
 import { render } from "ink";
 import { Command } from "commander";
 import { App } from "../tui/app.js";
@@ -14,6 +15,8 @@ import { readGhToken, clearGhToken, hasGhTokenFile } from "../shared/creds.js";
 import { writeWebIqKey, readWebIqKey, clearWebIqKey, readWebSearchMode, writeWebSearchMode, resolveWebSearchBackend } from "../shared/webiq-key.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
 import { readChatModel, writeChatModel, shouldShowChange, markChangeShown } from "../shared/prefs.js";
+import { readAccessMode, readAccessKey, setAccessMode as persistAccessMode, rotateAccessKey } from "../shared/network.js";
+import type { NetworkInfo } from "../tui/screens/network.js";
 import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
 import { fetchCopilotModels, fetchModelLimits } from "../providers/copilot/models.js";
 import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
@@ -60,6 +63,24 @@ function installProcessBackstop(): void {
       process.exit(1);
     }
   });
+}
+
+// The host's primary LAN IPv4 (first non-internal IPv4 across interfaces), or null if it can't be
+// determined — used to show other machines the address to point at in LAN mode. Best-effort only;
+// the proxy binds 0.0.0.0 regardless, so a null here just means "we couldn't pretty-print the URL".
+function lanIPv4(): string | null {
+  const ifaces = osNetworkInterfaces();
+  for (const addrs of Object.values(ifaces)) {
+    for (const a of addrs ?? []) {
+      if (a.family === "IPv4" && !a.internal) return a.address;
+    }
+  }
+  return null;
+}
+function networkInfoOf(workerPort: number): NetworkInfo {
+  const mode = readAccessMode(dataDir());
+  const ip = mode === "lan" ? lanIPv4() : null;
+  return { mode, key: readAccessKey(dataDir()), lanUrl: ip ? `http://${ip}:${workerPort}` : null };
 }
 
 async function launchTui(): Promise<void> {
@@ -232,6 +253,15 @@ async function launchTui(): Promise<void> {
       enableWebiq: (k: string) => { writeWebIqKey(k, dataDir()); writeWebSearchMode(dataDir(), "webiq"); },
       disableWebiq: () => { clearWebIqKey(dataDir()); },
       webSearchBackend: () => resolveWebSearchBackend(readWebSearchMode(dataDir()), Boolean(readWebIqKey(dataDir()))),
+      // Network access mode. networkInfo reads the live posture; setAccessMode persists then restarts
+      // the worker so the supervisor re-spawns it bound to the new host (loopback vs 0.0.0.0 — a live
+      // socket can't be rebound); rotateKey mints a fresh key (no restart needed — the gate reads it
+      // per request). Entering LAN is fail-closed in the store (a key is minted if none exists). The
+      // restart error is NOT swallowed: if the rebind fails the UI shows it (the still-running worker
+      // stays key-protected via the `exposed` backstop, so a failed lan→localhost is safe, not open).
+      networkInfo: () => networkInfoOf(cfg.workerPort),
+      setAccessMode: async (mode) => { persistAccessMode(dataDir(), mode); await client.restart(); return networkInfoOf(cfg.workerPort); },
+      rotateKey: async () => { rotateAccessKey(dataDir()); return networkInfoOf(cfg.workerPort); },
       startupStatus,
       changeBanner,
       onChangeSeen: () => markChangeShown(dataDir(), CHANGE_ID),

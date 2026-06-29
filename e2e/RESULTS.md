@@ -3,6 +3,22 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-29 (network access modes)** — New explicit access posture (#25): `localhost` (default,
+  loopback only — behavior unchanged, now a named mode) vs `lan` (worker proxy binds `0.0.0.0`, every
+  request must carry a key or it's rejected `401` before any upstream call). The supervisor control API
+  (:7890) stays loopback always — the control plane is never exposed. Auth is a minimal shared key
+  (timing-safe; `Authorization: Bearer` or `x-api-key`), read lazily so rotation needs no restart; the
+  bind change is applied by restarting the worker. **Fail-closed**: entering LAN mints a key if none
+  exists (the store refuses keyless LAN), and the gate refuses all requests (`503`) if LAN is ever
+  active with no key. As defense-in-depth the gate ALSO requires a key whenever the worker is bound to
+  a non-loopback interface (`exposed`), regardless of what the mode file momentarily says — closing the
+  fail-open window on a lan→localhost switch (the socket stays on `0.0.0.0` until the restart rebinds).
+  New `src/shared/network.ts` + `workerBindHost`, `src/worker/auth.ts` (mounted
+  before the body parser, `/healthz` stays open), a `bindHostProvider` in `WorkerMonitor`, and a
+  `/network` TUI panel (+ `/config` row, HUD `net` indicator). Covered by network-store, worker-auth,
+  monitor-lifecycle (bind host echoed), and TUI-interaction unit tests, plus 8 access-mode HTTP
+  edge-case checks in `http-e2e.mjs`. Suite **471 passed**, e2e **43 passed**, build clean.
+
 - **2026-06-29 (canonical model ids)** — `/anthropic/v1/models` now maps Copilot's dotted ids to the
   dashed canonical ids Claude Code's native picker recognises (`claude-opus-4.8` → `claude-opus-4-8[1m]`,
   friendly display, `[1m]` for opus 4.6/4.7/4.8 + sonnet 4.6); inbound `resolveModel` strips `[1m]` and
