@@ -107,6 +107,26 @@ describe("TUI: Repl autocomplete navigation", () => {
   });
 });
 
+describe("TUI: /metrics styled card", () => {
+  it("renders summary stats and a per-model row from metricsSource", async () => {
+    const metricsSource = async () => [
+      { ts: 2, endpoint: "/anthropic/v1/messages", model: "claude-opus-4-8", status: 200, latencyMs: 820, tokensIn: 20000, tokensOut: 8000 },
+      { ts: 1, endpoint: "/openai/chat/completions", model: "gpt-4o", status: 200, latencyMs: 210, tokensIn: 1000, tokensOut: 400 },
+    ];
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" metricsSource={metricsSource as any} />);
+    await tick();
+    stdin.write("/metrics");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    const f = lastFrame() ?? "";
+    expect(f).toContain("metrics");
+    expect(f).toMatch(/2 reqs/);
+    expect(f).toMatch(/opus-4-8/);
+    expect(f).toMatch(/est/);
+  });
+});
+
 describe("TUI: /login surfaces the device code before the poll resolves", () => {
   it("renders the verification URL + code immediately, not buffered behind the token poll", async () => {
     // Reproduces the deadlock: the old /login buffered its device-code line and only returned

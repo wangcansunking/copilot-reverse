@@ -11,7 +11,8 @@ import type { Scope, ApplyResult } from "./setup/apply.js";
 import type { ClientStatus } from "./setup/status.js";
 import { theme } from "./theme.js";
 import type { Registry } from "./slash/registry.js";
-import type { WorkerState, StatusResponse } from "../shared/control-types.js";
+import { aggregate, recentErrors, type Aggregate } from "./panels/metrics-agg.js";
+import type { WorkerState, StatusResponse, MetricSample } from "../shared/control-types.js";
 import type { WebSearchBackend } from "../shared/webiq-key.js";
 
 type Entry =
@@ -19,6 +20,7 @@ type Entry =
   | { type: "assistant"; text: string; streaming?: boolean; startedAt?: number }
   | { type: "system"; text: string }
   | { type: "card"; title: string; tone: "info" | "ok" | "error"; lines: string[] }
+  | { type: "metrics"; agg: Aggregate; errors: string[] }
   | { type: "help"; commands: CommandHint[] };
 
 type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | { kind: "webiq-key" } | null;
@@ -63,6 +65,7 @@ export interface AppProps {
   workerState?: WorkerState;
   initialModel?: string;
   statusSource?: () => Promise<StatusResponse>;
+  metricsSource?: () => Promise<MetricSample[]>; // recent request samples for the styled /metrics card
   readStatus?: () => ClientStatus;            // reads the real config files (per user/project scope)
   modelLimits?: Record<string, number>;       // model id -> context window, shown in the picker
   onChat?: (text: string, print: (line: string) => void, model?: string, abort?: AbortController) => Promise<void>;
@@ -113,6 +116,40 @@ function OutputCard({ title, lines, tone }: { title: string; lines: string[]; to
   );
 }
 
+// Styled /metrics: a colored summary row of chips, then an aligned per-model table. Numbers carry
+// the accent/state colors; labels are dimmed — so the eye lands on counts and cost, not boilerplate.
+function MetricsCard({ agg, errors }: { agg: Aggregate; errors: string[] }) {
+  const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+  const usd = (n: number) => `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+  const top = [...agg.byModel].sort((a, b) => b.count - a.count);
+  const w = Math.min(22, Math.max(8, ...top.map((r) => r.model.replace(/^claude-/, "").length)));
+  const m = (s: string) => s.replace(/^claude-/, "").slice(0, w).padEnd(w);
+  return (
+    <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={1} marginBottom={1}>
+      <Text color={theme.accent} bold>metrics</Text>
+      <Text>
+        <Text color={theme.ready} bold>{agg.total}</Text><Text color={theme.muted}> reqs  </Text>
+        <Text color={agg.errors ? theme.error : theme.muted} bold>{agg.errors}</Text><Text color={theme.muted}> err  </Text>
+        <Text color={theme.assistant}>{k(agg.tokensIn)}↑ {k(agg.tokensOut)}↓</Text><Text color={theme.muted}>  est </Text>
+        <Text color={theme.accent} bold>{usd(agg.costUsd)}</Text>
+      </Text>
+      <Text color={theme.border}>{"─".repeat(w + 26)}</Text>
+      {top.map((r) => (
+        <Text key={r.model}>
+          <Text color={theme.output}>{m(r.model)}</Text>
+          <Text color={theme.muted}>  n=</Text><Text color={theme.assistant}>{String(r.count).padEnd(4)}</Text>
+          <Text color={theme.muted}>{String(r.avgMs).padStart(5)}ms  </Text>
+          <Text color={theme.assistant}>{k(r.tokensIn)}/{k(r.tokensOut)}</Text>
+          <Text color={theme.muted}> ~</Text><Text color={theme.accent}>{usd(r.costUsd)}</Text>
+        </Text>
+      ))}
+      {errors.length > 0 && <Text color={theme.error}>recent errors:</Text>}
+      {errors.map((e, i) => <Text key={i} color={theme.muted}>  {e}</Text>)}
+      <Text color={theme.muted} dimColor>cost = list-price estimate (Copilot is flat-fee)</Text>
+    </Box>
+  );
+}
+
 function HelpCard({ commands }: { commands: CommandHint[] }) {
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.border} paddingX={1} marginBottom={1}>
@@ -143,7 +180,7 @@ function ClientBadge({ name, status }: { name: string; status: { user: boolean; 
 
 export function App({
   registry, title, workerState = "starting", initialModel = "—",
-  statusSource, readStatus, modelLimits, onChat,
+  statusSource, metricsSource, readStatus, modelLimits, onChat,
   loadModels, setup, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, startupStatus, githubStatus, changeBanner, onChangeSeen,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
@@ -232,6 +269,13 @@ export function App({
       return;
     }
     if (t === "/config" && info) { setScreen({ kind: "config" }); return; }
+    if (t === "/metrics" && metricsSource) {
+      const reqs = await metricsSource();
+      const agg = aggregate(reqs);
+      const errs = recentErrors(reqs, 5).map((e) => `${e.status} ${e.model} — ${(e.error ?? "(no message)").slice(0, 80)}`);
+      add({ type: "metrics", agg, errors: errs });
+      return;
+    }
     if (t === "/login" && login) {
       // Show the verification URL + code right away, then resolve a completion card once the user
       // authorizes. Done as a special case (not a registry command) because the slash registry only
@@ -338,6 +382,7 @@ export function App({
       <Box flexDirection="column" paddingX={1} marginTop={1}>
         {entries.map((e, i) => {
           if (e.type === "card") return <OutputCard key={i} title={e.title} lines={e.lines} tone={e.tone} />;
+          if (e.type === "metrics") return <MetricsCard key={i} agg={e.agg} errors={e.errors} />;
           if (e.type === "help") return <HelpCard key={i} commands={e.commands} />;
           const color = e.type === "user" ? theme.user : e.type === "assistant" ? theme.assistant : theme.muted;
           if (e.type === "assistant" && e.streaming) {
