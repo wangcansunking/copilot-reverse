@@ -69,6 +69,7 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         const guard = new RunawayGuard();
         const deadline = start + STREAM_DEADLINE_MS;
         let runaway = false;
+        let runawayReason = "";
 
         for (let iter = 0; iter < MAX_TOOL_ITERS && !runaway; iter++) {
           let textIndex: number | undefined;                              // Anthropic index of this turn's text block
@@ -90,7 +91,7 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
               res.write(frame("content_block_delta", { type: "content_block_delta", index: textIndex, delta: { type: "text_delta", text: chunk.delta } }));
               // Degenerate-stream kill-switch: a model looping on a short token, or any stream past
               // the wall-clock deadline, is cut here so the client gets a bounded answer not a freeze.
-              if (guard.push(chunk.delta) || Date.now() > deadline) { runaway = true; turnStop = "length"; break; }
+              if (guard.push(chunk.delta) || Date.now() > deadline) { runaway = true; runawayReason = guard.reason ?? "deadline"; turnStop = "length"; break; }
             } else if (chunk.kind === "tool_use_start") {
               if (!byCopilotIdx.has(chunk.index)) { const t = { id: chunk.id, name: chunk.name, args: "" }; byCopilotIdx.set(chunk.index, t); buffered.push(t); }
             } else if (chunk.kind === "tool_use_delta") {
@@ -139,7 +140,7 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         res.write(frame("message_delta", { type: "message_delta", delta: { stop_reason: finalStop === "tool_use" ? "tool_use" : finalStop === "length" ? "max_tokens" : "end_turn" }, usage: deltaUsage }));
         res.write(frame("message_stop", { type: "message_stop" }));
         res.end();
-        metric(200);
+        metric(200, runaway ? `runaway stream cut (${runawayReason}) — model degenerated, ended early as max_tokens` : undefined);
       } else {
         // Non-stream: same gateway loop without SSE — run gateway tools and re-complete until the
         // model answers with text (or a client tool), capped identically.

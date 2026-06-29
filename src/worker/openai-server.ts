@@ -32,12 +32,13 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
         const id = `chatcmpl-${randomUUID().replace(/-/g, "")}`; // unique per response, not constant
         const guard = new RunawayGuard();
         const deadline = start + STREAM_DEADLINE_MS;
+        let runawayReason = "";
         for await (const chunk of provider.stream(canon)) {
           res.write(canonicalChunkToOpenAISSE(chunk, id, canon.model));
-          if (chunk.kind === "text" && (guard.push(chunk.delta) || Date.now() > deadline)) break;
+          if (chunk.kind === "text" && (guard.push(chunk.delta) || Date.now() > deadline)) { runawayReason = guard.reason ?? "deadline"; break; }
         }
         res.end();
-        metric(200);
+        metric(200, runawayReason ? `runaway stream cut (${runawayReason}) — model degenerated, ended early` : undefined);
       } else {
         res.json(canonicalToOpenAIResponse(await provider.complete(canon)));
         metric(200);
@@ -79,15 +80,16 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
         let finish = "stop";
         const guard = new RunawayGuard();
         const deadline = start + STREAM_DEADLINE_MS;
+        let runawayReason = "";
         for await (const chunk of provider.stream(canon)) {
           if (chunk.done) { finish = chunk.finishReason ?? "stop"; usage = chunk.usage; break; }
-          if (chunk.kind === "text") { for (const f of sse.text(chunk.delta)) res.write(f); if (guard.push(chunk.delta) || Date.now() > deadline) { finish = "length"; break; } }
+          if (chunk.kind === "text") { for (const f of sse.text(chunk.delta)) res.write(f); if (guard.push(chunk.delta) || Date.now() > deadline) { finish = "length"; runawayReason = guard.reason ?? "deadline"; break; } }
           else if (chunk.kind === "tool_use_start") for (const f of sse.toolStart(chunk.index, chunk.id, chunk.name)) res.write(f);
           else if (chunk.kind === "tool_use_delta") { argsByIdx.set(chunk.index, (argsByIdx.get(chunk.index) ?? "") + chunk.argsDelta); for (const f of sse.toolArgs(chunk.index, chunk.argsDelta)) res.write(f); }
         }
         for (const f of sse.finish(usage, finish, argsByIdx)) res.write(f);
         res.end();
-        metric(200);
+        metric(200, runawayReason ? `runaway stream cut (${runawayReason}) — model degenerated, ended early` : undefined);
       } else {
         res.json(canonicalToResponsesResponse(await provider.complete(canon)));
         metric(200);
