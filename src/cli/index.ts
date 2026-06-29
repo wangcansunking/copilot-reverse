@@ -13,7 +13,7 @@ import { makeOnChat } from "../tui/assistant/on-chat.js";
 import { readGhToken, clearGhToken, hasGhTokenFile } from "../shared/creds.js";
 import { writeWebIqKey, readWebIqKey, clearWebIqKey, readWebSearchMode, writeWebSearchMode, resolveWebSearchBackend } from "../shared/webiq-key.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
-import { readChatModel, writeChatModel } from "../shared/prefs.js";
+import { readChatModel, writeChatModel, shouldShowChange, markChangeShown } from "../shared/prefs.js";
 import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
 import { fetchCopilotModels, fetchModelLimits } from "../providers/copilot/models.js";
 import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
@@ -188,6 +188,13 @@ async function launchTui(): Promise<void> {
 
   const persistedModel = readChatModel(dataDir());
 
+  // "What's new" banner: MAJOR changes only — keyed by version so each release re-announces, shown
+  // ~3 launches then quiet. Minor fixes/polish do NOT go here; reserve it for things worth noticing.
+  const CHANGE_ID = `v${APP_VERSION}`;
+  const changeBanner = shouldShowChange(dataDir(), CHANGE_ID)
+    ? { lines: ["• runaway streams now cut cleanly — no more frozen 'code code code' sessions"] }
+    : undefined;
+
   // Startup overview. The token was already validated above (re-auth happens before we get here), so
   // GitHub is connected; web search readiness and configured clients are read from disk.
   const clientStatus = readClientStatus();
@@ -224,6 +231,8 @@ async function launchTui(): Promise<void> {
       disableWebiq: () => { clearWebIqKey(dataDir()); },
       webSearchBackend: () => resolveWebSearchBackend(readWebSearchMode(dataDir()), Boolean(readWebIqKey(dataDir()))),
       startupStatus,
+      changeBanner,
+      onChangeSeen: () => markChangeShown(dataDir(), CHANGE_ID),
       githubStatus: async () => {
         const token = readGhToken(dataDir());
         if (!token) return "signed-out";

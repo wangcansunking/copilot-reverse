@@ -33,16 +33,20 @@ const SPINNER = ["✶", "✸", "✹", "✺", "✹", "✷"];
 // Startup overview card. GitHub shows a login STATE (no real token expiry exists). Web search shows
 // the resolved backend: "via WebIQ", "via Copilot (native)", or "unavailable — run /webiq".
 // `extra` appends detail lines (e.g. worker restart history for /status).
-function statusCard(s: StatusSummary, extra: string[] = []): Entry {
+function statusCard(s: StatusSummary, extra: string[] = [], clients?: ClientStatus): Entry {
   const gh = s.github === "connected" ? "✓ connected" : s.github === "expired" ? "✗ expired — run /login" : "✗ signed out — run /login";
   const web = s.webSearch === "webiq" ? "✓ via WebIQ" : s.webSearch === "copilot" ? "✓ via Copilot (native)" : "✗ unavailable — run /webiq";
-  const clients = `claude ${s.clients.claude ? "✓" : "○"}  codex ${s.clients.codex ? "✓" : "○"}`;
+  // Per-scope + model when we have the file-derived detail; else fall back to the simple flag.
+  const scope = (sc?: { on: boolean; model?: string }) => sc?.on ? `✓ ${sc.model ? sc.model.replace(/\[1m\]$/, "") : "on"}` : "○";
+  const clientsLine = clients
+    ? `claude u:${scope({ on: clients.claude.user, model: clients.claude.userModel })} p:${scope({ on: clients.claude.project, model: clients.claude.projectModel })} · codex u:${scope({ on: clients.codex.user, model: clients.codex.userModel })} p:${scope({ on: clients.codex.project, model: clients.codex.projectModel })}`
+    : `claude ${s.clients.claude ? "✓" : "○"}  codex ${s.clients.codex ? "✓" : "○"}`;
   const tone: "ok" | "error" = s.github === "connected" ? "ok" : "error";
   return { type: "card", title: "status", tone, lines: [
     `GitHub login   ${gh}`,
     `web search     ${web}`,
     `worker         ${s.worker}`,
-    `clients        ${clients}`,
+    `clients        ${clientsLine}`,
     ...extra,
   ] };
 }
@@ -79,6 +83,10 @@ export interface AppProps {
   webSearchBackend?: () => WebSearchBackend;
   // One-time status overview shown as the first card on startup.
   startupStatus?: StatusSummary;
+  // "What's new" banner shown a few launches then suppressed; the cli decides via prefs and passes
+  // pre-filtered lines (omit to show nothing). onSeen records one view so it eventually stops.
+  changeBanner?: { lines: string[] };
+  onChangeSeen?: () => void;
   // Live GitHub login check for /status (a real token-exchange check). Defaults to the startup value.
   githubStatus?: () => Promise<GithubLoginState>;
 }
@@ -120,14 +128,15 @@ function HelpCard({ commands }: { commands: CommandHint[] }) {
   );
 }
 
-// HUD client cell: shows configured scopes read from the real config files.
-function ClientBadge({ name, status }: { name: string; status: { user: boolean; project: boolean } }) {
-  const cell = (label: string, on: boolean) => (
-    <Text color={on ? theme.ready : theme.muted}>{label}:{on ? "✓" : "○"}</Text>
+// HUD client cell: shows configured scopes read from the real config files, with the pinned model.
+function ClientBadge({ name, status }: { name: string; status: { user: boolean; project: boolean; userModel?: string; projectModel?: string } }) {
+  const short = (m?: string) => (m ? m.replace(/\[1m\]$/, "").replace(/^claude-/, "").slice(0, 14) : "");
+  const cell = (label: string, on: boolean, model?: string) => (
+    <Text color={on ? theme.ready : theme.muted}>{label}:{on ? `✓ ${short(model)}`.trimEnd() : "○"}</Text>
   );
   return (
     <Text color={theme.muted}>
-      {name} {cell("u", status.user)} {cell("p", status.project)}
+      {name} {cell("u", status.user, status.userModel)} {cell("p", status.project, status.projectModel)}
     </Text>
   );
 }
@@ -135,13 +144,15 @@ function ClientBadge({ name, status }: { name: string; status: { user: boolean; 
 export function App({
   registry, title, workerState = "starting", initialModel = "—",
   statusSource, readStatus, modelLimits, onChat,
-  loadModels, setup, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, startupStatus, githubStatus,
+  loadModels, setup, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, startupStatus, githubStatus, changeBanner, onChangeSeen,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
   const [entries, setEntries] = useState<Entry[]>(() => [
     ...(startupStatus ? [statusCard(startupStatus)] : []),
+    ...(changeBanner ? [{ type: "card" as const, title: "what's new", tone: "info" as const, lines: changeBanner.lines }] : []),
     { type: "system", text: "Type a message to chat with the assistant, or /help for commands." },
   ]);
+  useEffect(() => { if (changeBanner) onChangeSeen?.(); }, []);
   const [state, setState] = useState<WorkerState>(workerState);
   const [status, setStatus] = useState<ClientStatus>(() => readStatus?.() ?? EMPTY_STATUS);
   const [webBackend, setWebBackend] = useState<WebSearchBackend>(() => webSearchBackend?.() ?? "unavailable");
@@ -217,7 +228,7 @@ export function App({
         webSearch: webSearchBackend?.() ?? webBackend, worker,
         clients: { claude: status.claude.user || status.claude.project, codex: status.codex.user || status.codex.project },
       });
-      add(statusCard(summary, restarts.length ? ["", "recent restarts:", ...restarts] : []));
+      add(statusCard(summary, restarts.length ? ["", "recent restarts:", ...restarts] : [], status));
       return;
     }
     if (t === "/config" && info) { setScreen({ kind: "config" }); return; }

@@ -56,9 +56,9 @@ Here's the app itself — a prompt, a live status bar, and slash-command autocom
 Just **talk to it** — it understands plain English and will do the work for you:
 
 > *"list models"* → shows every model + its context window
-> *"set up claude"* → configures Claude Code
+> *"set up claude"* → asks scope (global/project) + model, then configures Claude Code
 > *"is the worker healthy?"* → runs a health check
-> *"why did my last request fail?"* → shows the error
+> *"why did my last request fail?"* → shows the error (incl. cut-short stream runaways)
 
 Prefer commands? Type `/` to see them all. The essentials:
 
@@ -66,7 +66,7 @@ Prefer commands? Type `/` to see them all. The essentials:
 |---|---|
 | `/setup-claude` · `/setup-codex` | Point Claude Code / Codex at copilot-reverse |
 | `/model` | Switch the chat model (1M-context models marked) |
-| `/status` · `/doctor` | Is everything healthy? |
+| `/status` · `/doctor` | Is everything healthy? (`/status` shows each client's scope + model) |
 | `/logs` · `/metrics` | What ran, what failed, and why |
 | `/dashboard` | Open a live web dashboard in your browser |
 | `/report` | File a pre-filled bug report (diagnostics only — no prompts) |
@@ -147,6 +147,10 @@ of your config untouched.
 - **Your data stays local.** The app proxies between your editor and Copilot on `127.0.0.1`. Your
   GitHub token lives only in `~/.copilot-reverse/creds.json` on your own disk.
 - **It heals itself.** If the proxy crashes, the supervisor restarts it with backoff and records why.
+- **It never freezes.** If a model degenerates (loops on one token, never stops), the proxy cuts the
+  stream cleanly as `max_tokens` and tags it — `/report` then files a prefilled issue so it's easy to flag.
+- **Tunable.** `~/.copilot-reverse` config covers ports, restart backoff, and the GitHub-token
+  heartbeat interval; defaults are sensible, override only if needed.
 - **Unofficial endpoints.** This uses community-documented Copilot endpoints with *your own*
   subscription. It may break if GitHub changes them — that's the trade-off for not needing extra keys.
 

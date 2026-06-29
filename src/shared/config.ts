@@ -7,11 +7,17 @@ export interface RestartPolicy {
   // instead of giving up forever — so a transient crash burst doesn't leave the daemon dead.
   unhealthyCooldownMs: number;
 }
+export interface HeartbeatPolicy {
+  // How often the supervisor re-checks the GitHub token, and how soon after boot the first check runs.
+  intervalMs: number;
+  initialDelayMs: number;
+}
 export interface AppConfig {
   bindHost: string;
   supervisorPort: number;
   workerPort: number;
   restart: RestartPolicy;
+  heartbeat: HeartbeatPolicy;
   // model remap: client model name -> Copilot model id. "*" is the fallback.
   modelMap: Record<string, string>;
   // GitHub "owner/repo" that /report files diagnostics issues against. Placeholder until set.
@@ -24,6 +30,8 @@ export function defaultConfig(): AppConfig {
     supervisorPort: 7890,
     workerPort: 7891,
     restart: { maxCrashes: 5, windowMs: 60_000, baseBackoffMs: 500, maxBackoffMs: 8_000, unhealthyCooldownMs: 30_000 },
+    // Token failure is rare and GitHub rate-limits, so a slow cadence is plenty; overridable for tests/tuning.
+    heartbeat: { intervalMs: 60_000, initialDelayMs: 2_000 },
     // Empty = pass the requested model straight through to Copilot. Add entries (or "*") to remap.
     modelMap: {},
     // Set MAESTRO_REPORT_REPO=owner/repo to override where /report files diagnostics issues.
@@ -37,6 +45,7 @@ export function mergeConfig(base: AppConfig, o: DeepPartial<AppConfig>): AppConf
     ...base,
     ...o,
     restart: { ...base.restart, ...(o.restart ?? {}) },
+    heartbeat: { ...base.heartbeat, ...(o.heartbeat ?? {}) },
     modelMap: { ...base.modelMap, ...(o.modelMap ?? {}) } as Record<string, string>,
   };
 }

@@ -15,4 +15,10 @@ describe("config", () => {
     expect(c.restart.maxCrashes).toBe(3);
     expect(c.restart.windowMs).toBe(60_000);
   });
+  it("heartbeat is configurable and deep-merges", () => {
+    expect(defaultConfig().heartbeat.intervalMs).toBe(60_000);
+    const c = mergeConfig(defaultConfig(), { heartbeat: { intervalMs: 5_000 } });
+    expect(c.heartbeat.intervalMs).toBe(5_000);
+    expect(c.heartbeat.initialDelayMs).toBe(2_000); // untouched key preserved
+  });
 });

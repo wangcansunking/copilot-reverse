@@ -23,9 +23,10 @@ export type QueryFn = typeof query;
 
 const empty = z.object({});
 
-const setupShape = z.object({
-  scope: z.enum(["global", "project"]).optional(),
-  model: z.string().optional(),
+// Setup is a config write — require both so the assistant must confirm scope+model, never assume.
+const requiredSetupShape = z.object({
+  scope: z.enum(["global", "project"]),
+  model: z.string(),
 }).shape;
 
 function sdkTools(actions: AssistantActions, cfg: AssistantConfig) {
@@ -34,6 +35,8 @@ function sdkTools(actions: AssistantActions, cfg: AssistantConfig) {
     tool("restart_worker", "Restart the proxy worker", empty.shape, async () => ({ content: [{ type: "text", text: await actions.restart_worker({}) }] })),
     tool("run_doctor", "Run copilot-reverse health checks", empty.shape, async () => ({ content: [{ type: "text", text: await actions.run_doctor({}) }] })),
     tool("recent_requests", "List recent proxied requests", empty.shape, async () => ({ content: [{ type: "text", text: await actions.recent_requests({}) }] })),
+    tool("recent_errors", "List recent failed/cut requests with their messages (incl. stream runaways)", empty.shape, async () => ({ content: [{ type: "text", text: await actions.recent_errors({}) }] })),
+    tool("metrics", "Show request totals, error count, and per-model average latency", empty.shape, async () => ({ content: [{ type: "text", text: await actions.metrics({}) }] })),
   ];
 
   const listModels = cfg.listModels;
@@ -47,11 +50,12 @@ function sdkTools(actions: AssistantActions, cfg: AssistantConfig) {
   if (setupClient) {
     for (const client of ["claude", "codex"] as const) {
       const label = client === "claude" ? "Claude Code" : "Codex";
-      tools.push(tool(`setup_${client}`, `Configure ${label} to use the copilot-reverse proxy (writes its config). scope defaults to "global" (all projects); model defaults to the current chat model.`, setupShape, async (args: { scope?: "global" | "project"; model?: string }) => {
-        const scope = args.scope ?? "global";
-        const model = args.model ?? cfg.model;
-        const r = await setupClient(client, scope, model);
-        return { content: [{ type: "text", text: `configured ${label} (${scope}) with model ${model} — wrote ${r.path}; keys: ${r.changed.join(", ") || "(no change)"}` }] };
+      // scope+model are REQUIRED (not defaulted): config writes are not reversible-by-undo, so the
+      // assistant must confirm both with the user first rather than silently writing the global scope
+      // with the current model. The prompt tells it to ask; making the args required enforces it.
+      tools.push(tool(`setup_${client}`, `Configure ${label} to use the proxy. REQUIRES scope ("global"=all projects / "project"=here) AND model — ask the user for both before calling; do not assume.`, requiredSetupShape, async (args: { scope: "global" | "project"; model: string }) => {
+        const r = await setupClient(client, args.scope, args.model);
+        return { content: [{ type: "text", text: `configured ${label} (${args.scope}) with model ${args.model} — wrote ${r.path}; keys: ${r.changed.join(", ") || "(no change)"}` }] };
       }) as unknown as (typeof tools)[number]);
     }
   }
@@ -98,9 +102,11 @@ export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, pri
       systemPrompt:
         "You are copilot-reverse's built-in assistant for the local Copilot proxy. Be concise. " +
         "When the user expresses an intent you have a tool for, CALL THE TOOL instead of explaining. " +
-        "Tools: get_status, restart_worker, run_doctor, recent_requests, list_models (show available " +
-        "models + context windows), setup_claude / setup_codex (configure those clients to use the proxy). " +
-        "E.g. 'list models' -> call list_models; 'set up claude' -> call setup_claude.",
+        "Tools: get_status, restart_worker, run_doctor, recent_requests, recent_errors, metrics, list_models " +
+        "(models + context windows), setup_claude / setup_codex (configure those clients). " +
+        "SETUP RULE: setup_claude/setup_codex WRITE config and need scope (global=all projects / project=here) " +
+        "AND model. Before calling, confirm BOTH with the user — if unstated, ask (offer list_models). Never assume. " +
+        "E.g. 'list models' -> list_models; 'set up claude' -> ask scope+model, then setup_claude.",
       permissionMode: "bypassPermissions",
       includePartialMessages: true,
       ...(abortController ? { abortController } : {}),
