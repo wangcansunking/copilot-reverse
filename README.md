@@ -105,7 +105,15 @@ By default the proxy is **localhost** — bound to `127.0.0.1`, reachable only f
 another device (a second laptop, a phone, a teammate) use it, run `/network` and switch to **LAN**:
 
 - The worker rebinds to all interfaces and the panel shows your **LAN URL** (e.g. `http://192.168.1.5:7891`) and a generated **access key**.
-- On the other machine, point your tool at that URL and send the key — `Authorization: Bearer <key>` (OpenAI/Codex) or `x-api-key: <key>` (Anthropic/Claude Code). Requests **without a valid key are rejected (401)**.
+- On the other machine, point your tool at that URL **plus the protocol path** — `…:7891/anthropic` for Claude Code, `…:7891/openai` for Codex/OpenAI — and send the key: `Authorization: Bearer <key>` (OpenAI/Codex) or `x-api-key: <key>` (Anthropic/Claude Code). Requests **without a valid key are rejected (401)**.
+
+```bash
+# On the remote machine — Claude Code against the shared proxy:
+export ANTHROPIC_BASE_URL=http://192.168.1.5:7891/anthropic
+export ANTHROPIC_API_KEY=<the key from /network>
+claude
+```
+
 - LAN is **fail-closed**: you can't enable it without a key, and the proxy refuses to serve if a key ever goes missing — it's never an open relay. Rotate the key anytime from the same panel. Switch back to localhost to make it private again.
 
 > The supervisor/control plane (dashboard, restart) always stays on localhost — only the model proxy is ever exposed, and only behind the key.

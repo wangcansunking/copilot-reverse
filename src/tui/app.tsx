@@ -389,7 +389,8 @@ export function App({
           const r = await setAccessMode("lan"); setNet(r); setScreen(null);
           add({ type: "card", title: "/network", tone: "ok", lines: [
             "✓ LAN mode — the proxy is now reachable from other machines (worker restarting to re-bind)",
-            r.lanUrl ? `LAN URL   ${r.lanUrl}` : "",
+            r.lanUrl ? `Claude    ${r.lanUrl}/anthropic` : "",
+            r.lanUrl ? `Codex     ${r.lanUrl}/openai` : "",
             r.key ? `key       ${r.key}` : "",
             "send the key as Authorization: Bearer <key> or x-api-key — requests without it are rejected (401)",
           ].filter(Boolean) });

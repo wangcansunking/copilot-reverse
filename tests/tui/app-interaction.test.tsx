@@ -331,6 +331,8 @@ describe("TUI: /network access mode", () => {
     expect(f).toMatch(/LAN mode/);
     expect(f).toContain("SECRETKEY");        // key revealed so it can be copied to other machines
     expect(f).toContain("192.168.1.5:7891"); // LAN URL shown
+    expect(f).toContain("/anthropic");       // protocol path spelled out (Claude Code can't connect without it)
+    expect(f).toContain("/openai");          // and for Codex
   });
 
   it("from LAN, the first action switches back to localhost (private)", async () => {

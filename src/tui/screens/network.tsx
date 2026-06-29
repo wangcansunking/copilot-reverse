@@ -34,8 +34,9 @@ export function NetworkScreen({ info, onAction }: { info: NetworkInfo; onAction:
       {row("mode", isLan ? "LAN — reachable from other machines" : "localhost — loopback only (private)", isLan ? theme.accent : theme.ready)}
       {row("access key", info.key ?? "(none set)", info.key ? theme.output : theme.muted)}
       {isLan && info.lanUrl && row("LAN URL", info.lanUrl)}
+      {isLan && info.lanUrl && <Text><Text color={theme.muted}>{"".padEnd(12)}</Text><Text color={theme.muted}>{`└ Claude: ${info.lanUrl}/anthropic · Codex: ${info.lanUrl}/openai`}</Text></Text>}
       {isLan
-        ? <Text color={theme.muted}>other machines: set base URL to the LAN URL above + send the key as <Text color={theme.output}>Authorization: Bearer …</Text> or <Text color={theme.output}>x-api-key</Text></Text>
+        ? <Text color={theme.muted}>other machines: set base URL to the LAN URL + protocol path above, and send the key as <Text color={theme.output}>Authorization: Bearer …</Text> or <Text color={theme.output}>x-api-key</Text></Text>
         : <Text color={theme.muted}>localhost is the safe default — only this machine can reach the proxy</Text>}
       <Text> </Text>
       <Select items={items} onSubmit={(v) => onAction(v.value as NetworkAction)} onCancel={() => onAction("back")} />
