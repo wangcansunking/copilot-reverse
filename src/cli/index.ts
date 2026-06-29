@@ -213,6 +213,7 @@ async function launchTui(): Promise<void> {
       title: "copilot-reverse",
       initialModel: persistedModel ?? DEFAULT_MODEL,
       statusSource: () => client.status(),
+      metricsSource: () => client.requests(),
       readStatus: () => readClientStatus(),
       modelLimits,
       onChat,
