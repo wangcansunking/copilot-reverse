@@ -32,6 +32,10 @@ export function claudeCopilotReverseEnv(base: string, apiKey: string, model: str
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80",
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     CLAUDE_CODE_ATTRIBUTION_HEADER: "0", // keep prompt caching working on a non-Anthropic gateway
+    // Populate Claude Code's /model picker from our /anthropic/v1/models so the user can switch
+    // models natively. Coexists with ANTHROPIC_MODEL (which stays the 1M default — it does NOT lock
+    // the picker). Claude Code >=2.1.129 only; older builds ignore it. Picker lists claude* ids.
+    CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY: "1",
   };
 }
 

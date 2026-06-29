@@ -3,6 +3,11 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-29 (native /model picker)** — setup writes CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
+  so Claude Code populates /model from our /anthropic/v1/models; ANTHROPIC_MODEL[1m] stays the 1M
+  default and does NOT lock the picker (verified vs docs). Reset clears the new key. Picker lists
+  claude* ids; CC >=2.1.129. Project suite **422 passed**, e2e **43 passed**, build clean.
+
 - **2026-06-29 (TUI UX batch)** — Status shows per-scope client model (not just a check); chat
   setup tools require scope+model (ask before write); added recent_errors/metrics chat tools for
   command parity; /report body restructured to the #5 template; heartbeat interval configurable;
