@@ -25,4 +25,14 @@ describe("assistant actions", () => {
     const a = buildActions(client() as any);
     expect(await a.run_doctor({})).toMatch(/github-auth/);
   });
+  it("recent_errors surfaces runaway/error rows, green when none", async () => {
+    const a = buildActions(client() as any);
+    expect(await a.recent_errors({})).toMatch(/green/);
+    const withErr = buildActions({ ...client(), requests: vi.fn(async () => [{ ts: 1, endpoint: "/v1/messages", model: "claude-opus-4.8", status: 200, latencyMs: 99, error: "runaway stream cut (repetition)" }]) } as any);
+    expect(await withErr.recent_errors({})).toMatch(/runaway/);
+  });
+  it("metrics reports totals and per-model latency", async () => {
+    const c = buildActions({ ...client(), requests: vi.fn(async () => [{ ts: 1, endpoint: "/v1/messages", model: "gpt-4o", status: 200, latencyMs: 20 }]) } as any);
+    expect(await c.metrics({})).toMatch(/requests: 1/);
+  });
 });

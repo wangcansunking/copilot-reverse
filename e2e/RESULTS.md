@@ -3,6 +3,11 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-29 (TUI UX batch)** — Status shows per-scope client model (not just a check); chat
+  setup tools require scope+model (ask before write); added recent_errors/metrics chat tools for
+  command parity; /report body restructured to the #5 template; heartbeat interval configurable;
+  versioned "what's new" banner shown ~3 launches. Project suite **421 passed**, e2e **43 passed**, build clean.
+
 - **2026-06-29 (runaway → /report)** — A guard trip now finishes 200 but tags the metric with a
   runaway reason (repetition/max_output/deadline) on all three backends. `recentErrors`/`aggregate`
   treat any tagged 200 as an error, and `/report` builds a "Stream runaways" section + a dedicated

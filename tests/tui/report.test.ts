@@ -24,8 +24,11 @@ describe("report", () => {
     expect(decodeURIComponent(url)).toContain("context_length_exceeded");
   });
 
-  it("body includes diagnostics (version, platform, doctor, recent errors)", () => {
+  it("body follows the #5 template (Summary/Environment/Repro) + diagnostics", () => {
     const body = buildIssueBody(input);
+    expect(body).toContain("### Summary");
+    expect(body).toContain("### Environment");
+    expect(body).toContain("### Steps to reproduce");
     expect(body).toContain("0.0.1");
     expect(body).toContain("win32 node-v20");
     expect(body).toContain("github-auth");

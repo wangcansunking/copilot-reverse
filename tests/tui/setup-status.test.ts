@@ -8,16 +8,16 @@ import { readClientStatus } from "../../src/tui/setup/status.js";
 const tmp = (p: string) => mkdtempSync(join(tmpdir(), p));
 
 describe("readClientStatus", () => {
-  it("reports per-scope (user/project) config presence from the real files", () => {
+  it("reports per-scope (user/project) config presence + pinned model from the real files", () => {
     const home = tmp("home-"), cwd = tmp("proj-");
-    expect(readClientStatus({ home, cwd }).claude).toEqual({ user: false, project: false });
+    expect(readClientStatus({ home, cwd }).claude).toMatchObject({ user: false, project: false });
 
-    applyClaude("project", { ANTHROPIC_BASE_URL: "http://127.0.0.1:7891", ANTHROPIC_API_KEY: "k" }, { home, cwd });
-    expect(readClientStatus({ home, cwd }).claude).toEqual({ user: false, project: true });
+    applyClaude("project", { ANTHROPIC_BASE_URL: "http://127.0.0.1:7891", ANTHROPIC_API_KEY: "k", ANTHROPIC_MODEL: "claude-opus-4.8[1m]" }, { home, cwd });
+    expect(readClientStatus({ home, cwd }).claude).toMatchObject({ user: false, project: true, projectModel: "claude-opus-4.8[1m]" });
 
-    applyCodex("global", { OPENAI_BASE_URL: "http://127.0.0.1:7891/v1", OPENAI_API_KEY: "k" }, { home, cwd });
+    applyCodex("global", { OPENAI_BASE_URL: "http://127.0.0.1:7891/v1", OPENAI_API_KEY: "k", OPENAI_MODEL: "gpt-5.4" }, { home, cwd });
     const s = readClientStatus({ home, cwd });
-    expect(s.codex).toEqual({ user: true, project: false });
+    expect(s.codex).toMatchObject({ user: true, project: false, userModel: "gpt-5.4" });
   });
 
   it("ignores a non-copilot-reverse base url (a user's own Anthropic endpoint)", () => {

@@ -55,7 +55,9 @@ export function startSupervisor(): { stop: () => void } {
 
   // Periodically re-check the GitHub token so the UI reflects an expired/revoked login within ~60s,
   // instead of only on the next failed request or a manual /status.
-  const heartbeat = new GithubHeartbeat(() => readGhToken(dataDir()));
+  const heartbeat = new GithubHeartbeat(() => readGhToken(dataDir()), probeGithubAuth, undefined, {
+    intervalMs: config.heartbeat.intervalMs, initialDelayMs: config.heartbeat.initialDelayMs,
+  });
 
   const app = createControlApp({
     db, getState: () => state,
