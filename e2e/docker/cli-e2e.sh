@@ -108,6 +108,16 @@ note "claude -p with canonical opus [1m] -> answers via Copilot"
 OPUS=$(ANTHROPIC_MODEL="claude-opus-4-8[1m]" claude -p "Reply with exactly: OPUS_OK" --output-format json 2>/dev/null | jq -r '.result // empty')
 check "canonical opus [1m] id resolves to Copilot + answers" 'echo "$OPUS" | grep -q "OPUS_OK"' "claude (claude-opus-4-8[1m]) replied: \`${OPUS}\`"
 
+# --- 9) the DEFAULT ANTHROPIC_MODEL setup writes must be a canonical dashed [1m] id ---------------
+# Regression: setup once wrote Copilot's dotted id (claude-opus-4.8[1m]) which Claude Code's picker
+# couldn't match -> stuck on "Opus 4 (1M)". setup must emit the DASHED canonical id, and that id must
+# answer. Derive it from the real setup code so the test tracks whatever model setup defaults to.
+note "default ANTHROPIC_MODEL (setup) -> dashed canonical + answers"
+DEF=$(node -e 'import("/app/dist/tui/setup/clients.js").then(m=>process.stdout.write(m.claudeCopilotReverseEnv("b","k","claude-opus-4.8",1000000).ANTHROPIC_MODEL))')
+check "setup default model is dashed canonical [1m]" '[ "$DEF" = "claude-opus-4-8[1m]" ]' "setup writes ANTHROPIC_MODEL=\`${DEF}\`"
+DEFOUT=$(ANTHROPIC_MODEL="$DEF" claude -p "Reply with exactly: DEFAULT_OK" --output-format json 2>/dev/null | jq -r '.result // empty')
+check "setup default model answers via Copilot" 'echo "$DEFOUT" | grep -q "DEFAULT_OK"' "claude ($DEF) replied: \`${DEFOUT}\`"
+
 # --- teardown -----------------------------------------------------------------------------------
 kill "$WPID" 2>/dev/null
 

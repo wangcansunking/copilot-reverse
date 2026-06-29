@@ -1,5 +1,6 @@
 export interface Endpoint { host: string; port: number; apiKey: string }
 export interface ClientSetup { env: Record<string, string>; instructions: string }
+import { toCanonical } from "../../core/model-canonical.js";
 
 export function claudeCodeConfig(e: Endpoint): ClientSetup {
   const base = `http://${e.host}:${e.port}/anthropic`;
@@ -10,11 +11,13 @@ export function claudeCodeConfig(e: Endpoint): ClientSetup {
 }
 export const ONE_M_SUFFIX = "[1m]";
 
-// Claude Code switches to its 1M context window only when ANTHROPIC_MODEL ends with `[1m]` — that
-// suffix is its built-in signal for a 1M model. Mirror agent-maestro: append it for models whose
-// window is in the ~1M band (800K..1.5M). Without it Claude Code assumes 200K -> "context 100%"
-// and /compact fails. The proxy strips the suffix again before forwarding to Copilot.
+// Claude Code switches to its 1M window only when ANTHROPIC_MODEL ends with `[1m]`, and only matches
+// the model to its native picker entry when the id is the DASHED canonical form it knows
+// (claude-opus-4-8, not Copilot's dotted claude-opus-4.8). Route the default model through toCanonical
+// so it's both dashed and 1M-badged for the known families; for non-claude ids keep the legacy
+// context-window suffix. The proxy strips [1m] + fuzzy-maps back to Copilot before forwarding.
 export function withClaude1mSuffix(model: string, contextWindow?: number): string {
+  if (model.startsWith("claude-")) return toCanonical(model).id;
   return contextWindow && contextWindow > 800_000 && contextWindow < 1_500_000 && !model.endsWith(ONE_M_SUFFIX)
     ? `${model}${ONE_M_SUFFIX}`
     : model;

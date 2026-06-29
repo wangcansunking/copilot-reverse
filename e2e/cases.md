@@ -96,6 +96,7 @@ not part of `npm test`. It writes a markdown report after each run. Checks:
 | `[1m]` model id | resolveModel strip | `gpt-4o[1m]` still answers `ONEM_OK` |
 | model discovery | `/anthropic/v1/models` | picker gets dashed `claude-opus-4-8[1m]`, no dotted ids leak |
 | canonical opus | `/anthropic/v1/messages` | `claude-opus-4-8[1m]` resolves to Copilot opus + answers `OPUS_OK` |
+| setup default model | `claudeCopilotReverseEnv` | the default ANTHROPIC_MODEL is dashed `claude-opus-4-8[1m]` + answers `DEFAULT_OK` |
 
 ## HTTP edge-case Docker e2e (hermetic — no real Copilot)
 
