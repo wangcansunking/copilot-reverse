@@ -188,10 +188,11 @@ async function launchTui(): Promise<void> {
 
   const persistedModel = readChatModel(dataDir());
 
-  // "What's new" banner: keyed by version so each release re-announces, shown ~3 launches then quiet.
+  // "What's new" banner: MAJOR changes only — keyed by version so each release re-announces, shown
+  // ~3 launches then quiet. Minor fixes/polish do NOT go here; reserve it for things worth noticing.
   const CHANGE_ID = `v${APP_VERSION}`;
   const changeBanner = shouldShowChange(dataDir(), CHANGE_ID)
-    ? { lines: ["• runaway streams now cut cleanly (no more frozen 'code code code')", "• /report files a prefilled issue when a model degenerates", "• /status shows each client's scope + model"] }
+    ? { lines: ["• runaway streams now cut cleanly — no more frozen 'code code code' sessions"] }
     : undefined;
 
   // Startup overview. The token was already validated above (re-auth happens before we get here), so

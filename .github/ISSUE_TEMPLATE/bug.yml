@@ -1,0 +1,56 @@
+name: Bug report
+description: Report a problem with copilot-reverse (proxy, TUI, client setup, or a model issue)
+title: "copilot-reverse: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Tip: from inside the app, `/report` opens a pre-filled issue with
+        diagnostics (version, health checks, recent errors) — **never** your prompt content. Fill
+        the sections below and it's ready to file.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One or two sentences — what went wrong, and what you expected instead.
+      placeholder: e.g. Claude Code froze on an endless "code code code" stream and never recovered.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Version + platform + client.
+      value: |
+        - copilot-reverse:
+        - platform (OS / Node):
+        - client: Claude Code / Codex / other
+        - model:
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: What you did, which client/model, and how reliably it reproduces.
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: Paste `/report` output, `/doctor`, or recent `/logs` — no prompt bodies needed.
+    validations:
+      required: false
+  - type: textarea
+    id: fixes
+    attributes:
+      label: Suggested fixes (optional)
+      description: Any ideas, workarounds you found, or a guess at the root cause.
+    validations:
+      required: false
