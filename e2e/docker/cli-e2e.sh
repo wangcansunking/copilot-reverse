@@ -95,6 +95,19 @@ note "claude -p with a [1m] model id -> still answers"
 ONEM=$(ANTHROPIC_MODEL="gpt-4o[1m]" claude -p "Reply with exactly: ONEM_OK" --output-format json 2>/dev/null | jq -r '.result // empty')
 check "[1m] model id round-trips" 'echo "$ONEM" | grep -q "ONEM_OK"' "claude (gpt-4o[1m]) replied: \`${ONEM}\`"
 
+# --- 7) model discovery: picker gets canonical ids claude code recognises ------------------------
+# /anthropic/v1/models must advertise DASHED canonical ids (claude-opus-4-8) + a friendly display +
+# [1m] badge — Copilot's dotted ids (claude-opus-4.8) would leave the native /model picker blank.
+note "/anthropic/v1/models -> canonical ids + 1M badge"
+MODELS=$(curl -sf "http://127.0.0.1:$PORT/anthropic/v1/models")
+check "picker advertises dashed opus id + 1M badge" 'echo "$MODELS" | grep -q "claude-opus-4-8\[1m\]"' "models: $(echo "$MODELS" | jq -rc '[.data[].id]' 2>/dev/null)"
+check "no dotted claude id leaks to picker" '! echo "$MODELS" | grep -Eq "claude-(opus|sonnet)-4\.[0-9]"' "dotted ids would blank the picker"
+
+# --- 8) canonical opus [1m] picker id answers end-to-end (real 1M model, real Copilot) -----------
+note "claude -p with canonical opus [1m] -> answers via Copilot"
+OPUS=$(ANTHROPIC_MODEL="claude-opus-4-8[1m]" claude -p "Reply with exactly: OPUS_OK" --output-format json 2>/dev/null | jq -r '.result // empty')
+check "canonical opus [1m] id resolves to Copilot + answers" 'echo "$OPUS" | grep -q "OPUS_OK"' "claude (claude-opus-4-8[1m]) replied: \`${OPUS}\`"
+
 # --- teardown -----------------------------------------------------------------------------------
 kill "$WPID" 2>/dev/null
 

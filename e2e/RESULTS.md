@@ -3,6 +3,14 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-29 (canonical model ids)** — `/anthropic/v1/models` now maps Copilot's dotted ids to the
+  dashed canonical ids Claude Code's native picker recognises (`claude-opus-4.8` → `claude-opus-4-8[1m]`,
+  friendly display, `[1m]` for opus 4.6/4.7/4.8 + sonnet 4.6); inbound `resolveModel` strips `[1m]` and
+  fuzzy-maps back to the dotted Copilot id. New `model-canonical` unit + router round-trip; HTTP e2e
+  asserts no dotted ids leak + opus carries `[1m]`; CLI e2e drives the real `claude` through
+  `claude-opus-4-8[1m]` (caught a sonnet-4.5 dotted leak — fixed). Suite **433 passed**, HTTP e2e
+  **18 passed**, CLI e2e **all passed**, build clean.
+
 - **2026-06-29 (native /model picker)** — setup writes CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1
   so Claude Code populates /model from our /anthropic/v1/models; ANTHROPIC_MODEL[1m] stays the 1M
   default and does NOT lock the picker (verified vs docs). Reset clears the new key. Picker lists
