@@ -10,11 +10,20 @@ Guidance for Claude Code when working in this repo.
 - Keep `master` clean; open a PR from the worktree branch to merge.
 - Small, single-file edits, docs-only tweaks, or quick investigations don't need a worktree — use judgment.
 - When the work is merged or abandoned, remove the worktree.
+- **After a PR merges:** exit the worktree, `git push origin --delete <branch>`, remove the worktree, delete the local branch, then fast-forward `master` to the merged commit (`git fetch origin && git merge --ff-only origin/master`) so the next task branches from latest.
 
 ## Commit hygiene
 
 - Stage by explicit path (`git add <path>`). **Never** `git add -A` / `git add .` — the tree is shared and may hold unrelated changes.
 - Create new commits; don't amend published ones.
+
+## Releases: every change must ship a changeset
+
+**Every PR that changes behavior MUST add a changeset, or it will never publish.** Release is changeset-driven: `release.yml` runs on push to `master`, and with no file in `.changes/` the release job is skipped — no version bump, no `npm publish`. PRs merged without one silently leave npm stale.
+
+- Scaffold one: `node scripts/changesets.mjs new <patch|minor|major> <slug>`, then edit the body (it lands in `CHANGELOG.md`).
+- Choose: `patch` = fix, `minor` = feature, `major` = breaking. Highest level among pending changesets wins.
+- Exempt only: docs/test-only tweaks with no shipped behavior change.
 
 ## Dev essentials
 
