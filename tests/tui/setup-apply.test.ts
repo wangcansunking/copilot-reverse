@@ -66,6 +66,16 @@ describe("applyClaude", () => {
     expect(s.env.ANTHROPIC_BASE_URL).toBe("http://x"); // added
     expect(r.changed).toEqual(["ANTHROPIC_BASE_URL"]);
   });
+  it("strips a conflicting ANTHROPIC_AUTH_TOKEN so Claude Code stops warning 'both set'", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "proj-"));
+    mkdirSync(join(cwd, ".claude"));
+    writeFileSync(join(cwd, ".claude", "settings.json"), JSON.stringify({ env: { ANTHROPIC_AUTH_TOKEN: "stale", KEEP: "1" } }));
+    const r = applyClaude("project", { ANTHROPIC_API_KEY: "k" }, { cwd });
+    const s = JSON.parse(readFileSync(r.path, "utf8"));
+    expect(s.env.ANTHROPIC_AUTH_TOKEN).toBeUndefined(); // removed
+    expect(s.env.ANTHROPIC_API_KEY).toBe("k");
+    expect(s.env.KEEP).toBe("1");                        // unrelated keys preserved
+  });
 });
 
 describe("applyCodex", () => {
