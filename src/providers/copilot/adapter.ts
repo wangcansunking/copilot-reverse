@@ -80,11 +80,19 @@ export class CopilotAdapter implements ProviderAdapter {
     const data = (await res.json()) as any;
     const choice = data.choices[0];
     const content: ContentBlock[] = [];
-    if (choice.message.content) content.push({ type: "text", text: choice.message.content });
+    // Recover inline-XML tool calls in non-stream replies too (same reason as the stream path).
+    let xmlTool = false;
+    if (choice.message.content) {
+      const ex = new ToolCallExtractor();
+      for (const ev of [...ex.feed(choice.message.content), ...ex.flush()]) {
+        if (ev.kind === "text") { if (ev.text) content.push({ type: "text", text: ev.text }); }
+        else { xmlTool = true; content.push({ type: "tool_use", id: ev.tool.id, name: ev.tool.name, input: ev.tool.input }); }
+      }
+    }
     for (const tc of choice.message.tool_calls ?? []) content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input: safeJson(tc.function.arguments) });
     return {
       id: data.id ?? `cmpl-${randomUUID().replace(/-/g, "")}`, model: req.model, content,
-      finishReason: choice.finish_reason === "tool_calls" ? "tool_use" : choice.finish_reason === "length" ? "length" : "stop",
+      finishReason: choice.finish_reason === "tool_calls" || xmlTool ? "tool_use" : choice.finish_reason === "length" ? "length" : "stop",
       usage: { promptTokens: data.usage?.prompt_tokens ?? 0, completionTokens: data.usage?.completion_tokens ?? 0 },
     };
   }
@@ -122,9 +130,11 @@ export class CopilotAdapter implements ProviderAdapter {
       f === "tool_calls" ? "tool_use" : f === "length" ? "length" : "stop";
 
     // Some models emit a tool call as inline XML text instead of native tool_calls (more likely on
-    // long/tool-heavy turns). When the request has tools, route assistant text through an extractor
-    // that recovers those blocks into structured tool calls; otherwise text passes straight through.
-    const extractor = req.tools?.length ? new ToolCallExtractor() : undefined;
+    // long/tool-heavy turns) — and they do it even when THIS request declared no tools (a follow-up
+    // turn, or a model that ignores the tools field). Always run assistant text through the extractor;
+    // it only captures on the distinctive `<invoke>`/`<function_calls>` sentinel and flushes anything
+    // unparseable back as text, so plain prose is unaffected.
+    const extractor = new ToolCallExtractor();
     let extractedTool = false;
     let extIdx = 100; // separate index space so recovered tools never collide with native tool_calls
     const toChunks = (events: ExtractEvent[]): CanonicalChunk[] => {

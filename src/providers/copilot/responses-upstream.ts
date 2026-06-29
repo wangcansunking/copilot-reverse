@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CanonicalRequest, CanonicalResponse, CanonicalChunk, CanonicalMessage, ContentBlock } from "../../core/canonical.js";
+import { ToolCallExtractor, type ExtractEvent } from "../../core/tool-xml.js";
 
 // Outbound translation to GitHub Copilot's OpenAI Responses API. Newer Copilot models (e.g. gpt-5.5)
 // are served ONLY on /responses — their `supported_endpoints` omits /chat/completions — so the adapter
@@ -87,7 +88,14 @@ export function parseResponsesResult(data: any): CanonicalResponse {
   for (const item of data.output ?? []) {
     if (item.type === "message") {
       const text = (item.content ?? []).filter((p: any) => p.type === "output_text").map((p: any) => p.text ?? "").join("");
-      if (text) content.push({ type: "text", text });
+      if (text) {
+        // Recover inline-XML tool calls here too (some models emit them as output_text).
+        const ex = new ToolCallExtractor();
+        for (const ev of [...ex.feed(text), ...ex.flush()]) {
+          if (ev.kind === "text") { if (ev.text) content.push({ type: "text", text: ev.text }); }
+          else { sawTool = true; content.push({ type: "tool_use", id: ev.tool.id, name: ev.tool.name, input: ev.tool.input }); }
+        }
+      }
     } else if (item.type === "function_call") {
       sawTool = true;
       content.push({ type: "tool_use", id: item.call_id ?? item.id, name: item.name ?? "", input: safeJson(item.arguments) });
@@ -116,6 +124,20 @@ export async function* streamResponses(res: Response): AsyncIterable<CanonicalCh
   let usage: { promptTokens: number; completionTokens: number; cachedTokens?: number } | undefined;
   const toolByOutputIndex = new Map<number, number>(); // responses output_index -> canonical tool index
   let nextToolIndex = 0;
+  // Some models stream a tool call as inline XML text instead of a function_call item; recover it.
+  // Extracted tools use a high index space so they never collide with native function_call indices.
+  const extractor = new ToolCallExtractor();
+  let extIdx = 100, extractedTool = false;
+  const toChunks = (events: ExtractEvent[]): CanonicalChunk[] => {
+    const out: CanonicalChunk[] = [];
+    for (const ev of events) {
+      if (ev.kind === "text") { if (ev.text) out.push({ kind: "text", delta: ev.text, done: false }); continue; }
+      const index = extIdx++; extractedTool = true;
+      out.push({ kind: "tool_use_start", index, id: ev.tool.id, name: ev.tool.name, done: false });
+      out.push({ kind: "tool_use_delta", index, argsDelta: JSON.stringify(ev.tool.input), done: false });
+    }
+    return out;
+  };
 
   const usageOf = (u: any) => u ? { promptTokens: u.input_tokens ?? 0, completionTokens: u.output_tokens ?? 0, cachedTokens: u.input_tokens_details?.cached_tokens ?? 0 } : undefined;
 
@@ -143,7 +165,7 @@ export async function* streamResponses(res: Response): AsyncIterable<CanonicalCh
           break;
         }
         case "response.output_text.delta":
-          if (ev.delta) yield { kind: "text", delta: ev.delta, done: false };
+          if (ev.delta) for (const ch of toChunks(extractor.feed(ev.delta))) yield ch;
           break;
         case "response.function_call_arguments.delta": {
           const idx = toolByOutputIndex.get(ev.output_index);
@@ -151,7 +173,7 @@ export async function* streamResponses(res: Response): AsyncIterable<CanonicalCh
           break;
         }
         case "response.completed":
-          if (toolByOutputIndex.size) finishReason = "tool_use";
+          if (toolByOutputIndex.size || extractedTool) finishReason = "tool_use";
           usage = usageOf(ev.response?.usage) ?? usage;
           break;
         case "response.incomplete":
@@ -165,5 +187,7 @@ export async function* streamResponses(res: Response): AsyncIterable<CanonicalCh
       }
     }
   }
+  for (const ch of toChunks(extractor.flush())) yield ch;
+  if (extractedTool && finishReason === "stop") finishReason = "tool_use";
   yield { kind: "done", done: true, finishReason, usage };
 }
