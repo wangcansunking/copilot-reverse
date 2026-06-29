@@ -10,6 +10,7 @@ import { dataDir, dbPath } from "../shared/paths.js";
 import { readGhToken } from "../shared/creds.js";
 import { probeGithubAuth } from "../providers/copilot/token.js";
 import { GithubHeartbeat, SIGNED_OUT_DETAIL } from "./github-heartbeat.js";
+import { appendCrashLog } from "../shared/crash-log.js";
 import type { WorkerState, DoctorCheck } from "../shared/control-types.js";
 
 export function startSupervisor(): { stop: () => void } {
@@ -24,6 +25,9 @@ export function startSupervisor(): { stop: () => void } {
     onStateChange: (s) => { state = s; bus.emit("state", { state: s }); },
     onCrash: (d, exitCode, stderrTail) => {
       recordRestart(db, { ts: Date.now(), reason: d.markedUnhealthy ? "unhealthy" : "crash", exitCode, stderrTail, backoffMs: d.backoffMs, markedUnhealthy: d.markedUnhealthy ? 1 : 0 });
+      // Also persist to crash.log so a worker crash is diagnosable post-mortem — the DB stderrTail can
+      // be empty if the worker died before flushing; this keeps whatever it did emit.
+      appendCrashLog("worker-crash", `exit=${exitCode} unhealthy=${d.markedUnhealthy} backoff=${d.backoffMs}ms\n${stderrTail || "(no stderr captured)"}`);
       bus.emit("crash", { exitCode, ...d });
     },
     onWorkerMessage: (m) => {

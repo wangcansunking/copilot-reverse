@@ -3,6 +3,9 @@ export interface RestartPolicy {
   windowMs: number;
   baseBackoffMs: number;
   maxBackoffMs: number;
+  // After the worker is marked unhealthy, wait this long then try ONCE more (resetting the window),
+  // instead of giving up forever — so a transient crash burst doesn't leave the daemon dead.
+  unhealthyCooldownMs: number;
 }
 export interface AppConfig {
   bindHost: string;
@@ -20,7 +23,7 @@ export function defaultConfig(): AppConfig {
     bindHost: "127.0.0.1",
     supervisorPort: 7890,
     workerPort: 7891,
-    restart: { maxCrashes: 5, windowMs: 60_000, baseBackoffMs: 500, maxBackoffMs: 8_000 },
+    restart: { maxCrashes: 5, windowMs: 60_000, baseBackoffMs: 500, maxBackoffMs: 8_000, unhealthyCooldownMs: 30_000 },
     // Empty = pass the requested model straight through to Copilot. Add entries (or "*") to remap.
     modelMap: {},
     // Set MAESTRO_REPORT_REPO=owner/repo to override where /report files diagnostics issues.

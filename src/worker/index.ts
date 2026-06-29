@@ -11,7 +11,9 @@ import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 import type { WorkerToSupervisor } from "../shared/ipc.js";
 
-function send(msg: WorkerToSupervisor): void { if (process.send) process.send(msg); }
+// Sending after the parent tore down the IPC channel throws ERR_IPC_CHANNEL_CLOSED; guard it so a
+// crash-time report can't itself become a second, masking crash.
+function send(msg: WorkerToSupervisor): void { try { if (process.connected) process.send?.(msg); } catch { /* channel gone */ } }
 
 const cfg = defaultConfig();
 const port = Number(process.env.WORKER_PORT ?? cfg.workerPort);
@@ -46,4 +48,16 @@ const server = app.listen(port, host, () => send({ type: "ready", port }));
 const hb = setInterval(() => send({ type: "heartbeat", ts: Date.now() }), 5_000);
 
 process.on("message", (m: { type?: string }) => { if (m?.type === "shutdown") { clearInterval(hb); server.close(() => process.exit(0)); } });
-process.on("uncaughtException", (e) => { send({ type: "error", message: e.message, stack: e.stack }); process.exit(1); });
+
+// Crash diagnostics: write to STDERR FIRST so the supervisor's stderr capture (and crash.log) records
+// the reason even when the IPC channel is already gone; the IPC send is a best-effort extra. Without
+// the unhandledRejection handler, a stray floating rejection silently kills the worker on Node ≥15 —
+// the exact "exit 1, empty stderr" crash loop we kept seeing.
+function fatal(kind: string, e: unknown): never {
+  const detail = e instanceof Error ? `${e.message}\n${e.stack ?? ""}` : String(e);
+  try { process.stderr.write(`worker ${kind}: ${detail}\n`); } catch { /* nothing more we can do */ }
+  send({ type: "error", message: e instanceof Error ? e.message : String(e), stack: e instanceof Error ? e.stack : undefined });
+  process.exit(1);
+}
+process.on("uncaughtException", (e) => fatal("uncaughtException", e));
+process.on("unhandledRejection", (e) => fatal("unhandledRejection", e));
