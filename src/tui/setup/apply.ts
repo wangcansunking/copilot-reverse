@@ -7,8 +7,10 @@ export interface ApplyResult { path: string; changed: string[] }
 export interface PlaceOpts { home?: string; cwd?: string }
 
 // The env keys copilot-reverse writes for each client — so reset knows exactly what to remove.
+// ANTHROPIC_AUTH_TOKEN isn't one we write, but reset strips it too: if it lingers alongside our
+// API key, Claude Code warns "both set", so a clean reset should clear the conflict.
 export const CLAUDE_ENV_KEYS = [
-  "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL",
+  "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "ANTHROPIC_AUTH_TOKEN",
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
   "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_ATTRIBUTION_HEADER",
 ];
@@ -31,6 +33,9 @@ export function applyClaude(scope: Scope, env: Record<string, string>, o: PlaceO
   }
   const envObj = (settings.env && typeof settings.env === "object" ? settings.env : {}) as Record<string, string>;
   const changed: string[] = [];
+  // We authenticate with ANTHROPIC_API_KEY; a leftover ANTHROPIC_AUTH_TOKEN here makes Claude Code
+  // warn "both set · auth may not work" — strip it so our setup leaves a clean, single-credential env.
+  if ("ANTHROPIC_AUTH_TOKEN" in envObj) { delete envObj.ANTHROPIC_AUTH_TOKEN; changed.push("ANTHROPIC_AUTH_TOKEN(removed)"); }
   for (const [k, v] of Object.entries(env)) { if (envObj[k] !== v) { envObj[k] = v; changed.push(k); } }
   settings.env = envObj;
   writeFileSync(path, JSON.stringify(settings, null, 2) + "\n");
