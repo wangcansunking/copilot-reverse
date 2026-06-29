@@ -20,6 +20,7 @@ describe("claudeCopilotReverseEnv", () => {
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
     expect(env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE).toBe("80");
     expect(env.CLAUDE_CODE_ATTRIBUTION_HEADER).toBe("0");
+    expect(env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY).toBe("1"); // /model picker is populated, not locked
   });
   it("omits the window/suffix when it's unknown", () => {
     const env = claudeCopilotReverseEnv("http://x", "k", "gpt-4o");
