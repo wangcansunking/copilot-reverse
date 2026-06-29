@@ -62,6 +62,9 @@ jobs:
   docker-e2e:
     runs-on: ubuntu-latest
     name: docker-e2e
+    env:
+      CR_GH_TOKEN: ${{ secrets.CR_GH_TOKEN }}
+      CR_WEBIQ: ${{ secrets.CR_WEBIQ }}
     steps:
       - uses: actions/checkout@v4
 
@@ -75,11 +78,9 @@ jobs:
       # Real CLI e2e: actual claude + codex against the daemon. Needs a real token, so it only runs
       # when CR_GH_TOKEN is configured (forks / no-secret pushes skip it, keeping CI green). The token
       # (and optional WebIQ key) are written to mount files at runtime — never baked into the image.
+      # NOTE: `secrets` can't be used in a step `if:`, so gate on the env value instead.
       - name: Real CLI e2e (gated on token secret)
-        if: ${{ secrets.CR_GH_TOKEN != '' }}
-        env:
-          CR_GH_TOKEN: ${{ secrets.CR_GH_TOKEN }}
-          CR_WEBIQ: ${{ secrets.CR_WEBIQ }}
+        if: ${{ env.CR_GH_TOKEN != '' }}
         run: |
           mkdir -p secrets out
           printf '{"ghToken":"%s"}' "$CR_GH_TOKEN" > secrets/creds.json
