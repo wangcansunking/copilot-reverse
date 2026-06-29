@@ -15,7 +15,7 @@ const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 // Fast restart policy so tests don't wait on real backoff.
 function cfg(over: Partial<AppConfig["restart"]> = {}): AppConfig {
-  return { ...defaultConfig(), restart: { maxCrashes: 3, windowMs: 60_000, baseBackoffMs: 10, maxBackoffMs: 40, ...over } };
+  return { ...defaultConfig(), restart: { maxCrashes: 3, windowMs: 60_000, baseBackoffMs: 10, maxBackoffMs: 40, unhealthyCooldownMs: 50, ...over } };
 }
 function hooks() {
   const states: WorkerState[] = [];
@@ -72,16 +72,28 @@ describe("WorkerMonitor lifecycle", () => {
     m.stop();
   });
 
-  it("marks the worker 'unhealthy' after maxCrashes and stops respawning", async () => {
+  it("marks the worker 'unhealthy' after maxCrashes, but does not respawn during the cooldown", async () => {
     const { h, states, crashes } = hooks();
     process.env.FAKE_MODE = "instant"; // crash before ever becoming ready, immediately
-    const m = new WorkerMonitor(cfg({ maxCrashes: 3, baseBackoffMs: 5, maxBackoffMs: 10 }), fixture, h);
+    const m = new WorkerMonitor(cfg({ maxCrashes: 3, baseBackoffMs: 5, maxBackoffMs: 10, unhealthyCooldownMs: 10_000 }), fixture, h);
     m.start();
     await waitFor(() => states.includes("unhealthy"), 3000);
     expect(crashes.length).toBeGreaterThanOrEqual(3);
-    const crashCountAtUnhealthy = crashes.length;
-    await delay(100); // give any rogue respawn a chance
-    expect(crashes.length).toBe(crashCountAtUnhealthy); // no further respawns after unhealthy
+    const at = crashes.length;
+    await delay(100); // shorter than the 10s cooldown — no respawn yet
+    expect(crashes.length).toBe(at); // paused (not dead forever, not hot-looping)
+    m.stop();
+  });
+
+  it("recovers from 'unhealthy' by trying again after the cooldown (not a permanent give-up)", async () => {
+    const { h, states, crashes } = hooks();
+    process.env.FAKE_MODE = "instant"; // keeps crashing — proves it RE-ATTEMPTS, not that it heals
+    const m = new WorkerMonitor(cfg({ maxCrashes: 3, baseBackoffMs: 5, maxBackoffMs: 10, unhealthyCooldownMs: 80 }), fixture, h);
+    m.start();
+    await waitFor(() => states.includes("unhealthy"), 3000);
+    const at = crashes.length;
+    await waitFor(() => crashes.length > at, 3000); // cooldown elapsed → respawned → crashed again
+    expect(crashes.length).toBeGreaterThan(at);
     m.stop();
   });
 

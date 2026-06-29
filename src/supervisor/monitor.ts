@@ -17,7 +17,7 @@ export class RestartController {
     const backoffMs = Math.min(this.policy.baseBackoffMs * 2 ** (this.consecutive - 1), this.policy.maxBackoffMs);
     return { backoffMs, markedUnhealthy: this.crashTimes.length >= this.policy.maxCrashes, crashesInWindow: this.crashTimes.length };
   }
-  reset(): void { this.consecutive = 0; }
+  reset(): void { this.consecutive = 0; this.crashTimes = []; }
 }
 
 export interface MonitorHooks {
@@ -55,7 +55,14 @@ export class WorkerMonitor {
       if (this.stopped) return;
       const d = this.controller.onCrash();
       this.hooks.onCrash(d, code, this.stderrTail);
-      if (d.markedUnhealthy) { this.set("unhealthy"); return; }
+      if (d.markedUnhealthy) {
+        // Don't give up forever: a transient crash burst (token rotation, a flaky upstream) shouldn't
+        // leave the daemon permanently dead. Mark unhealthy, then after a cooldown reset the window and
+        // try once more — recovering on its own if the cause has passed.
+        this.set("unhealthy");
+        setTimeout(() => { if (!this.stopped) { this.controller.reset(); this.spawn(); } }, this.config.restart.unhealthyCooldownMs);
+        return;
+      }
       this.set("crashed");
       setTimeout(() => this.spawn(), d.backoffMs);
     });
