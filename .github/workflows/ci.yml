@@ -39,6 +39,25 @@ jobs:
       - name: Run tests
         run: npm test
 
+  changeset:
+    # Every behavior PR must ship a changeset, else release.yml skips publish and npm stays stale
+    # (the v0.5.3 freeze). Docs/test-only PRs are exempt via a "no-changeset" label.
+    if: github.event_name == 'pull_request' && !contains(github.event.pull_request.labels.*.name, 'no-changeset')
+    runs-on: ubuntu-latest
+    name: changeset
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - name: Require a changeset
+        run: |
+          if [ "$(node scripts/changesets.mjs status | node -p 'JSON.parse(require("fs").readFileSync(0)).hasChangeset')" = "true" ]; then
+            echo "changeset present"
+          else
+            echo "::error::No changeset in .changes/. Add one: node scripts/changesets.mjs new <patch|minor|major> <slug>. Docs/test-only? Label the PR 'no-changeset'."
+            exit 1
+          fi
+
   coverage:
     runs-on: ubuntu-latest
     name: coverage
