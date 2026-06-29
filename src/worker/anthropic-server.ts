@@ -89,14 +89,16 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
                 res.write(frame("content_block_start", { type: "content_block_start", index: textIndex, content_block: { type: "text", text: "" } }));
               }
               res.write(frame("content_block_delta", { type: "content_block_delta", index: textIndex, delta: { type: "text_delta", text: chunk.delta } }));
-              // Degenerate-stream kill-switch: a model looping on a short token, or any stream past
-              // the wall-clock deadline, is cut here so the client gets a bounded answer not a freeze.
-              if (guard.push(chunk.delta) || Date.now() > deadline) { runaway = true; runawayReason = guard.reason ?? "deadline"; turnStop = "length"; break; }
+              // Degenerate-stream kill-switch: a model looping on a short token is cut here.
+              if (guard.push(chunk.delta)) { runaway = true; runawayReason = guard.reason ?? "repetition"; turnStop = "length"; break; }
             } else if (chunk.kind === "tool_use_start") {
               if (!byCopilotIdx.has(chunk.index)) { const t = { id: chunk.id, name: chunk.name, args: "" }; byCopilotIdx.set(chunk.index, t); buffered.push(t); }
             } else if (chunk.kind === "tool_use_delta") {
               const t = byCopilotIdx.get(chunk.index); if (t) t.args += chunk.argsDelta;
             }
+            // Wall-clock backstop on EVERY chunk kind: a tool-call-only runaway never feeds the text
+            // guard, so without this a model spamming calls would relay until the socket died.
+            if (Date.now() > deadline) { runaway = true; runawayReason = "deadline"; turnStop = "length"; break; }
           }
           if (textIndex !== undefined) res.write(frame("content_block_stop", { type: "content_block_stop", index: textIndex }));
 

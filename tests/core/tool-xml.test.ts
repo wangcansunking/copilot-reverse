@@ -61,6 +61,31 @@ describe("ToolCallExtractor", () => {
     expect(tools(e)).toHaveLength(0);
   });
 
+  // Parse-faithful: a closed block that yields NO tool (empty name, malformed body) must pass
+  // through as text, not be swallowed. Swallowing produces a turn with no text and no tool, which
+  // loops the model into endless empty "call:" emissions.
+  it("passes an empty-name invoke through as text (does not swallow)", () => {
+    const e = run(['<invoke name=""><parameter name="x">1</parameter></invoke>']);
+    expect(tools(e)).toHaveLength(0);
+    expect(text(e)).toBe('<invoke name=""><parameter name="x">1</parameter></invoke>');
+  });
+
+  it("passes a closed-but-unparseable block through as text", () => {
+    const e = run(["<function_calls>garbage no invoke</function_calls>"]);
+    expect(tools(e)).toHaveLength(0);
+    expect(text(e)).toBe("<function_calls>garbage no invoke</function_calls>");
+  });
+
+  // The user's SSE concern: an empty invoke split across chunks must wait for the close tag, not
+  // parse mid-stream. Only after the block is fully closed does it pass through as text.
+  it("waits for the close tag on a split empty invoke, then emits as text", () => {
+    const ex = new ToolCallExtractor();
+    expect(ex.feed('<invoke name="">part')).toHaveLength(0); // unclosed: hold, never emit
+    const e = [...ex.feed("ial</invoke>"), ...ex.flush()];
+    expect(tools(e)).toHaveLength(0);
+    expect(text(e)).toBe('<invoke name="">partial</invoke>');
+  });
+
   it("handles two tool calls inside one wrapper", () => {
     const e = run([
       '<function_calls><invoke name="a"><parameter name="x">1</parameter></invoke><invoke name="b"><parameter name="y">2</parameter></invoke></function_calls>',

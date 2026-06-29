@@ -96,9 +96,9 @@ export function parseResponsesResult(data: any): CanonicalResponse {
           else { sawTool = true; content.push({ type: "tool_use", id: ev.tool.id, name: ev.tool.name, input: ev.tool.input }); }
         }
       }
-    } else if (item.type === "function_call") {
+    } else if (item.type === "function_call" && item.name) {
       sawTool = true;
-      content.push({ type: "tool_use", id: item.call_id ?? item.id, name: item.name ?? "", input: safeJson(item.arguments) });
+      content.push({ type: "tool_use", id: item.call_id ?? item.id, name: item.name, input: safeJson(item.arguments) });
     }
   }
   const finishReason: CanonicalResponse["finishReason"] =
@@ -157,10 +157,13 @@ export async function* streamResponses(res: Response): AsyncIterable<CanonicalCh
       switch (ev.type) {
         case "response.output_item.added": {
           const item = ev.item ?? {};
-          if (item.type === "function_call") {
+          // Gate on a present name, mirroring the chat adapter's `tc.function?.name` guard: a
+          // nameless function_call would surface as a bare "call:" the client can't run. No name,
+          // no start — its later arg deltas find no mapping and are dropped, not rendered.
+          if (item.type === "function_call" && item.name) {
             const idx = nextToolIndex++;
             toolByOutputIndex.set(ev.output_index, idx);
-            yield { kind: "tool_use_start", index: idx, id: item.call_id ?? item.id ?? `call_${idx}`, name: item.name ?? "", done: false };
+            yield { kind: "tool_use_start", index: idx, id: item.call_id ?? item.id ?? `call_${idx}`, name: item.name, done: false };
           }
           break;
         }
