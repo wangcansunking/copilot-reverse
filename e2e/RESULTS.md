@@ -17,9 +17,11 @@ and update this file (paste the summary).
   before the body parser, `/healthz` stays open), a `bindHostProvider` in `WorkerMonitor`, and a
   `/network` TUI panel (+ `/config` row, HUD `net` indicator). Covered by network-store, worker-auth
   (incl. the `exposed` backstop + a same-length-key check for the constant-time compare),
-  monitor-lifecycle (bind host echoed), and TUI-interaction unit tests, plus 10 access-mode HTTP
-  edge-case checks in `http-e2e.mjs` (incl. gate-before-body-parser: a keyless oversized body → 401,
-  not 413). Suite **472 passed**, e2e **43 passed**, build clean.
+  monitor-lifecycle (bind host echoed), and TUI-interaction unit tests, plus access-mode HTTP
+  edge-case checks in `http-e2e.mjs` (gate-before-body-parser: a keyless oversized body → 401 not 413;
+  and a **bind-boundary** probe — a 127.0.0.1-bound worker is raw-TCP **refused** on the container's
+  LAN IP while a 0.0.0.0-bound one is reachable there but still 401s keyless, proving localhost is
+  "can't even connect", not just unauthorized). Suite **472 passed**, e2e **43 passed**, build clean.
 
 - **2026-06-29 (canonical model ids)** — `/anthropic/v1/models` now maps Copilot's dotted ids to the
   dashed canonical ids Claude Code's native picker recognises (`claude-opus-4.8` → `claude-opus-4-8[1m]`,

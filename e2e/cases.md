@@ -123,3 +123,12 @@ via both `Authorization: Bearer` and `x-api-key` (200); rejects a keyless **over
 LAN with **no key configured is fail-closed** (503, never an open proxy). The default is restored
 before the golden round-trips.
 
+It also pins the **bind boundary** — the kernel-level reason localhost mode is "you can't even
+connect", not a 401. The harness boots a throwaway worker bound to `127.0.0.1` and raw-TCP-probes it
+on the container's non-loopback IPv4: the connect is **refused** (no socket on that interface — the
+request never reaches the HTTP/auth layer), while loopback stays reachable. It then boots the same
+worker bound to `0.0.0.0` (LAN's bind) and confirms it **is** reachable on that exact LAN address, and
+that a keyless request over it still gets **401**. Same IP, same probe, only the bind host changes →
+open↔refused proves the boundary, not just the config value. (Skipped only if the container has no
+non-loopback IPv4.)
+
