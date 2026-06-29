@@ -9,7 +9,7 @@ export interface ReportInput {
   platform: string;        // e.g. "win32 node-v20.11.0"
   status: StatusResponse;
   doctor: DoctorCheck[];
-  errors: MetricSample[];  // recent failed requests (status >= 400)
+  errors: MetricSample[];  // recent failed requests (status >= 400, or a 200 cut short by the guard)
 }
 
 // A diagnostics-only report. It contains metrics, doctor output, and worker restart reasons —
@@ -30,6 +30,13 @@ export function buildIssueBody(i: ReportInput): string {
       ? i.errors.map((e) => `- \`${e.status}\` ${e.endpoint} ${e.model} — ${e.error ?? "(no message)"}`)
       : ["- (none)"]),
   ];
+  // A runaway is a 200-but-tagged turn: model degenerated, guard cut it. Pull these out so an issue
+  // about freezes reads clearly (it's the recurring "code code code" failure, not a normal error).
+  const runaways = i.errors.filter((e) => e.status < 400 && /runaway/.test(e.error ?? ""));
+  if (runaways.length) {
+    lines.push("", "### Stream runaways (model degenerated, cut early)",
+      ...runaways.map((e) => `- ${e.endpoint} ${e.model} after ${e.latencyMs}ms — ${e.error}`));
+  }
   if (i.status.restarts.length) {
     lines.push("", "### Recent worker restarts",
       ...i.status.restarts.slice(0, 5).map((r) => `- ${new Date(r.ts).toISOString()} ${r.reason} exit=${r.exitCode ?? "-"} ${r.stderrTail.slice(0, 120)}`));
@@ -40,6 +47,8 @@ export function buildIssueBody(i: ReportInput): string {
 }
 
 export function buildIssueTitle(i: ReportInput): string {
+  const runaway = i.errors.find((e) => e.status < 400 && /runaway/.test(e.error ?? ""));
+  if (runaway) return `copilot-reverse: stream runaway (${runaway.model})`;
   const first = i.errors[0]?.error;
   return `copilot-reverse report: ${first ? first.slice(0, 70) : i.status.workerState}`;
 }

@@ -3,6 +3,12 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-29 (runaway → /report)** — A guard trip now finishes 200 but tags the metric with a
+  runaway reason (repetition/max_output/deadline) on all three backends. `recentErrors`/`aggregate`
+  treat any tagged 200 as an error, and `/report` builds a "Stream runaways" section + a dedicated
+  title so users file a prefilled issue (like #5) when a model degenerates. New unit tests in
+  report/metrics-agg/anthropic-server. Project suite **417 passed**, build clean.
+
 - **2026-06-29 (stream runaway guards)** — Added `RunawayGuard` (repetition + max-output cap) + a
   120s wall-clock deadline to all three streaming backends (Anthropic, OpenAI chat, OpenAI Responses).
   A degenerate upstream ("code\ncode\ncode…", never stops) is now cut to a clean `max_tokens` turn

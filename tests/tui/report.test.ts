@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildIssueUrl, buildIssueBody, PLACEHOLDER_REPO } from "../../src/tui/report.js";
+import { buildIssueUrl, buildIssueBody, buildIssueTitle, PLACEHOLDER_REPO } from "../../src/tui/report.js";
 import type { MetricSample } from "../../src/shared/control-types.js";
 
 const errors: MetricSample[] = [
@@ -34,5 +34,15 @@ describe("report", () => {
 
   it("exposes a placeholder repo constant for the unset guard", () => {
     expect(PLACEHOLDER_REPO).toMatch(/OWNER/);
+  });
+
+  it("surfaces a runaway (200 cut by the guard) as its own section + title", () => {
+    const runaway: MetricSample = { ts: 2, endpoint: "/anthropic/v1/messages", model: "claude-opus-4-8", status: 200, latencyMs: 120000, error: "runaway stream cut (repetition) — model degenerated, ended early as max_tokens" };
+    const i = { ...input, errors: [runaway] };
+    expect(buildIssueTitle(i)).toMatch(/stream runaway/);
+    const body = buildIssueBody(i);
+    expect(body).toContain("Stream runaways");
+    expect(body).toContain("repetition");
+    expect(body).toContain("120000ms");
   });
 });

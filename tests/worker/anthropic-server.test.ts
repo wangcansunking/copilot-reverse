@@ -224,6 +224,22 @@ describe("worker Anthropic endpoint", () => {
     expect(delta!.data.delta.stop_reason).toBe("max_tokens");       // clean truncation, native-feel
   });
 
+  it("records a runaway turn as a reportable metric (200 with a runaway reason)", async () => {
+    const runaway: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c1", model: "m", content: [], finishReason: "stop", usage: { promptTokens: 0, completionTokens: 0 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        for (let i = 0; i < 5000; i++) yield { kind: "text", delta: "code\n", done: false };
+        yield { kind: "done", done: true, finishReason: "stop" };
+      },
+    };
+    const metrics: { status: number; error?: string }[] = [];
+    const a = createWorkerApp(new Router([runaway], { "*": "gpt-4o" }), (m) => { metrics.push(m); });
+    await request(a).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
+    expect(metrics.at(-1)?.status).toBe(200);                        // still a 200 — answer was delivered, just truncated
+    expect(metrics.at(-1)?.error).toMatch(/runaway.*repetition/);    // tagged so /report + /logs surface it
+  });
+
   it("records the failure message in the metric when a streaming request throws", async () => {
     const failing: ProviderAdapter = {
       name: "copilot",

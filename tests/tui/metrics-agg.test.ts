@@ -25,4 +25,13 @@ describe("metrics aggregate", () => {
     expect(errs[0].error).toMatch(/context_length_exceeded/);
     expect(recentErrors(samples, 1)).toHaveLength(1);
   });
+
+  it("treats a 200-but-tagged turn (runaway cut) as an error so it gets reported", () => {
+    const samples: MetricSample[] = [
+      { ts: 2, endpoint: "/anthropic/v1/messages", model: "claude-opus-4-8", status: 200, latencyMs: 120000, error: "runaway stream cut (repetition)" },
+      { ts: 1, endpoint: "/v1/chat/completions", model: "gpt-4o", status: 200, latencyMs: 10 },
+    ];
+    expect(aggregate(samples).errors).toBe(1);
+    expect(recentErrors(samples, 10).map((e) => e.error)).toEqual(["runaway stream cut (repetition)"]);
+  });
 });
