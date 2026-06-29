@@ -91,6 +91,19 @@ not part of `npm test`. It writes a markdown report after each run. Checks:
 | `codex exec` | `/openai/responses` | the model returns `CODEX_OK` |
 | `claude -p` | `/anthropic/v1/messages` | the model returns `CLAUDE_OK` |
 | `claude` web search | gateway `web_search` loop → WebIQ | a grounded answer (a Rust `1.x` version), no error |
+| codex multi-line | `/openai/responses` | two-line reply preserved (`LINE_ONE`/`LINE_TWO`) |
+| claude constrained | `/anthropic/v1/messages` | `6*7` → `42` |
+| `[1m]` model id | resolveModel strip | `gpt-4o[1m]` still answers `ONEM_OK` |
+
+## HTTP edge-case Docker e2e (hermetic — no real Copilot)
+
+Boots the **real** worker (:7891) + supervisor (:7890) and drives them over HTTP on a dummy token, so
+error paths, supervision lifecycle, and the crash-guard regression run without a real token or quota.
+`e2e/docker/Dockerfile.http` + `http-e2e.mjs`; runs on every CI push. Checks: malformed JSON→400,
+>20mb→413, unknown route→404, models/healthz/count_tokens shapes, status/doctor/requests/dashboard,
+restart recovery, dead-socket broadcast churn survival, and a deterministic `EventBus` isolation guard
+that **fails on a reverted PR #8** (throwing subscriber must not escape `emit`). Real round-trips run
+only when a real token is mounted.
 
 This black-box path caught two bugs nothing else did: a Codex tool-translation `400` (a `custom`/
 `tool_search` tool forwarded nameless → Copilot rejects → "stream closed before response.completed"),
