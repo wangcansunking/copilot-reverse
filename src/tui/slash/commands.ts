@@ -34,11 +34,17 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
     if (!errs.length) return ["no request errors logged — everything's green ✓"];
     return errs.map((e) => `${new Date(e.ts).toISOString()} ${e.status} ${e.endpoint} ${e.model} — ${e.error ?? "(no message)"}`);
   } });
-  reg.add({ name: "/metrics", describe: "request metrics + recent errors", run: async (_a, c) => {
+  reg.add({ name: "/metrics", describe: "request metrics, tokens, cost + recent errors", run: async (_a, c) => {
     const reqs = await c.client.requests();
     const a = aggregate(reqs);
     if (!a.total) return ["no requests yet"];
-    const lines = [`requests: ${a.total}  errors: ${a.errors}`, ...a.byModel.map((r) => `  ${r.model.padEnd(20)} n=${r.count} avg=${r.avgMs}ms`)];
+    const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+    const usd = (n: number) => `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+    const lines = [
+      `requests: ${a.total}  errors: ${a.errors}  tokens: ${k(a.tokensIn)}↑ ${k(a.tokensOut)}↓  est. cost: ${usd(a.costUsd)}`,
+      ...a.byModel.map((r) => `  ${r.model.padEnd(20)} n=${r.count} avg=${r.avgMs}ms  ${k(r.tokensIn)}↑ ${k(r.tokensOut)}↓ ~${usd(r.costUsd)}`),
+      "  cost is a list-price estimate (Copilot is flat-fee)",
+    ];
     const errs = recentErrors(reqs, 5);
     if (errs.length) {
       lines.push("recent errors:");

@@ -88,6 +88,11 @@ async function main() {
       log("\n[golden] real round-trips");
       const a = await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "gpt-4o", max_tokens: 16, messages: [{ role: "user", content: "say OK" }] }));
       check("anthropic /messages 200", a.s === 200, a.t.slice(0, 120));
+      // Token metrics: after a real round-trip the supervisor should log non-null in/out token counts.
+      await sleep(500);
+      const reqs = (await jget(supUrl("/api/requests"))).j?.requests ?? [];
+      const top = reqs[0] ?? {};
+      check("metric carries token counts", typeof top.tokensIn === "number" && typeof top.tokensOut === "number", JSON.stringify(top));
     } else log("\n[golden] SKIPPED (no real token)");
   } finally { sup.kill(); }
   log(`\n${failures === 0 ? "ALL PASSED" : failures + " FAILED"} (${passes} passed)`);
