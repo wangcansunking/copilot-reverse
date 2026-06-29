@@ -8,6 +8,7 @@ import { errorHint } from "./errors.js";
 import { CopilotAuthError } from "../providers/copilot/token.js";
 import { isGatewayTool, type GatewayToolRunner } from "../core/server-tools.js";
 import type { ContentBlock } from "../core/canonical.js";
+import { RunawayGuard } from "../core/stream-guard.js";
 
 const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 const safeJson = (s: string): unknown => { try { return JSON.parse(s); } catch { return {}; } };
@@ -15,6 +16,12 @@ const safeJson = (s: string): unknown => { try { return JSON.parse(s); } catch {
 // Bounds the gateway tool loop so a model that calls web_search every turn (or a runner that always
 // returns "search more") can never spin forever inside one request.
 const MAX_TOOL_ITERS = 5;
+
+// Wall-clock cap on a single streaming turn. The model occasionally degenerates into emitting the
+// same short token forever ("code\ncode\ncode…") and never sends a stop, which would otherwise relay
+// for minutes and freeze the client. The RunawayGuard catches the repetition fast; this is the
+// backstop for any slow-but-endless stream. On either trip we end the turn cleanly as max_tokens.
+const STREAM_DEADLINE_MS = 120_000;
 
 export function mountAnthropic(app: Express, router: Router, onMetric: MetricSink, runner?: GatewayToolRunner): void {
   // Model discovery — Anthropic list shape. Claude Desktop / Anthropic-protocol clients GET this
@@ -57,8 +64,13 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         let next = 0;
         let lastPrompt = estInput, lastCached = 0, sumCompletion = 0;
         let finalStop: "stop" | "length" | "tool_use" | "error" = "stop";
+        // Runaway protection spans the whole request: repeated-token degeneration + a wall-clock
+        // deadline. Tripping ends the stream as a clean max_tokens turn instead of hanging.
+        const guard = new RunawayGuard();
+        const deadline = start + STREAM_DEADLINE_MS;
+        let runaway = false;
 
-        for (let iter = 0; iter < MAX_TOOL_ITERS; iter++) {
+        for (let iter = 0; iter < MAX_TOOL_ITERS && !runaway; iter++) {
           let textIndex: number | undefined;                              // Anthropic index of this turn's text block
           const byCopilotIdx = new Map<number, { id: string; name: string; args: string }>();
           const buffered: { id: string; name: string; args: string }[] = []; // tool calls seen this turn, in order
@@ -76,6 +88,9 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
                 res.write(frame("content_block_start", { type: "content_block_start", index: textIndex, content_block: { type: "text", text: "" } }));
               }
               res.write(frame("content_block_delta", { type: "content_block_delta", index: textIndex, delta: { type: "text_delta", text: chunk.delta } }));
+              // Degenerate-stream kill-switch: a model looping on a short token, or any stream past
+              // the wall-clock deadline, is cut here so the client gets a bounded answer not a freeze.
+              if (guard.push(chunk.delta) || Date.now() > deadline) { runaway = true; turnStop = "length"; break; }
             } else if (chunk.kind === "tool_use_start") {
               if (!byCopilotIdx.has(chunk.index)) { const t = { id: chunk.id, name: chunk.name, args: "" }; byCopilotIdx.set(chunk.index, t); buffered.push(t); }
             } else if (chunk.kind === "tool_use_delta") {
@@ -83,6 +98,10 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
             }
           }
           if (textIndex !== undefined) res.write(frame("content_block_stop", { type: "content_block_stop", index: textIndex }));
+
+          // Runaway tripped mid-text: stop now as max_tokens. Don't forward partial tool calls or
+          // loop into gateway tools — the turn was abandoned, not legitimately completed.
+          if (runaway) { finalStop = "length"; break; }
 
           const gatewayCalls = buffered.filter((t) => isGatewayTool(t.name));
 

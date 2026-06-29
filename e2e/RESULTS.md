@@ -3,6 +3,13 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-29 (stream runaway guards)** — Added `RunawayGuard` (repetition + max-output cap) + a
+  120s wall-clock deadline to all three streaming backends (Anthropic, OpenAI chat, OpenAI Responses).
+  A degenerate upstream ("code\ncode\ncode…", never stops) is now cut to a clean `max_tokens` turn
+  instead of freezing the session. Covered by `tests/core/stream-guard.test.ts` + an anthropic-server
+  integration test (5000-delta source, asserts `emitted < 5000` and `stop_reason: max_tokens`). Full
+  e2e: **43 passed / 0 failed**, project suite 414 passed, build clean.
+
 - **2026-06-29 (Docker e2e matrix + CI wiring)** — Added a third Docker e2e driver: a hermetic HTTP
   edge-case matrix (`e2e/docker/Dockerfile.http` + `http-e2e.mjs`) that boots the **real** worker +
   supervisor on a dummy token and drives them over HTTP — 15 checks covering proxy errors (malformed

@@ -6,6 +6,11 @@ import { openaiRequestToCanonical, canonicalToOpenAIResponse, canonicalChunkToOp
 import { responsesRequestToCanonical, canonicalToResponsesResponse, ResponsesSSE } from "../core/responses-inbound.js";
 import { errorHint } from "./errors.js";
 import { CopilotAuthError } from "../providers/copilot/token.js";
+import { RunawayGuard } from "../core/stream-guard.js";
+
+// Cut a single streaming turn that degenerates (model repeats one short token forever, never stops)
+// so the client gets a bounded answer instead of a frozen session. Mirrors the Anthropic backend.
+const STREAM_DEADLINE_MS = 120_000;
 
 export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink): void {
   // Model discovery — OpenAI list shape. Clients (LiteLLM-style gateways, "test connection" probes)
@@ -25,7 +30,12 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
         res.setHeader("content-type", "text/event-stream");
         res.setHeader("cache-control", "no-cache");
         const id = `chatcmpl-${randomUUID().replace(/-/g, "")}`; // unique per response, not constant
-        for await (const chunk of provider.stream(canon)) res.write(canonicalChunkToOpenAISSE(chunk, id, canon.model));
+        const guard = new RunawayGuard();
+        const deadline = start + STREAM_DEADLINE_MS;
+        for await (const chunk of provider.stream(canon)) {
+          res.write(canonicalChunkToOpenAISSE(chunk, id, canon.model));
+          if (chunk.kind === "text" && (guard.push(chunk.delta) || Date.now() > deadline)) break;
+        }
         res.end();
         metric(200);
       } else {
@@ -67,9 +77,11 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
         const argsByIdx = new Map<number, string>();
         let usage: { promptTokens: number; completionTokens: number } | undefined;
         let finish = "stop";
+        const guard = new RunawayGuard();
+        const deadline = start + STREAM_DEADLINE_MS;
         for await (const chunk of provider.stream(canon)) {
           if (chunk.done) { finish = chunk.finishReason ?? "stop"; usage = chunk.usage; break; }
-          if (chunk.kind === "text") for (const f of sse.text(chunk.delta)) res.write(f);
+          if (chunk.kind === "text") { for (const f of sse.text(chunk.delta)) res.write(f); if (guard.push(chunk.delta) || Date.now() > deadline) { finish = "length"; break; } }
           else if (chunk.kind === "tool_use_start") for (const f of sse.toolStart(chunk.index, chunk.id, chunk.name)) res.write(f);
           else if (chunk.kind === "tool_use_delta") { argsByIdx.set(chunk.index, (argsByIdx.get(chunk.index) ?? "") + chunk.argsDelta); for (const f of sse.toolArgs(chunk.index, chunk.argsDelta)) res.write(f); }
         }
