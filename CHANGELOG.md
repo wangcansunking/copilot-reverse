@@ -1,3 +1,7 @@
+## v0.8.0 — 2026-06-29
+
+Map Copilot model ids to the canonical ids Claude Code's native /model picker recognises, so models show friendly names and the 1M-context badge instead of bare ids. Outbound, `/anthropic/v1/models` dashes claude ids (`claude-opus-4.8` → `claude-opus-4-8[1m]`) and tags opus 4.6/4.7/4.8 + sonnet 4.6 as 1M; setup's default ANTHROPIC_MODEL is dashed the same way so the picker matches it; inbound, requests resolve back to the real Copilot model. GPT/o3 pass through unchanged.
+
 ## v0.7.0 — 2026-06-29
 
 feat(tui): `/metrics` now reports token usage (in/out) and an estimated cost per model and overall — the worker records prompt/completion tokens for every request (persisted in SQLite), and cost is a list-price estimate (Copilot is flat-fee). User messages also get a highlighted bar in the transcript so they stand out from muted system notes and assistant output.
