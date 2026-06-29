@@ -69,6 +69,23 @@ async function main() {
     check("dashboard HTML at /", (await fetch(supUrl("/"))).headers.get("content-type")?.includes("html"));
     check("doctor checks[]", Array.isArray((await jget(supUrl("/api/doctor"))).j?.checks));
     check("requests[]", Array.isArray((await jget(supUrl("/api/requests"))).j?.requests));
+
+    // /logs hardening: a real upstream failure (the dummy token 401s at Copilot) stores a metric
+    // error, which /logs renders one-per-line inside a bordered card. A multi-line body (a 502 returns
+    // an HTML page) once shattered that border. Drive a real failing request, read the REAL stored
+    // metric back from the supervisor, then run it through the REAL TUI formatter (dist oneLine) the
+    // /logs command uses — the rendered line must contain no newline, whatever the upstream sent.
+    log("\n[/logs] stored request error renders as a single contained line");
+    await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "gpt-4o", max_tokens: 8, messages: [{ role: "user", content: "hi" }] }));
+    await sleep(400);
+    const { oneLine } = await import("../../dist/shared/format.js");
+    const logged = (await jget(supUrl("/api/requests"))).j?.requests ?? [];
+    const failed = logged.find((r) => r.status >= 400 || r.error != null);
+    check("a failing request was logged", !!failed, JSON.stringify(logged[0] ?? {}).slice(0, 120));
+    if (failed) {
+      const rendered = `${new Date(failed.ts).toISOString()} ${failed.status} ${failed.endpoint} ${failed.model} — ${oneLine(failed.error, 160) || "(no message)"}`;
+      check("/logs line has no embedded newline", !/\r?\n/.test(rendered), JSON.stringify(rendered).slice(0, 160));
+    }
     await jpost(supUrl("/api/restart"), "{}"); await sleep(1500);
     check("worker ready after restart", (await jget(supUrl("/api/status"))).j?.workerState === "ready");
 

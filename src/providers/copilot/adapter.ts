@@ -3,6 +3,7 @@ import type { ProviderAdapter } from "../types.js";
 import type { CanonicalRequest, CanonicalResponse, CanonicalChunk, CanonicalMessage, ContentBlock } from "../../core/canonical.js";
 import { ToolCallExtractor, type ExtractEvent } from "../../core/tool-xml.js";
 import { canonicalToResponsesBody, parseResponsesResult, streamResponses, RESPONSES_URL } from "./responses-upstream.js";
+import { oneLine } from "../../shared/format.js";
 
 const CHAT_URL = "https://api.githubcopilot.com/chat/completions";
 interface TokenSource { get(): Promise<string> }
@@ -50,9 +51,10 @@ function headers(token: string) {
 }
 
 // Copilot puts the real reason (bad model, oversized prompt, unsupported tool, …) in the body —
-// surface it instead of a bare status code so failures are diagnosable.
+// surface it instead of a bare status code so failures are diagnosable. Flatten it to one line:
+// a 502 returns a whole HTML page, and the raw newlines would later shatter the bordered /logs card.
 async function errorDetail(res: Response): Promise<string> {
-  try { const t = (await res.text()).trim(); return t ? ` — ${t.slice(0, 400)}` : ""; }
+  try { const t = oneLine(await res.text(), 400); return t ? ` — ${t}` : ""; }
   catch { return ""; }
 }
 

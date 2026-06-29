@@ -4,6 +4,7 @@ import { aggregate, recentErrors } from "../panels/metrics-agg.js";
 import { openUrl as defaultOpenUrl } from "../../shared/open-url.js";
 import { buildIssueUrl, PLACEHOLDER_REPO } from "../report.js";
 import { APP_CHANGES } from "../../changes.js";
+import { oneLine } from "../../shared/format.js";
 
 export interface RegistryOpts {
   dashboardUrl?: string;            // supervisor URL the /dashboard command opens
@@ -32,7 +33,9 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
   reg.add({ name: "/logs", describe: "recent request errors (what failed & why)", run: async (_a, c) => {
     const errs = recentErrors(await c.client.requests(), 20);
     if (!errs.length) return ["no request errors logged — everything's green ✓"];
-    return errs.map((e) => `${new Date(e.ts).toISOString()} ${e.status} ${e.endpoint} ${e.model} — ${e.error ?? "(no message)"}`);
+    // oneLine() flattens the message: upstream failures can carry a whole HTML page (a Copilot 502)
+    // or a "raw\nhint" pair, and a newline here would shatter the bordered card it renders into.
+    return errs.map((e) => `${new Date(e.ts).toISOString()} ${e.status} ${e.endpoint} ${e.model} — ${oneLine(e.error, 160) || "(no message)"}`);
   } });
   reg.add({ name: "/metrics", describe: "request metrics, tokens, cost + recent errors", run: async (_a, c) => {
     const reqs = await c.client.requests();
@@ -48,7 +51,7 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
     const errs = recentErrors(reqs, 5);
     if (errs.length) {
       lines.push("recent errors:");
-      for (const e of errs) lines.push(`  ${e.status} ${e.model} — ${(e.error ?? "(no message)").slice(0, 80)}`);
+      for (const e of errs) lines.push(`  ${e.status} ${e.model} — ${oneLine(e.error, 80) || "(no message)"}`);
     }
     return lines;
   } });

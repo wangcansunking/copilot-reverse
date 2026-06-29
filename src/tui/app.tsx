@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
-import { loadingVerb } from "../shared/format.js";
+import { loadingVerb, oneLine } from "../shared/format.js";
 import { Repl, type CommandHint } from "./repl.js";
 import { SetupWizard, type SetupClient } from "./setup/wizard.js";
 import { ModelScreen } from "./screens/model.js";
@@ -94,12 +94,22 @@ export interface AppProps {
   githubStatus?: () => Promise<GithubLoginState>;
 }
 
+// Split card lines into physical rows: a single rendered <Text> with an embedded newline makes
+// Ink/Yoga mis-measure the box and the border bleeds (a Copilot 502's HTML body once did exactly
+// this). Exploding on newlines guarantees each row is its own <Text> — callers should still sanitize,
+// but the card alone can no longer be broken by multiline content. Exported for direct unit testing
+// (a TTY-less render harness can't reproduce the visual break, so we test the logic, not the pixels).
+export function cardRows(lines: string[]): string[] {
+  return lines.flatMap((l) => l.split(/\r?\n/));
+}
+
 function OutputCard({ title, lines, tone }: { title: string; lines: string[]; tone: "info" | "ok" | "error" }) {
   const border = tone === "error" ? theme.error : tone === "ok" ? theme.ready : theme.border;
+  const rows = cardRows(lines);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={border} paddingX={1} marginBottom={1}>
       <Text color={theme.accent} bold>{title}</Text>
-      {lines.map((l, i) => {
+      {rows.map((l, i) => {
         const m = /^(OK|FAIL)\s+(.*)$/.exec(l);
         if (m) {
           const ok = m[1] === "OK";
@@ -272,7 +282,7 @@ export function App({
     if (t === "/metrics" && metricsSource) {
       const reqs = await metricsSource();
       const agg = aggregate(reqs);
-      const errs = recentErrors(reqs, 5).map((e) => `${e.status} ${e.model} — ${(e.error ?? "(no message)").slice(0, 80)}`);
+      const errs = recentErrors(reqs, 5).map((e) => `${e.status} ${e.model} — ${oneLine(e.error, 80) || "(no message)"}`);
       add({ type: "metrics", agg, errors: errs });
       return;
     }

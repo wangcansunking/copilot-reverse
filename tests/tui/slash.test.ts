@@ -53,6 +53,26 @@ describe("slash commands", () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/metrics");
     expect(out.join("\n")).toMatch(/no requests yet/i);
   });
+  it("/logs flattens a multi-line error so each entry stays on one line", async () => {
+    const c = ctx();
+    c.client.requests = vi.fn(async () => [
+      { ts: 1700000000000, endpoint: "/anthropic/v1/messages", model: "claude-opus-4-8", status: 502, latencyMs: 10,
+        error: "copilot stream failed: 502 — <!DOCTYPE html>\n<html>\n  <body>502</body>\n</html>\nGitHub login expired — run /login" },
+    ]);
+    const out = await buildRegistry(c as any, endpoint).run("/logs");
+    // Each rendered entry must be exactly one physical line — no entry may smuggle in a newline.
+    for (const line of out) expect(line).not.toMatch(/\n/);
+    expect(out.join("")).toMatch(/502/);
+  });
+  it("/metrics flattens multi-line errors in its recent-errors tail", async () => {
+    const c = ctx();
+    c.client.requests = vi.fn(async () => [
+      { ts: 1700000000000, endpoint: "/anthropic/v1/messages", model: "claude-opus-4-8", status: 502, latencyMs: 10,
+        error: "boom\n<html>\n  <body>x</body>\n</html>" },
+    ]);
+    const out = await buildRegistry(c as any, endpoint).run("/metrics");
+    for (const line of out) expect(line).not.toMatch(/\n/);
+  });
   it("/metrics reports token totals and an estimated cost", async () => {
     const c = ctx();
     c.client.requests = vi.fn(async () => [

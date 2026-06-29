@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { render } from "ink-testing-library";
-import { App } from "../../src/tui/app.js";
+import { App, cardRows } from "../../src/tui/app.js";
 import { Registry } from "../../src/tui/slash/registry.js";
 
 function reg() {
@@ -94,5 +94,34 @@ describe("App", () => {
     const f = lastFrame() ?? "";
     expect(githubStatus).toHaveBeenCalled();  // /status is authoritative: it runs the live check
     expect(f).toMatch(/expired/i);            // and reflects the live result, not the stale cache
+  });
+
+  it("a command whose output smuggles in a newline still renders (defense-in-depth)", async () => {
+    // End-to-end smoke: a line with an embedded newline must not crash the card and all content
+    // survives. The border-integrity guarantee itself is unit-tested via cardRows() below — a
+    // TTY-less render harness pads the box to a fixed width and can't reproduce the visual break.
+    const r = new Registry({ client: {} as any, quit: vi.fn() });
+    r.add({ name: "/boom", describe: "x", run: async () => ["first\nsecond bled through", "tail"] });
+    const { stdin, lastFrame } = render(<App registry={r} title="m" />);
+    await new Promise((res) => setTimeout(res, 30));
+    stdin.write("/boom");
+    await new Promise((res) => setTimeout(res, 20));
+    stdin.write("\r");
+    await new Promise((res) => setTimeout(res, 60));
+    const frame = lastFrame() ?? "";
+    for (const word of ["first", "second", "tail"]) expect(frame).toContain(word);
+  });
+});
+
+describe("cardRows", () => {
+  it("explodes embedded newlines into separate physical rows", () => {
+    // The core defense: no returned row may contain a newline, so no single <Text> can ever carry one
+    // into the box and break the border. CRLF and LF both split.
+    const out = cardRows(["a\nb", "c\r\nd", "plain"]);
+    expect(out).toEqual(["a", "b", "c", "d", "plain"]);
+    for (const row of out) expect(row).not.toMatch(/\r?\n/);
+  });
+  it("leaves single-line input untouched", () => {
+    expect(cardRows(["one", "two"])).toEqual(["one", "two"]);
   });
 });

@@ -3,6 +3,18 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-29 (/logs card multiline fix)** — A Copilot 502 returns a whole HTML error page; its
+  ~400-char body (newlines + inline styles) was stored as the request's metric error and rendered by
+  `/logs` as one "line" inside a bordered Ink card, so the embedded newlines mis-measured the Yoga box
+  and the border bled across the screen. Fixed at three layers: a new `oneLine()` formatter collapses
+  any whitespace run (newlines/CR/tabs) to single spaces + truncates; `errorDetail` (adapter) applies
+  it at the source so the *stored* upstream error is already one line; `/logs` and both `/metrics`
+  paths re-flatten where they render; and `OutputCard` now explodes any multiline line into separate
+  rows (`cardRows`) as a final backstop. New units: `oneLine` (format), `cardRows` (app), an adapter
+  502-HTML test, two slash `/logs`+`/metrics` flatten tests. HTTP docker e2e gained a real check: drive
+  a failing request → read the real stored metric → render it through the real `dist` formatter → assert
+  no newline (**20 passed**, was 18). Full suite **454 passed** (60 files), build clean.
+
 - **2026-06-29 (canonical model ids)** — `/anthropic/v1/models` now maps Copilot's dotted ids to the
   dashed canonical ids Claude Code's native picker recognises (`claude-opus-4.8` → `claude-opus-4-8[1m]`,
   friendly display, `[1m]` for opus 4.6/4.7/4.8 + sonnet 4.6); inbound `resolveModel` strips `[1m]` and
