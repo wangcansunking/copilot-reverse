@@ -114,7 +114,18 @@ export ANTHROPIC_API_KEY=<the key from /network>
 claude
 ```
 
-- LAN is **fail-closed**: you can't enable it without a key, and the proxy refuses to serve if a key ever goes missing — it's never an open relay. Rotate the key anytime from the same panel. Switch back to localhost to make it private again.
+For **Codex** on the remote machine, set the base URL (with the `/openai` path) and the key in
+`~/.codex/config.toml` — the key goes in the `experimental_bearer_token` field:
+
+```toml
+# ~/.codex/config.toml on the remote machine
+[model_providers.copilot-reverse]
+base_url = "http://192.168.1.5:7891/openai"
+experimental_bearer_token = "<the key from /network>"
+```
+
+- LAN is **fail-closed**: you can't enable it without a key, and the proxy refuses to serve if a key ever goes missing — it's never an open relay. Rotate the key anytime from the same panel (remote clients then re-paste the new key). Switch back to localhost to make it private again.
+- **Firewall:** on Windows/macOS, the first time the worker binds all interfaces your OS may prompt to allow it — or you may need to add an inbound allow for port `7891`. If a second machine can't connect while the panel shows `⚠ LAN`, the host firewall is the usual cause.
 
 > The supervisor/control plane (dashboard, restart) always stays on localhost — only the model proxy is ever exposed, and only behind the key.
 

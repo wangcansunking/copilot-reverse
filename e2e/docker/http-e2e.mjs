@@ -105,9 +105,15 @@ async function main() {
     writeFileSync(NET, JSON.stringify({ mode: "lan", key: "e2e-secret" }));
     check("lan: no key → 401", (await fetch(wrkUrl("/openai/models"))).status === 401);
     check("lan: wrong key → 401", (await fetch(wrkUrl("/openai/models"), { headers: withKey("nope") })).status === 401);
+    // Same-length wrong key: rejected by the constant-time compare, not the length short-circuit.
+    check("lan: same-length wrong key → 401", (await fetch(wrkUrl("/openai/models"), { headers: withKey("e2e-secres") })).status === 401);
     check("lan: valid Bearer key → 200", (await fetch(wrkUrl("/openai/models"), { headers: withKey("e2e-secret") })).status === 200);
     check("lan: valid x-api-key → 200", (await fetch(wrkUrl("/openai/models"), { headers: { "x-api-key": "e2e-secret" } })).status === 200);
     check("lan: /healthz stays OPEN (supervisor probe)", (await fetch(wrkUrl("/healthz"))).status === 200);
+    // Gate runs BEFORE the json body parser: a keyless request with a >20mb body is rejected 401 (gate)
+    // — NOT 413 (parser) — proving an unauthenticated LAN client can't make the worker buffer a huge body.
+    const huge = JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "x".repeat(21 * 1024 * 1024) }] });
+    check("lan: oversized keyless body → 401 (gate before body parser, not 413)", (await jpost(wrkUrl("/openai/chat/completions"), huge)).s === 401);
     // Fail-closed: LAN with no key configured refuses ALL requests (503), never an open proxy.
     writeFileSync(NET, JSON.stringify({ mode: "lan" }));
     check("lan + no key → 503 fail-closed", (await fetch(wrkUrl("/openai/models"), { headers: withKey("anything") })).status === 503);

@@ -116,8 +116,10 @@ and empty terminal Responses events (`output_*.done` carried no text → Codex r
 
 It also covers the **network access modes** (#25): the worker auth gate reads `network.json` lazily,
 so the harness flips the posture on disk mid-run and asserts over real HTTP — localhost serves
-`/openai/models` with no key; LAN rejects a missing key (401), a wrong key (401), and accepts a valid
-key via both `Authorization: Bearer` and `x-api-key` (200); `/healthz` stays open behind the gate; and
+`/openai/models` with no key; LAN rejects a missing key (401), a wrong key (401), and a **same-length**
+wrong key (401 — exercises the constant-time compare, not just the length check); accepts a valid key
+via both `Authorization: Bearer` and `x-api-key` (200); rejects a keyless **oversized** body with 401
+**not** 413 (proving the gate runs before the body parser); `/healthz` stays open behind the gate; and
 LAN with **no key configured is fail-closed** (503, never an open proxy). The default is restored
 before the golden round-trips.
 

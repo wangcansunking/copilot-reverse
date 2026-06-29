@@ -50,6 +50,15 @@ describe("worker access-mode auth", () => {
     expect(state.called).toBe(false);
   });
 
+  it("lan mode rejects a SAME-LENGTH wrong key (exercises timingSafeEqual, not just the length check)", async () => {
+    // "secret" vs "sekret" are equal length, so the length short-circuit in keysMatch can't reject —
+    // only the constant-time compare can. Guards against an always-true compare passing the suite.
+    const { app, state } = appWith(ctl("lan", "secret"));
+    const res = await request(app).post("/openai/chat/completions").set("authorization", "Bearer sekret").send(body);
+    expect(res.status).toBe(401);
+    expect(state.called).toBe(false);
+  });
+
   it("lan mode accepts a valid key via Authorization: Bearer (OpenAI/Codex clients)", async () => {
     const { app, state } = appWith(ctl("lan", "secret"));
     const res = await request(app).post("/openai/chat/completions").set("authorization", "Bearer secret").send(body);
