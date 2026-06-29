@@ -4,6 +4,10 @@ import { createControlApp } from "../../src/supervisor/api.js";
 import { openDb, recordRestart, recordRequest } from "../../src/supervisor/db.js";
 import { EventBus } from "../../src/supervisor/events.js";
 
+// Default client/model deps the dashboard endpoints need; spread into the SSE/github fixtures that
+// don't care about them.
+const dash = { clients: () => ({ claude: { user: false, project: false }, codex: { user: false, project: false } }), models: async () => [] };
+
 function fixture() {
   const db = openDb(":memory:");
   recordRestart(db, { ts: 1, reason: "crash", exitCode: 1, stderrTail: "boom", backoffMs: 500, markedUnhealthy: 0 });
@@ -17,6 +21,8 @@ function fixture() {
     start: () => calls.push("start"),
     doctor: async () => [{ name: "copilot-auth", ok: true, detail: "token present" }],
     github: () => undefined,
+    clients: () => ({ claude: { user: false, project: false }, codex: { user: false, project: false } }),
+    models: async () => [{ id: "gpt-4o" }],
     subscribe: () => () => {},
   });
   return { app, calls };
@@ -32,7 +38,7 @@ describe("control api", () => {
     const db = openDb(":memory:");
     const app = createControlApp({
       db, getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {},
-      doctor: async () => [], github: () => ({ ok: false, hasToken: true, checkedAt: 5, detail: "GitHub login expired" }), subscribe: () => () => {},
+      doctor: async () => [], github: () => ({ ok: false, hasToken: true, checkedAt: 5, detail: "GitHub login expired" }), ...dash, subscribe: () => () => {},
     });
     const res = await request(app).get("/api/status");
     expect(res.body.github).toEqual({ ok: false, hasToken: true, checkedAt: 5, detail: "GitHub login expired" });
@@ -53,6 +59,39 @@ describe("control api", () => {
   it("recent requests", async () => {
     const res = await request(fixture().app).get("/api/requests");
     expect(res.body.requests[0].model).toBe("gpt-4o");
+  });
+  it("serves client config at /api/clients", async () => {
+    const res = await request(fixture().app).get("/api/clients");
+    expect(res.body).toHaveProperty("claude");
+    expect(res.body).toHaveProperty("codex");
+  });
+  it("serves the advertised models at /api/models", async () => {
+    const res = await request(fixture().app).get("/api/models");
+    expect(res.body.models).toEqual([{ id: "gpt-4o" }]);
+  });
+  it("/api/models degrades to an empty list if discovery throws (no 500)", async () => {
+    const db = openDb(":memory:");
+    const app = createControlApp({
+      db, getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {},
+      doctor: async () => [], github: () => undefined,
+      clients: () => ({ claude: { user: false, project: false }, codex: { user: false, project: false } }),
+      models: async () => { throw new Error("worker down"); },
+      subscribe: () => () => {},
+    });
+    const res = await request(app).get("/api/models");
+    expect(res.status).toBe(200);
+    expect(res.body.models).toEqual([]);
+  });
+  it("passes ?ping=1 through to doctor", async () => {
+    const seen: (boolean | undefined)[] = [];
+    const db = openDb(":memory:");
+    const app = createControlApp({
+      db, getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {},
+      doctor: async (ping) => { seen.push(ping); return []; }, github: () => undefined, ...dash, subscribe: () => () => {},
+    });
+    await request(app).get("/api/doctor");
+    await request(app).get("/api/doctor?ping=1");
+    expect(seen).toEqual([false, true]);
   });
   it("stop and start actions are wired", async () => {
     const fx = fixture();
@@ -83,7 +122,7 @@ describe("control api /api/events (SSE)", () => {
   it("streams an initial hello then live bus events to a connected client", async () => {
     const bus = new EventBus();
     await withServer(
-      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], github: () => undefined, subscribe: (send) => bus.subscribe(send) },
+      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], github: () => undefined, ...dash, subscribe: (send) => bus.subscribe(send) },
       async (base) => {
         const ctrl = new AbortController();
         const res = await fetch(`${base}/api/events`, { signal: ctrl.signal });
@@ -108,7 +147,7 @@ describe("control api /api/events (SSE)", () => {
   it("unsubscribes the listener when the client disconnects", async () => {
     const bus = new EventBus();
     await withServer(
-      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], github: () => undefined, subscribe: (send) => bus.subscribe(send) },
+      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], github: () => undefined, ...dash, subscribe: (send) => bus.subscribe(send) },
       async (base) => {
         const ctrl = new AbortController();
         const res = await fetch(`${base}/api/events`, { signal: ctrl.signal });
@@ -127,7 +166,7 @@ describe("control api /api/events (SSE)", () => {
     // guard, the write is caught and the dead client is dropped so it isn't written to again.
     const bus = new EventBus();
     await withServer(
-      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], github: () => undefined, subscribe: (send) => bus.subscribe(send) },
+      { db: openDb(":memory:"), getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {}, doctor: async () => [], github: () => undefined, ...dash, subscribe: (send) => bus.subscribe(send) },
       async (base) => {
         // A live client keeps the stream working; a second client disconnects abruptly.
         const liveCtrl = new AbortController();

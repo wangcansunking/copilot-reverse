@@ -11,6 +11,10 @@ import { readGhToken } from "../shared/creds.js";
 import { probeGithubAuth } from "../providers/copilot/token.js";
 import { GithubHeartbeat, SIGNED_OUT_DETAIL } from "./github-heartbeat.js";
 import { appendCrashLog } from "../shared/crash-log.js";
+import { buildDoctorChecks } from "./doctor.js";
+import { distinctConfiguredModels, pingViaProxy } from "./doctor-probes.js";
+import { readClientStatus } from "../tui/setup/status.js";
+import { readWebIqKey, readWebSearchMode, resolveWebSearchBackend } from "../shared/webiq-key.js";
 import type { WorkerState, DoctorCheck } from "../shared/control-types.js";
 
 export function startSupervisor(): { stop: () => void } {
@@ -39,25 +43,50 @@ export function startSupervisor(): { stop: () => void } {
     },
   });
 
-  const doctor = async (): Promise<DoctorCheck[]> => {
-    const gh = readGhToken(dataDir());
-    let auth: DoctorCheck;
-    if (!gh) {
-      auth = { name: "github-auth", ok: false, detail: SIGNED_OUT_DETAIL };
-    } else {
-      // Validate the token actually exchanges, not just that it exists on disk. Shares the heartbeat's
-      // classifier so on-demand /doctor and the periodic probe agree.
-      const probe = await probeGithubAuth(gh);
-      auth = { name: "github-auth", ok: probe.ok, detail: probe.detail };
-    }
-    return [auth, { name: "worker", ok: state === "ready", detail: `worker is ${state}` }];
-  };
+  const workerBase = `http://${config.bindHost}:${config.workerPort}`;
 
   // Periodically re-check the GitHub token so the UI reflects an expired/revoked login within ~60s,
-  // instead of only on the next failed request or a manual /status.
+  // instead of only on the next failed request or a manual /status. Declared before doctor() so the
+  // light /doctor can reuse its cached status instead of hammering GitHub on the 2s dashboard poll.
   const heartbeat = new GithubHeartbeat(() => readGhToken(dataDir()), probeGithubAuth, undefined, {
     intervalMs: config.heartbeat.intervalMs, initialDelayMs: config.heartbeat.initialDelayMs,
   });
+
+  // Advertised models, proxied from the worker (same source the picker uses) — shared by /doctor's
+  // "models" check and the dashboard's /api/models panel so they never disagree.
+  const listModels = async (): Promise<{ id: string; display_name?: string }[]> => {
+    const r = await fetch(`${workerBase}/anthropic/v1/models`);
+    if (!r.ok) throw new Error(`worker /models → ${r.status}`);
+    return ((await r.json()) as { data?: { id: string; display_name?: string }[] }).data ?? [];
+  };
+  // /doctor is the user's self-check. Light mode (the dashboard's 2s poll, /report) is cheap and
+  // upstream-free; ping mode (the on-demand TUI /doctor) adds one real 1-token request per
+  // client-configured model. Probes are injected so the check logic stays pure + unit-tested.
+  const doctor = async (ping = false): Promise<DoctorCheck[]> =>
+    buildDoctorChecks({
+      githubAuth: async (live) => {
+        const gh = readGhToken(dataDir());
+        if (!gh) return { ok: false, detail: SIGNED_OUT_DETAIL };
+        // Light path (dashboard poll): reuse the heartbeat's cached result — a fresh token exchange
+        // every 2s would trip GitHub's rate limit (the heartbeat runs on a 60s cadence for exactly this
+        // reason). On-demand /doctor (live) does a fresh exchange so the user gets an authoritative,
+        // up-to-the-second answer; it shares probeGithubAuth's classifier so both paths agree.
+        if (!live) {
+          const cached = heartbeat.current();
+          if (cached) return { ok: cached.ok, detail: cached.detail };
+          // Heartbeat hasn't completed its first probe yet — token is on disk but unverified.
+          return { ok: false, detail: "checking… (login probe pending)" };
+        }
+        const probe = await probeGithubAuth(gh);
+        return { ok: probe.ok, detail: probe.detail };
+      },
+      workerState: () => state,
+      webBackend: () => resolveWebSearchBackend(readWebSearchMode(dataDir()), Boolean(readWebIqKey(dataDir()))),
+      listModels: async () => (await listModels()).map((m) => m.id),
+      configuredModels: () => distinctConfiguredModels(readClientStatus()),
+      pingModel: (m) => pingViaProxy(workerBase, m),
+    }, { ping });
+
 
   const app = createControlApp({
     db, getState: () => state,
@@ -66,6 +95,8 @@ export function startSupervisor(): { stop: () => void } {
     start: () => monitor.start(),
     doctor,
     github: () => heartbeat.current(),
+    clients: () => readClientStatus(),
+    models: listModels,
     subscribe: (send) => bus.subscribe(send),
   });
 

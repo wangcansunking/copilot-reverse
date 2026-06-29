@@ -79,7 +79,9 @@ async function main() {
   );
   const app = createControlApp({
     db, getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {},
-    doctor: async () => [], github: () => heartbeat.current(), subscribe: () => () => {},
+    doctor: async () => [], github: () => heartbeat.current(),
+    clients: () => ({ claude: { user: false, project: false }, codex: { user: false, project: false } }), models: async () => [],
+    subscribe: () => () => {},
   });
   const server = app.listen(PORT, HOST);
   await new Promise((r) => server.once("listening", r));

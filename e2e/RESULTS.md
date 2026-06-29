@@ -3,6 +3,25 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-29 (/doctor self-check + dashboard parity)** — `/doctor` graduated from 2 checks
+  (github-auth, worker) to a real self-check: GitHub login, worker, resolved web-search backend
+  (copilot/webiq/unavailable), model discovery, and — on the on-demand TUI run (`?ping=1`) — a real
+  1-token connectivity ping per client-configured model. The check logic is a pure injected-probe
+  function (`buildDoctorChecks`) so it's fully unit-tested; the 2s dashboard poll uses the cheap
+  upstream-free path so it never burns quota. Two code-review fixes landed before merge: the light
+  github-auth check reuses the heartbeat's CACHED status (a fresh GitHub token exchange every 2s would
+  trip GitHub's rate limit — the heartbeat runs on 60s for exactly this reason; the live exchange is
+  reserved for the on-demand `?ping` run), and `pingViaProxy` got a 20s AbortController timeout so a
+  hung upstream fails fast instead of blocking `/doctor` for minutes. The dashboard was redesigned for
+  parity with the TUI: errors now count `status>=400 || error!=null` (shared isError — runaway-tagged
+  200s show, the old dashboard silently dropped them), plus new GitHub-login, web-search,
+  advertised-models (`[1m]` badges), and per-scope client-config panels via new `/api/clients` +
+  `/api/models`. New units: `doctor` (9, incl. live-vs-cached flag), `doctor-probes` (7, incl. timeout),
+  api (`/api/clients`, `/api/models`, `?ping` passthrough, models degrade-to-empty), dashboard parity.
+  HTTP docker e2e gained 6 checks (web-search + models named checks, light has no per-model ping,
+  `?ping` returns, clients/models endpoints) — **26 passed** (was 20). Full suite **477 passed**
+  (62 files), build clean.
+
 - **2026-06-29 (/logs card multiline fix)** — A Copilot 502 returns a whole HTML error page; its
   ~400-char body (newlines + inline styles) was stored as the request's metric error and rendered by
   `/logs` as one "line" inside a bordered Ink card, so the embedded newlines mis-measured the Yoga box

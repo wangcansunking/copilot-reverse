@@ -2,7 +2,7 @@ export interface SlashContext {
   client: {
     status(): Promise<import("../../shared/control-types.js").StatusResponse>;
     restart(): Promise<void>; stop(): Promise<void>; start(): Promise<void>;
-    doctor(): Promise<import("../../shared/control-types.js").DoctorCheck[]>;
+    doctor(ping?: boolean): Promise<import("../../shared/control-types.js").DoctorCheck[]>;
     requests(): Promise<import("../../shared/control-types.js").MetricSample[]>;
   };
   quit: () => void;

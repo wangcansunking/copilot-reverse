@@ -26,7 +26,7 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
     for (const r of s.restarts.slice(0, 5)) lines.push(`  ${r.reason} exit=${r.exitCode ?? "-"} ${r.stderrTail.slice(0, 60)}`);
     return lines;
   } });
-  reg.add({ name: "/doctor", describe: "run health checks", run: async (_a, c) => (await c.client.doctor()).map((x) => `${x.ok ? "OK " : "FAIL"} ${x.name}: ${x.detail}`) });
+  reg.add({ name: "/doctor", describe: "self-check: login, worker, web search, models reachable", run: async (_a, c) => (await c.client.doctor(true)).map((x) => `${x.ok ? "OK " : "FAIL"} ${x.name}: ${x.detail}`) });
   reg.add({ name: "/restart", describe: "restart the worker", run: async (_a, c) => { await c.client.restart(); return ["restart requested"]; } });
   reg.add({ name: "/stop", describe: "stop the worker", run: async (_a, c) => { await c.client.stop(); return ["worker stopped"]; } });
   reg.add({ name: "/start", describe: "start the worker", run: async (_a, c) => { await c.client.start(); return ["worker started"]; } });

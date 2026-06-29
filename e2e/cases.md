@@ -108,10 +108,12 @@ restart recovery, dead-socket broadcast churn survival, and a deterministic `Eve
 that **fails on a reverted PR #8** (throwing subscriber must not escape `emit`). It also checks model
 discovery: `/anthropic/v1/models` advertises Claude families as dashed canonical ids + display + a
 `[1m]` badge (`claude-opus-4-8[1m]`) and never leaks Copilot's dotted ids — so Claude Code's native
-picker lights up. It also drives a real failing request, reads the stored metric back, and renders it
-through the real `dist` TUI formatter (`oneLine`) to assert the `/logs` line carries no embedded
-newline — a multi-line upstream body (a 502 HTML page) once shattered the bordered card. Real
-round-trips run only when a real token is mounted.
+picker lights up. The `/doctor` self-check is asserted to carry the web-search + models checks (light
+mode is upstream-free with no per-model `model:` pings; `?ping=1` adds them on demand), and the
+dashboard's new `/api/clients` + `/api/models` data endpoints are checked. It also drives a real
+failing request, reads the stored metric back, and renders it through the real `dist` TUI formatter
+(`oneLine`) to assert the `/logs` line carries no embedded newline — a multi-line upstream body (a 502
+HTML page) once shattered the bordered card. Real round-trips run only when a real token is mounted.
 
 This black-box path caught two bugs nothing else did: a Codex tool-translation `400` (a `custom`/
 `tool_search` tool forwarded nameless → Copilot rejects → "stream closed before response.completed"),

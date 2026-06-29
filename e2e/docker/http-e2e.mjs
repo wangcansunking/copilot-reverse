@@ -70,6 +70,23 @@ async function main() {
     check("doctor checks[]", Array.isArray((await jget(supUrl("/api/doctor"))).j?.checks));
     check("requests[]", Array.isArray((await jget(supUrl("/api/requests"))).j?.requests));
 
+    // Richer /doctor self-check + the dashboard's new data endpoints. Light /doctor (no ?ping) must be
+    // upstream-free and carry the web-search + models checks (named), so it's safe for the 2s poll. The
+    // dashboard now also pulls /api/clients (per-scope config) and /api/models (advertised, proxied).
+    log("\n[doctor+dashboard] richer self-check + parity data endpoints");
+    const doc = (await jget(supUrl("/api/doctor"))).j?.checks ?? [];
+    const named = (n) => doc.find((c) => c.name === n);
+    check("doctor has web-search check", !!named("web-search"), JSON.stringify(doc.map((c) => c.name)));
+    check("doctor has models check", !!named("models"));
+    check("doctor light has NO per-model ping checks", !doc.some((c) => String(c.name).startsWith("model:")));
+    const docPing = (await jget(supUrl("/api/doctor?ping=1"))).j?.checks ?? [];
+    // No client is configured in-container, so ping mode reports the informational note (not a crash).
+    check("doctor ?ping returns checks", Array.isArray(docPing) && docPing.length >= doc.length);
+    const clients = (await jget(supUrl("/api/clients"))).j;
+    check("/api/clients has claude+codex", clients && "claude" in clients && "codex" in clients, JSON.stringify(clients));
+    const mods = (await jget(supUrl("/api/models"))).j?.models;
+    check("/api/models advertises models", Array.isArray(mods) && mods.length > 0, JSON.stringify((mods || []).slice(0, 2)));
+
     // /logs hardening: a real upstream failure (the dummy token 401s at Copilot) stores a metric
     // error, which /logs renders one-per-line inside a bordered card. A multi-line body (a 502 returns
     // an HTML page) once shattered that border. Drive a real failing request, read the REAL stored

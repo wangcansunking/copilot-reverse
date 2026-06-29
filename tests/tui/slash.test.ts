@@ -26,9 +26,11 @@ describe("slash commands", () => {
     await buildRegistry(c as any, endpoint).run("/restart");
     expect(c.client.restart).toHaveBeenCalled();
   });
-  it("/doctor lists checks", async () => {
-    const out = await buildRegistry(ctx() as any, endpoint).run("/doctor");
+  it("/doctor lists checks and requests the per-model ping", async () => {
+    const c = ctx();
+    const out = await buildRegistry(c as any, endpoint).run("/doctor");
     expect(out.join("\n")).toMatch(/github-auth.*ok/i);
+    expect(c.client.doctor).toHaveBeenCalledWith(true); // /doctor is the on-demand self-check → ping
   });
   it("/help lists commands", async () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/help");
