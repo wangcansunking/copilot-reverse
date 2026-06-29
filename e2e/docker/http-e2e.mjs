@@ -100,6 +100,11 @@ async function main() {
       // proves the round-trip (dashed+[1m] -> dotted Copilot id) works end-to-end, not just in units.
       const c = await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "claude-opus-4-8[1m]", max_tokens: 16, messages: [{ role: "user", content: "say OK" }] }));
       check("canonical opus [1m] id resolves + 200", c.s === 200, c.t.slice(0, 120));
+      // Token metrics: after a real round-trip the supervisor should log non-null in/out token counts.
+      await sleep(500);
+      const reqs = (await jget(supUrl("/api/requests"))).j?.requests ?? [];
+      const top = reqs[0] ?? {};
+      check("metric carries token counts", typeof top.tokensIn === "number" && typeof top.tokensOut === "number", JSON.stringify(top));
     } else log("\n[golden] SKIPPED (no real token)");
   } finally { sup.kill(); }
   log(`\n${failures === 0 ? "ALL PASSED" : failures + " FAILED"} (${passes} passed)`);

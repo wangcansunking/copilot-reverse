@@ -1,3 +1,11 @@
+## v0.7.0 — 2026-06-29
+
+feat(tui): `/metrics` now reports token usage (in/out) and an estimated cost per model and overall — the worker records prompt/completion tokens for every request (persisted in SQLite), and cost is a list-price estimate (Copilot is flat-fee). User messages also get a highlighted bar in the transcript so they stand out from muted system notes and assistant output.
+
+## v0.6.0 — 2026-06-29
+
+feat(tui): add a `/changes` command listing the 10 most recent releases (version, date, summary) with a link to the full CHANGELOG, and refocus the startup "what's new" banner on important messages — it now points to `/changes` instead of advertising a bug fix, and still self-suppresses after 3 launches.
+
 ## v0.5.5 — 2026-06-29
 
 ci: gate PRs on a changeset. A pull request with no file in `.changes/` now fails the `changeset` check, so merges can't silently skip the release (the v0.5.3 freeze). Docs/test-only PRs opt out with a `no-changeset` label.

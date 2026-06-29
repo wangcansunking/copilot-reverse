@@ -24,7 +24,7 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
     const canon = openaiRequestToCanonical(req.body);
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
-    const metric = (status: number, error?: string) => onMetric({ endpoint: "/openai/chat/completions", model: canon.model, status, latencyMs: Date.now() - start, error });
+    const metric = (status: number, opts: { error?: string; tokensIn?: number; tokensOut?: number } = {}) => onMetric({ endpoint: "/openai/chat/completions", model: canon.model, status, latencyMs: Date.now() - start, tokensIn: opts.tokensIn, tokensOut: opts.tokensOut, error: opts.error });
     try {
       if (canon.stream) {
         res.setHeader("content-type", "text/event-stream");
@@ -33,18 +33,21 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
         const guard = new RunawayGuard();
         const deadline = start + STREAM_DEADLINE_MS;
         let runawayReason = "";
+        let usage: { promptTokens: number; completionTokens: number } | undefined;
         for await (const chunk of provider.stream(canon)) {
           res.write(canonicalChunkToOpenAISSE(chunk, id, canon.model));
+          if (chunk.done) usage = chunk.usage;
           // Backstop covers tool-call streams too: a model can loop on tool calls forever, which
           // never feeds the text guard — the wall clock cuts those cleanly instead of freezing.
           if (chunk.kind === "text" && guard.push(chunk.delta)) { runawayReason = guard.reason ?? "repetition"; break; }
           if (Date.now() > deadline) { runawayReason = "deadline"; break; }
         }
         res.end();
-        metric(200, runawayReason ? `runaway stream cut (${runawayReason}) — model degenerated, ended early` : undefined);
+        metric(200, { tokensIn: usage?.promptTokens, tokensOut: usage?.completionTokens, error: runawayReason ? `runaway stream cut (${runawayReason}) — model degenerated, ended early` : undefined });
       } else {
-        res.json(canonicalToOpenAIResponse(await provider.complete(canon)));
-        metric(200);
+        const resp = await provider.complete(canon);
+        res.json(canonicalToOpenAIResponse(resp));
+        metric(200, { tokensIn: resp.usage?.promptTokens, tokensOut: resp.usage?.completionTokens });
       }
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
@@ -59,7 +62,7 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
         res.write(`data: ${JSON.stringify({ error: { message } })}\n\n`);
         res.end();
       }
-      metric(status, message);
+      metric(status, { error: message });
     }
   });
 
@@ -71,7 +74,7 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
     const canon = responsesRequestToCanonical(req.body);
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
-    const metric = (status: number, error?: string) => onMetric({ endpoint: "/openai/responses", model: canon.model, status, latencyMs: Date.now() - start, error });
+    const metric = (status: number, opts: { error?: string; tokensIn?: number; tokensOut?: number } = {}) => onMetric({ endpoint: "/openai/responses", model: canon.model, status, latencyMs: Date.now() - start, tokensIn: opts.tokensIn, tokensOut: opts.tokensOut, error: opts.error });
     try {
       if (canon.stream) {
         res.setHeader("content-type", "text/event-stream");
@@ -94,10 +97,11 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
         }
         for (const f of sse.finish(usage, finish, argsByIdx)) res.write(f);
         res.end();
-        metric(200, runawayReason ? `runaway stream cut (${runawayReason}) — model degenerated, ended early` : undefined);
+        metric(200, { tokensIn: usage?.promptTokens, tokensOut: usage?.completionTokens, error: runawayReason ? `runaway stream cut (${runawayReason}) — model degenerated, ended early` : undefined });
       } else {
-        res.json(canonicalToResponsesResponse(await provider.complete(canon)));
-        metric(200);
+        const resp = await provider.complete(canon);
+        res.json(canonicalToResponsesResponse(resp));
+        metric(200, { tokensIn: resp.usage?.promptTokens, tokensOut: resp.usage?.completionTokens });
       }
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
@@ -110,7 +114,7 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
         res.write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
         res.end();
       }
-      metric(status, message);
+      metric(status, { error: message });
     }
   });
 }

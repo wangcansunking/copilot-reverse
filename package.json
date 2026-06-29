@@ -1,6 +1,6 @@
 {
   "name": "copilot-reverse",
-  "version": "0.5.5",
+  "version": "0.7.0",
   "description": "Interactive terminal app that exposes your GitHub Copilot subscription as local OpenAI- and Anthropic-compatible endpoints, with a self-healing daemon and a built-in assistant.",
   "type": "module",
   "license": "MIT",
@@ -32,7 +32,7 @@
     "llm"
   ],
   "scripts": {
-    "prebuild": "node scripts/gen-version.mjs",
+    "prebuild": "node scripts/gen-version.mjs && node scripts/gen-changes.mjs",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",

@@ -3,6 +3,7 @@ import { claudeCodeConfig, codexConfig, type Endpoint } from "../setup/clients.j
 import { aggregate, recentErrors } from "../panels/metrics-agg.js";
 import { openUrl as defaultOpenUrl } from "../../shared/open-url.js";
 import { buildIssueUrl, PLACEHOLDER_REPO } from "../report.js";
+import { APP_CHANGES } from "../../changes.js";
 
 export interface RegistryOpts {
   dashboardUrl?: string;            // supervisor URL the /dashboard command opens
@@ -33,11 +34,17 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
     if (!errs.length) return ["no request errors logged — everything's green ✓"];
     return errs.map((e) => `${new Date(e.ts).toISOString()} ${e.status} ${e.endpoint} ${e.model} — ${e.error ?? "(no message)"}`);
   } });
-  reg.add({ name: "/metrics", describe: "request metrics + recent errors", run: async (_a, c) => {
+  reg.add({ name: "/metrics", describe: "request metrics, tokens, cost + recent errors", run: async (_a, c) => {
     const reqs = await c.client.requests();
     const a = aggregate(reqs);
     if (!a.total) return ["no requests yet"];
-    const lines = [`requests: ${a.total}  errors: ${a.errors}`, ...a.byModel.map((r) => `  ${r.model.padEnd(20)} n=${r.count} avg=${r.avgMs}ms`)];
+    const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+    const usd = (n: number) => `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+    const lines = [
+      `requests: ${a.total}  errors: ${a.errors}  tokens: ${k(a.tokensIn)}↑ ${k(a.tokensOut)}↓  est. cost: ${usd(a.costUsd)}`,
+      ...a.byModel.map((r) => `  ${r.model.padEnd(20)} n=${r.count} avg=${r.avgMs}ms  ${k(r.tokensIn)}↑ ${k(r.tokensOut)}↓ ~${usd(r.costUsd)}`),
+      "  cost is a list-price estimate (Copilot is flat-fee)",
+    ];
     const errs = recentErrors(reqs, 5);
     if (errs.length) {
       lines.push("recent errors:");
@@ -73,6 +80,16 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
     });
     openUrl(url);
     return [`opening a pre-filled GitHub issue for ${repo} in your browser…`];
+  } });
+  reg.add({ name: "/changes", describe: "what's new — recent releases", run: async () => {
+    if (!APP_CHANGES.length) return ["no changelog bundled"];
+    const lines = APP_CHANGES.slice(0, 10).map((c) => {
+      const s = c.summary.length > 90 ? c.summary.slice(0, 87) + "…" : c.summary;
+      return `v${c.version} (${c.date}) — ${s}`;
+    });
+    const repo = opts.reportRepo && opts.reportRepo !== PLACEHOLDER_REPO ? opts.reportRepo : "wangcansunking/copilot-reverse";
+    lines.push("", `full changelog: https://github.com/${repo}/blob/master/CHANGELOG.md`);
+    return lines;
   } });
   reg.add({ name: "/quit", describe: "exit copilot-reverse", run: async (_a, c) => { c.quit(); return ["bye"]; } });
   reg.add({ name: "/help", describe: "list commands", run: async () => reg.list().map((c) => `${c.name.padEnd(14)} ${c.describe}`) });

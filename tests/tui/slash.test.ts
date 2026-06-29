@@ -53,6 +53,15 @@ describe("slash commands", () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/metrics");
     expect(out.join("\n")).toMatch(/no requests yet/i);
   });
+  it("/metrics reports token totals and an estimated cost", async () => {
+    const c = ctx();
+    c.client.requests = vi.fn(async () => [
+      { ts: 2, endpoint: "/anthropic/v1/messages", model: "claude-opus-4-8", status: 200, latencyMs: 30, tokensIn: 1000, tokensOut: 500 },
+    ]);
+    const out = (await buildRegistry(c as any, endpoint).run("/metrics")).join("\n");
+    expect(out).toMatch(/tokens: 1\.0k↑ 500↓/);
+    expect(out).toMatch(/est\. cost: \$/);
+  });
   it("/dashboard opens the dashboard url in the browser", async () => {
     const opened: string[] = [];
     const reg = buildRegistry(ctx() as any, endpoint, { dashboardUrl: "http://127.0.0.1:7890/", openUrl: (u) => opened.push(u) });
@@ -104,5 +113,16 @@ describe("slash commands", () => {
     const reg = buildRegistry(ctx() as any, endpoint);
     expect((await reg.run("/login")).join("\n")).toMatch(/not available/);
     expect((await reg.run("/logout")).join("\n")).toMatch(/not available/);
+  });
+  it("/changes lists recent versions and ends with the changelog url", async () => {
+    const out = await buildRegistry(ctx() as any, endpoint).run("/changes");
+    expect(out.length).toBeGreaterThan(1);
+    expect(out.length).toBeLessThanOrEqual(12); // <=10 entries + blank + url
+    expect(out[0]).toMatch(/^v\d+\.\d+\.\d+ \(/);
+    expect(out.at(-1)).toMatch(/blob\/master\/CHANGELOG\.md$/);
+  });
+  it("/changes uses the configured repo for the changelog url", async () => {
+    const out = await buildRegistry(ctx() as any, endpoint, { reportRepo: "octo/copilot-reverse" }).run("/changes");
+    expect(out.at(-1)).toMatch(/github\.com\/octo\/copilot-reverse\/blob\/master\/CHANGELOG\.md/);
   });
 });

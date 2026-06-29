@@ -31,5 +31,7 @@ export interface MetricSample {
   model: string;
   status: number;
   latencyMs: number;
+  tokensIn?: number;  // prompt tokens (input); absent if upstream reported none
+  tokensOut?: number; // completion tokens (output); absent if upstream reported none
   error?: string; // failure message for non-2xx requests; absent on success
 }

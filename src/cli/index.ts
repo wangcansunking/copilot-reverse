@@ -188,11 +188,12 @@ async function launchTui(): Promise<void> {
 
   const persistedModel = readChatModel(dataDir());
 
-  // "What's new" banner: MAJOR changes only — keyed by version so each release re-announces, shown
-  // ~3 launches then quiet. Minor fixes/polish do NOT go here; reserve it for things worth noticing.
+  // "What's new" banner: IMPORTANT messages only (new capabilities, things worth noticing) — NOT
+  // bug fixes. Keyed by version so each release re-announces, shown ~3 launches then quiet. The full
+  // list lives behind /changes; this is just a nudge.
   const CHANGE_ID = `v${APP_VERSION}`;
   const changeBanner = shouldShowChange(dataDir(), CHANGE_ID)
-    ? { lines: ["• runaway streams now cut cleanly — no more frozen 'code code code' sessions"] }
+    ? { lines: ["• type /changes to see what's new across recent releases"] }
     : undefined;
 
   // Startup overview. The token was already validated above (re-auth happens before we get here), so
