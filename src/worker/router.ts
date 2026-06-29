@@ -1,6 +1,7 @@
 import type { ProviderAdapter } from "../providers/types.js";
 import { bestModelMatch } from "../core/fuzzy.js";
 import { FALLBACK_MODELS } from "../providers/copilot/models.js";
+import { stripOneM } from "../core/model-canonical.js";
 
 // M1: single provider. Model name is remapped to the provider's actual id.
 export class Router {
@@ -13,11 +14,11 @@ export class Router {
   listModels(): string[] { return this.available.length ? this.available : FALLBACK_MODELS; }
   resolveModel(requested: string): string {
     // Claude Code appends [1m] to signal its 1M context window; Copilot doesn't know that id, so
-    // strip it back to the real model before mapping/forwarding.
-    requested = requested.endsWith("[1m]") ? requested.slice(0, -4) : requested;
+    // strip it back to the canonical model before mapping/forwarding.
+    requested = stripOneM(requested);
     const mapped = this.modelMap[requested];
     if (mapped) return mapped;
-    // Fuzzy-match a near-miss id (e.g. claude-opus-4-8-20251101 -> claude-opus-4.8) to a real model.
+    // Fuzzy-match a near-miss id (e.g. canonical claude-opus-4-8 -> Copilot claude-opus-4.8) to a real model.
     if (this.available.length) {
       const match = bestModelMatch(requested, this.available);
       if (match) return match;

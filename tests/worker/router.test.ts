@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { Router } from "../../src/worker/router.js";
+import { toCanonical } from "../../src/core/model-canonical.js";
 import type { ProviderAdapter } from "../../src/providers/types.js";
 
 const fake: ProviderAdapter = { name: "copilot", complete: async () => ({ id: "x", model: "m", content: [], finishReason: "stop", usage: { promptTokens: 0, completionTokens: 0 } }), async *stream() {} };
@@ -21,6 +22,13 @@ describe("Router", () => {
     const r = new Router([fake], {});
     r.setAvailableModels(["claude-opus-4.8", "gpt-4o"]);
     expect(r.resolveModel("claude-opus-4.8[1m]")).toBe("claude-opus-4.8");
+  });
+  it("round-trips every advertised canonical id back to its Copilot model", () => {
+    const r = new Router([fake], {});
+    r.setAvailableModels(["claude-opus-4.8", "claude-sonnet-4.6", "claude-haiku-4-5", "gpt-4o"]);
+    for (const real of ["claude-opus-4.8", "claude-sonnet-4.6", "claude-haiku-4-5"]) {
+      expect(r.resolveModel(toCanonical(real).id)).toBe(real);
+    }
   });
   it("returns the only provider", () => {
     expect(new Router([fake], { "*": "gpt-4o" }).pick("x").name).toBe("copilot");

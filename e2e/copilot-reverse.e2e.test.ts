@@ -477,7 +477,8 @@ describe("E2E: setup lifecycle (Claude + Codex)", () => {
     expect(status.claude.user).toBe(true);
     expect(status.claude.project).toBe(false);
     const settings = JSON.parse(readFileSync(join(home, ".claude", "settings.json"), "utf8"));
-    expect(settings.env.ANTHROPIC_MODEL).toBe("claude-opus-4.8[1m]");
+    // Dashed canonical id (not Copilot's dotted claude-opus-4.8[1m]) so Claude Code's picker matches it.
+    expect(settings.env.ANTHROPIC_MODEL).toBe("claude-opus-4-8[1m]");
     expect(settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
   });
 

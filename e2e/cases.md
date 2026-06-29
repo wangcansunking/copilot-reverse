@@ -94,6 +94,9 @@ not part of `npm test`. It writes a markdown report after each run. Checks:
 | codex multi-line | `/openai/responses` | two-line reply preserved (`LINE_ONE`/`LINE_TWO`) |
 | claude constrained | `/anthropic/v1/messages` | `6*7` → `42` |
 | `[1m]` model id | resolveModel strip | `gpt-4o[1m]` still answers `ONEM_OK` |
+| model discovery | `/anthropic/v1/models` | picker gets dashed `claude-opus-4-8[1m]`, no dotted ids leak |
+| canonical opus | `/anthropic/v1/messages` | `claude-opus-4-8[1m]` resolves to Copilot opus + answers `OPUS_OK` |
+| setup default model | `claudeCopilotReverseEnv` | the default ANTHROPIC_MODEL is dashed `claude-opus-4-8[1m]` + answers `DEFAULT_OK` |
 
 ## HTTP edge-case Docker e2e (hermetic — no real Copilot)
 
@@ -102,8 +105,10 @@ error paths, supervision lifecycle, and the crash-guard regression run without a
 `e2e/docker/Dockerfile.http` + `http-e2e.mjs`; runs on every CI push. Checks: malformed JSON→400,
 >20mb→413, unknown route→404, models/healthz/count_tokens shapes, status/doctor/requests/dashboard,
 restart recovery, dead-socket broadcast churn survival, and a deterministic `EventBus` isolation guard
-that **fails on a reverted PR #8** (throwing subscriber must not escape `emit`). Real round-trips run
-only when a real token is mounted.
+that **fails on a reverted PR #8** (throwing subscriber must not escape `emit`). It also checks model
+discovery: `/anthropic/v1/models` advertises Claude families as dashed canonical ids + display + a
+`[1m]` badge (`claude-opus-4-8[1m]`) and never leaks Copilot's dotted ids — so Claude Code's native
+picker lights up. Real round-trips run only when a real token is mounted.
 
 This black-box path caught two bugs nothing else did: a Codex tool-translation `400` (a `custom`/
 `tool_search` tool forwarded nameless → Copilot rejects → "stream closed before response.completed"),

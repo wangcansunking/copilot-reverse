@@ -52,7 +52,15 @@ async function main() {
     check("unknown route → 404", (await fetch(wrkUrl("/nope"))).status === 404);
     check("/healthz ok", (await jget(wrkUrl("/healthz"))).j?.ok === true);
     check("/openai/models non-empty", (await jget(wrkUrl("/openai/models"))).j?.data?.length > 0);
-    check("/anthropic/v1/models non-empty", (await jget(wrkUrl("/anthropic/v1/models"))).j?.data?.length > 0);
+    const models = (await jget(wrkUrl("/anthropic/v1/models"))).j?.data ?? [];
+    check("/anthropic/v1/models non-empty", models.length > 0);
+    // Model mapping: Claude families must surface as the DASHED canonical ids Claude Code's native
+    // picker recognises (claude-opus-4-8) with a friendly display_name + [1m] badge for 1M models —
+    // never Copilot's dotted ids. Holds on both the live list and the offline fallback.
+    check("no dotted claude ids leak to picker", !models.some((m) => /claude-(opus|sonnet)-4\.[0-9]/.test(m.id)));
+    const opus = models.find((m) => m.id.startsWith("claude-opus-4-8"));
+    check("opus has friendly display_name", opus?.display_name === "Opus 4.8", opus?.display_name);
+    check("opus carries [1m] 1M badge", opus?.id === "claude-opus-4-8[1m]", opus?.id);
     const ct = await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }));
     check("count_tokens input_tokens>0", JSON.parse(ct.t).input_tokens > 0, ct.t);
 
@@ -88,6 +96,10 @@ async function main() {
       log("\n[golden] real round-trips");
       const a = await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "gpt-4o", max_tokens: 16, messages: [{ role: "user", content: "say OK" }] }));
       check("anthropic /messages 200", a.s === 200, a.t.slice(0, 120));
+      // The canonical [1m] id the picker hands back must resolve to a real Copilot model and answer —
+      // proves the round-trip (dashed+[1m] -> dotted Copilot id) works end-to-end, not just in units.
+      const c = await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "claude-opus-4-8[1m]", max_tokens: 16, messages: [{ role: "user", content: "say OK" }] }));
+      check("canonical opus [1m] id resolves + 200", c.s === 200, c.t.slice(0, 120));
       // Token metrics: after a real round-trip the supervisor should log non-null in/out token counts.
       await sleep(500);
       const reqs = (await jget(supUrl("/api/requests"))).j?.requests ?? [];

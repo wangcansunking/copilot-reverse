@@ -2,6 +2,11 @@
 export interface ChangeEntry { version: string; date: string; summary: string }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.7.0",
+    "date": "2026-06-29",
+    "summary": "feat(tui): `/metrics` now reports token usage (in/out) and an estimated cost per model and overall — the worker records prompt/completion tokens for every request (persisted in SQLite), and cost is a list-price estimate (Copilot is flat-fee). User messages also get a highlighted bar in the transcript so they stand out from muted system notes and assistant output."
+  },
+  {
     "version": "0.6.0",
     "date": "2026-06-29",
     "summary": "feat(tui): add a `/changes` command listing the 10 most recent releases (version, date, summary) with a link to the full CHANGELOG, and refocus the startup \"what's new\" banner on important messages — it now points to `/changes` instead of advertising a bug fix, and still self-suppresses after 3 launches."
@@ -45,10 +50,5 @@ export const APP_CHANGES: ChangeEntry[] = [
     "version": "0.3.0",
     "date": "2026-06-26",
     "summary": "Restore `web_search` and `web_fetch` for Claude Code through the gateway: the worker now runs these tools internally against Microsoft Web IQ in a transparent agentic loop, and a new `/web-search-support` command stores the WebIQ API key."
-  },
-  {
-    "version": "0.2.1",
-    "date": "2026-06-25",
-    "summary": "Fix `/login` hanging with no output: the device-code prompt is now shown immediately while authorization is pending, instead of being buffered behind the blocking token poll."
   }
 ];
