@@ -2,6 +2,11 @@
 export interface ChangeEntry { version: string; date: string; summary: string }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.6.0",
+    "date": "2026-06-29",
+    "summary": "feat(tui): add a `/changes` command listing the 10 most recent releases (version, date, summary) with a link to the full CHANGELOG, and refocus the startup \"what's new\" banner on important messages — it now points to `/changes` instead of advertising a bug fix, and still self-suppresses after 3 launches."
+  },
+  {
     "version": "0.5.5",
     "date": "2026-06-29",
     "summary": "ci: gate PRs on a changeset. A pull request with no file in `.changes/` now fails the `changeset` check, so merges can't silently skip the release (the v0.5.3 freeze). Docs/test-only PRs opt out with a `no-changeset` label."
@@ -45,10 +50,5 @@ export const APP_CHANGES: ChangeEntry[] = [
     "version": "0.2.1",
     "date": "2026-06-25",
     "summary": "Fix `/login` hanging with no output: the device-code prompt is now shown immediately while authorization is pending, instead of being buffered behind the blocking token poll."
-  },
-  {
-    "version": "0.2.0",
-    "date": "2026-06-23",
-    "summary": "Recover tool calls that some models emit as inline XML text into structured tool calls, and add changeset-driven automatic versioning + npm publish on merge to master."
   }
 ];
