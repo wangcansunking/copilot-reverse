@@ -22,4 +22,14 @@ describe("db", () => {
     expect(row.status).toBe(502);
     expect(row.error).toBe("context_length_exceeded: prompt too long");
   });
+  it("persists token counts and omits them when absent", () => {
+    const db = openDb(":memory:");
+    recordRequest(db, { ts: 9, endpoint: "/v1/messages", model: "gpt-4o", status: 200, latencyMs: 12, tokensIn: 120, tokensOut: 34 });
+    recordRequest(db, { ts: 8, endpoint: "/v1/messages", model: "gpt-4o", status: 200, latencyMs: 12 });
+    const [withTok, without] = recentRequests(db, 10);
+    expect(withTok.tokensIn).toBe(120);
+    expect(withTok.tokensOut).toBe(34);
+    expect(without.tokensIn).toBeUndefined();
+    expect(without.tokensOut).toBeUndefined();
+  });
 });

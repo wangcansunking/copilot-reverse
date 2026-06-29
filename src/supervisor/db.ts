@@ -12,11 +12,13 @@ export function openDb(file: string): Db {
       exit_code INTEGER, stderr_tail TEXT NOT NULL, backoff_ms INTEGER NOT NULL, marked_unhealthy INTEGER NOT NULL DEFAULT 0);
     CREATE TABLE IF NOT EXISTS request_log (
       id INTEGER PRIMARY KEY AUTOINCREMENT, ts INTEGER NOT NULL, endpoint TEXT NOT NULL,
-      model TEXT NOT NULL, status INTEGER NOT NULL, latency_ms INTEGER NOT NULL, error TEXT);
+      model TEXT NOT NULL, status INTEGER NOT NULL, latency_ms INTEGER NOT NULL, tokens_in INTEGER, tokens_out INTEGER, error TEXT);
   `);
-  // Migrate request_log tables created before the error column existed.
+  // Migrate request_log tables created before later columns existed.
   const cols = db.prepare(`PRAGMA table_info(request_log)`).all() as { name: string }[];
   if (!cols.some((c) => c.name === "error")) db.exec(`ALTER TABLE request_log ADD COLUMN error TEXT`);
+  if (!cols.some((c) => c.name === "tokens_in")) db.exec(`ALTER TABLE request_log ADD COLUMN tokens_in INTEGER`);
+  if (!cols.some((c) => c.name === "tokens_out")) db.exec(`ALTER TABLE request_log ADD COLUMN tokens_out INTEGER`);
   return db;
 }
 
@@ -29,10 +31,10 @@ export function listRestarts(db: Db, limit: number): RestartRow[] {
     FROM restart_events ORDER BY ts DESC LIMIT ?`).all(limit) as RestartRow[];
 }
 export function recordRequest(db: Db, m: Omit<MetricSample, "ts"> & { ts: number }): void {
-  db.prepare(`INSERT INTO request_log (ts, endpoint, model, status, latency_ms, error) VALUES (@ts, @endpoint, @model, @status, @latencyMs, @error)`)
-    .run({ error: null, ...m });
+  db.prepare(`INSERT INTO request_log (ts, endpoint, model, status, latency_ms, tokens_in, tokens_out, error) VALUES (@ts, @endpoint, @model, @status, @latencyMs, @tokensIn, @tokensOut, @error)`)
+    .run({ tokensIn: null, tokensOut: null, error: null, ...m });
 }
 export function recentRequests(db: Db, limit: number): MetricSample[] {
-  return (db.prepare(`SELECT ts, endpoint, model, status, latency_ms as latencyMs, error FROM request_log ORDER BY ts DESC LIMIT ?`).all(limit) as (MetricSample & { error: string | null })[])
-    .map(({ error, ...r }) => (error == null ? r : { ...r, error }));
+  return (db.prepare(`SELECT ts, endpoint, model, status, latency_ms as latencyMs, tokens_in as tokensIn, tokens_out as tokensOut, error FROM request_log ORDER BY ts DESC LIMIT ?`).all(limit) as (MetricSample & { tokensIn: number | null; tokensOut: number | null; error: string | null })[])
+    .map(({ tokensIn, tokensOut, error, ...r }) => ({ ...r, ...(tokensIn != null ? { tokensIn } : {}), ...(tokensOut != null ? { tokensOut } : {}), ...(error != null ? { error } : {}) }));
 }

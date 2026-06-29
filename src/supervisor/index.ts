@@ -32,7 +32,7 @@ export function startSupervisor(): { stop: () => void } {
     },
     onWorkerMessage: (m) => {
       if (m.type === "request-metric") {
-        const sample = { ts: Date.now(), endpoint: m.endpoint, model: m.model, status: m.status, latencyMs: m.latencyMs, error: m.error };
+        const sample = { ts: Date.now(), endpoint: m.endpoint, model: m.model, status: m.status, latencyMs: m.latencyMs, tokensIn: m.tokensIn, tokensOut: m.tokensOut, error: m.error };
         recordRequest(db, sample);
         bus.emit("metric", sample);
       }

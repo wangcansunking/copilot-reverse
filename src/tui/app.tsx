@@ -351,6 +351,9 @@ export function App({
               </Box>
             );
           }
+          // User turns get a clay-on-dark highlight bar so they stand out from muted system notes and
+          // gray assistant output — a clear visual anchor for "this is what I said".
+          if (e.type === "user") return <Box key={i} marginTop={1}><Text backgroundColor={theme.accent} color="black" bold>{` ${e.text.replace(/^›\s*/, "")} `}</Text></Box>;
           return <Text key={i} color={color}>{e.text}</Text>;
         })}
       </Box>

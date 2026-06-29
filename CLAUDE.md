@@ -33,6 +33,7 @@ Requires Node >=20.
 - Run the app locally: `npm run dev` (tsx on `src/`, no build needed)
 - Tests: `npm test` (vitest, includes e2e) · `npm run test:e2e` (e2e only)
 - **Every change must keep the full e2e suite green.** After a change, re-run and update [`e2e/RESULTS.md`](e2e/RESULTS.md). Case catalog: [`e2e/cases.md`](e2e/cases.md).
+- **Prefer adding a docker e2e case for every change.** The HTTP edge matrix (`e2e/docker/http-e2e.mjs`) drives the real worker+supervisor over HTTP — add an assertion there when a change touches request/response, metrics, or supervision so regressions are caught hermetically. Skip only when nothing observable changed (pure docs/refactor).
 
 ## Architecture (3 processes, one terminal app)
 

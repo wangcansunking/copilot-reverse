@@ -40,7 +40,7 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
     const canon = anthropicRequestToCanonical(req.body);
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
-    const metric = (status: number, error?: string) => onMetric({ endpoint: "/anthropic/v1/messages", model: canon.model, status, latencyMs: Date.now() - start, error });
+    const metric = (status: number, opts: { error?: string; tokensIn?: number; tokensOut?: number } = {}) => onMetric({ endpoint: "/anthropic/v1/messages", model: canon.model, status, latencyMs: Date.now() - start, tokensIn: opts.tokensIn, tokensOut: opts.tokensOut, error: opts.error });
     try {
       if (canon.stream) {
         res.setHeader("content-type", "text/event-stream");
@@ -142,7 +142,7 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         res.write(frame("message_delta", { type: "message_delta", delta: { stop_reason: finalStop === "tool_use" ? "tool_use" : finalStop === "length" ? "max_tokens" : "end_turn" }, usage: deltaUsage }));
         res.write(frame("message_stop", { type: "message_stop" }));
         res.end();
-        metric(200, runaway ? `runaway stream cut (${runawayReason}) — model degenerated, ended early as max_tokens` : undefined);
+        metric(200, { tokensIn: inputTokens, tokensOut: sumCompletion, error: runaway ? `runaway stream cut (${runawayReason}) — model degenerated, ended early as max_tokens` : undefined });
       } else {
         // Non-stream: same gateway loop without SSE — run gateway tools and re-complete until the
         // model answers with text (or a client tool), capped identically.
@@ -163,7 +163,7 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         // was hit with gateway calls still pending, strip them — better a partial answer than a stall.
         if (runner) resp = { ...resp, content: resp.content.filter((b) => b.type !== "tool_use" || !isGatewayTool((b as Extract<ContentBlock, { type: "tool_use" }>).name)) };
         res.json(canonicalToAnthropicResponse(resp));
-        metric(200);
+        metric(200, { tokensIn: resp.usage?.promptTokens, tokensOut: resp.usage?.completionTokens });
       }
     } catch (err) {
       const raw = err instanceof Error ? err.message : String(err);
@@ -180,7 +180,7 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
         res.write(frame("error", { type: "error", error: { type: errorType, message } }));
         res.end();
       }
-      metric(status, message);
+      metric(status, { error: message });
     }
   });
 }

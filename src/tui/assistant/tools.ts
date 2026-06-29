@@ -30,7 +30,7 @@ export function buildActions(client: Pick<DaemonClient, "status" | "restart" | "
     async metrics(_args: Record<string, never>): Promise<string> {
       const a = aggregate(await client.requests());
       if (!a.total) return "no requests yet";
-      return `requests: ${a.total}, errors: ${a.errors}; ` + a.byModel.map((r) => `${r.model} n=${r.count} avg=${r.avgMs}ms`).join("; ");
+      return `requests: ${a.total}, errors: ${a.errors}, tokens: ${a.tokensIn}↑/${a.tokensOut}↓, est. cost: $${a.costUsd.toFixed(3)}; ` + a.byModel.map((r) => `${r.model} n=${r.count} avg=${r.avgMs}ms`).join("; ");
     },
   };
 }
