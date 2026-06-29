@@ -3,6 +3,17 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-29 (Docker e2e matrix + CI wiring)** — Added a third Docker e2e driver: a hermetic HTTP
+  edge-case matrix (`e2e/docker/Dockerfile.http` + `http-e2e.mjs`) that boots the **real** worker +
+  supervisor on a dummy token and drives them over HTTP — 15 checks covering proxy errors (malformed
+  JSON→400, >20mb→413, 404, models/healthz/count_tokens), supervision lifecycle (status/doctor/
+  requests/dashboard/restart-recovery), and a deterministic `EventBus` isolation guard that **fails on
+  a reverted PR #8** (verified: 15/15 with the guard, 2 fail without). Extended `cli-e2e.sh` with codex
+  multi-line, claude constrained-numeric, and a `[1m]` model-id round-trip (now 7 real-CLI checks, all
+  pass with a token mounted). New CI `docker-e2e` job runs http-e2e hermetically every push and gates
+  the real-CLI run on a `CR_GH_TOKEN` secret. Hermetic suite green: `npm test` → **406 passed**, build
+  clean. (HTTP edge cases are quota-free; only the golden round-trips + cli-e2e need a real token.)
+
 - **2026-06-29 (crash-guard hardening + code-review fixes)** — Guarded the synchronous throw sites
   that could kill the single-process TUI+supervisor app (a dead-socket SSE write inside `EventBus.emit`,
   a corrupt/locked `creds.json` read on the heartbeat tick), and added a process-level

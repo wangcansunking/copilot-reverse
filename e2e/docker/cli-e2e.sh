@@ -79,6 +79,22 @@ else
   record "claude web search (gateway loop)" "SKIP" "no webiq.json mounted"
 fi
 
+# --- 4) edge: codex multi-line fidelity ---------------------------------------------------------
+note "codex exec -> multi-line reply (responses framing under newlines)"
+CODEX2=$(cd /tmp && codex exec --skip-git-repo-check --sandbox read-only \
+  "Reply with exactly two lines: LINE_ONE then LINE_TWO and nothing else." 2>/dev/null | tr -d '\r')
+check "codex preserves multi-line output" 'echo "$CODEX2" | grep -q "LINE_ONE" && echo "$CODEX2" | grep -q "LINE_TWO"' "codex replied: \`$(echo "$CODEX2" | tail -2 | tr "\n" " ")\`"
+
+# --- 5) edge: claude constrained numeric answer (tool-free reasoning round-trip) -----------------
+note "claude -p -> constrained numeric answer"
+MATH=$(claude -p "What is 6 multiplied by 7? Reply with just the number." --output-format json 2>/dev/null | jq -r '.result // empty')
+check "claude returns the right constrained answer" 'echo "$MATH" | grep -q "42"' "claude replied: \`${MATH}\`"
+
+# --- 6) edge: a [1m] model id round-trips (suffix stripped before forwarding) --------------------
+note "claude -p with a [1m] model id -> still answers"
+ONEM=$(ANTHROPIC_MODEL="gpt-4o[1m]" claude -p "Reply with exactly: ONEM_OK" --output-format json 2>/dev/null | jq -r '.result // empty')
+check "[1m] model id round-trips" 'echo "$ONEM" | grep -q "ONEM_OK"' "claude (gpt-4o[1m]) replied: \`${ONEM}\`"
+
 # --- teardown -----------------------------------------------------------------------------------
 kill "$WPID" 2>/dev/null
 

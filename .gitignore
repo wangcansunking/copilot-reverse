@@ -13,3 +13,5 @@ webiq.json
 *.report.md
 e2e/docker/out/
 report.md
+/secrets/
+/out/

@@ -58,3 +58,38 @@ jobs:
           name: coverage
           path: coverage/
           retention-days: 14
+
+  docker-e2e:
+    runs-on: ubuntu-latest
+    name: docker-e2e
+    env:
+      CR_GH_TOKEN: ${{ secrets.CR_GH_TOKEN }}
+      CR_WEBIQ: ${{ secrets.CR_WEBIQ }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # HTTP edge-case matrix: real worker + supervisor driven over HTTP, hermetic (dummy token).
+      # No secret needed — covers error paths, supervision lifecycle, and the crash-guard regression.
+      - name: HTTP edge e2e
+        run: |
+          docker build -f e2e/docker/Dockerfile.http -t cr-http-e2e .
+          docker run --rm cr-http-e2e
+
+      # Real CLI e2e: actual claude + codex against the daemon. Needs a real token, so it only runs
+      # when CR_GH_TOKEN is configured (forks / no-secret pushes skip it, keeping CI green). The token
+      # (and optional WebIQ key) are written to mount files at runtime — never baked into the image.
+      # NOTE: `secrets` can't be used in a step `if:`, so gate on the env value instead.
+      - name: Real CLI e2e (gated on token secret)
+        if: ${{ env.CR_GH_TOKEN != '' }}
+        run: |
+          mkdir -p secrets out
+          printf '{"ghToken":"%s"}' "$CR_GH_TOKEN" > secrets/creds.json
+          MOUNTS=(-v "$PWD/secrets/creds.json:/root/.copilot-reverse/creds.json:ro" -v "$PWD/out:/out")
+          if [ -n "$CR_WEBIQ" ]; then
+            printf '{"key":"%s"}' "$CR_WEBIQ" > secrets/webiq.json
+            MOUNTS+=(-v "$PWD/secrets/webiq.json:/root/.copilot-reverse/webiq.json:ro")
+          fi
+          docker build -f e2e/docker/Dockerfile.cli -t cr-cli-e2e .
+          docker run --rm "${MOUNTS[@]}" cr-cli-e2e
+
+
