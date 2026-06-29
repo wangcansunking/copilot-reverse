@@ -203,6 +203,27 @@ describe("worker Anthropic endpoint", () => {
     expect(err!.data.error.message).toMatch(/context_length_exceeded/);
   });
 
+  it("cuts a degenerate repeating stream cleanly (stop_reason max_tokens, ends, never tool_use)", async () => {
+    let emitted = 0;
+    const runaway: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c1", model: "m", content: [], finishReason: "stop", usage: { promptTokens: 0, completionTokens: 0 } }),
+      // Mimics model degeneration: the same short token forever, never a `done`. Hard cap at 5000
+      // so a regressed guard fails fast instead of hanging the test runner.
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        for (let i = 0; i < 5000; i++) { emitted++; yield { kind: "text", delta: "code\n", done: false }; }
+        yield { kind: "done", done: true, finishReason: "stop" };
+      },
+    };
+    const res = await request(app(runaway)).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const frames = parseFrames(res.text);
+    const events = frames.map((f) => f.event);
+    expect(events).toContain("message_stop");                       // terminated, not hung
+    expect(emitted).toBeLessThan(5000);                             // guard cut it well before the cap
+    const delta = frames.find((f) => f.event === "message_delta");
+    expect(delta!.data.delta.stop_reason).toBe("max_tokens");       // clean truncation, native-feel
+  });
+
   it("records the failure message in the metric when a streaming request throws", async () => {
     const failing: ProviderAdapter = {
       name: "copilot",
