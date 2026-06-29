@@ -163,6 +163,25 @@ describe("streamResponses", () => {
     expect((chunks.find((c) => c.done) as any).finishReason).toBe("length");
   });
 
+  it("recovers an inline-XML tool call streamed as output_text into a structured tool chunk", async () => {
+    const xml = "<invoke name=\"Bash\"><parameter name=\"command\">ls</parameter></invoke>";
+    const chunks = await drain(streamResponses(sseResponse([
+      { type: "response.output_text.delta", delta: "ok " },
+      { type: "response.output_text.delta", delta: xml },
+      { type: "response.completed", response: { usage: { input_tokens: 4, output_tokens: 2 } } },
+    ])));
+    expect(chunks.some((c) => c.kind === "tool_use_start" && (c as any).name === "Bash")).toBe(true);
+    expect((chunks.find((c) => c.done) as any).finishReason).toBe("tool_use");
+    expect(chunks.filter((c) => c.kind === "text").map((c: any) => c.delta).join("")).not.toContain("invoke");
+  });
+
+  it("recovers an inline-XML tool call in a non-stream responses object", () => {
+    const xml = "<invoke name=\"now\"><parameter name=\"tz\">utc</parameter></invoke>";
+    const r = parseResponsesResult({ id: "r", model: "gpt-5.5", status: "completed", output: [{ type: "message", content: [{ type: "output_text", text: "sure " + xml }] }] });
+    expect(r.content.some((b: any) => b.type === "tool_use" && b.name === "now")).toBe(true);
+    expect(r.finishReason).toBe("tool_use");
+  });
+
   it("exposes the Copilot responses URL", () => {
     expect(RESPONSES_URL).toBe("https://api.githubcopilot.com/responses");
   });

@@ -124,14 +124,15 @@ describe("CopilotAdapter", () => {
     expect(JSON.parse(chunks.find((c) => c.kind === "tool_use_delta").argsDelta)).toEqual({ command: "ls -la" });
   });
 
-  it("does NOT recover when the request has no tools (degraded-looking text passes through)", async () => {
+  it("recovers an inline tool call even when the request declared NO tools (always-on extraction)", async () => {
     const f = vi.fn(async () => new Response(sseOf("here is the format: " + degraded), { status: 200, headers: { "content-type": "text/event-stream" } }));
     const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
     const chunks: any[] = [];
     for await (const c of a.stream({ ...base, stream: true })) chunks.push(c); // base has no tools
-    expect(chunks.some((c) => c.kind === "tool_use_start")).toBe(false);
+    // A follow-up turn (or a model ignoring the tools field) can still emit XML — recover it anyway.
+    expect(chunks.some((c) => c.kind === "tool_use_start" && c.name === "Bash")).toBe(true);
     const text = chunks.filter((c) => c.kind === "text").map((c) => c.delta).join("");
-    expect(text).toContain("invoke"); // raw text preserved verbatim, nothing eaten
+    expect(text).not.toContain("invoke"); // XML consumed, not leaked as literal text
   });
 
   // --- Endpoint routing: models whose supported_endpoints omit /chat/completions (e.g. gpt-5.5)
