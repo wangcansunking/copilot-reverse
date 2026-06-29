@@ -32,7 +32,7 @@
     "llm"
   ],
   "scripts": {
-    "prebuild": "node scripts/gen-version.mjs",
+    "prebuild": "node scripts/gen-version.mjs && node scripts/gen-changes.mjs",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
