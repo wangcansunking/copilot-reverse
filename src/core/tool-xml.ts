@@ -95,7 +95,12 @@ export class ToolCallExtractor {
       const end = closeIndex(this.buf, isWrapper ? "function_calls" : "invoke");
       if (end < 0) return events; // incomplete block — wait for more data
       const block = this.buf.slice(0, end);
-      for (const tool of parseInvokes(block)) events.push({ kind: "tool", tool });
+      const tools = parseInvokes(block);
+      // Parse-faithful: a block that recovers no tools (empty/missing name="" or malformed body)
+      // must NOT be swallowed — pass it through verbatim so the client sees exactly what the model
+      // emitted. Swallowing yields a turn with neither text nor a tool, which loops the model.
+      if (tools.length) for (const tool of tools) events.push({ kind: "tool", tool });
+      else events.push({ kind: "text", text: block });
       this.buf = this.buf.slice(end);
       this.capturing = false; // a following <invoke> re-triggers via the passthrough branch
     }
