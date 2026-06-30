@@ -37,7 +37,11 @@ function toWireMessages(messages: CanonicalMessage[]) {
     if (toolUses.length) msg.tool_calls = toolUses.map((t) => ({ id: t.id, type: "function", function: { name: t.name, arguments: JSON.stringify(t.input) } }));
     // Echo a prior assistant turn's reasoning back upstream so the model keeps its chain-of-thought
     // context across tool calls — Copilot reads back reasoning_text + the signed reasoning_opaque token.
-    const thinking = m.content.find((b): b is Extract<ContentBlock, { type: "thinking" }> => b.type === "thinking");
+    // Copilot's wire shape is SINGULAR (one reasoning per message), so when a turn carried several
+    // thinking blocks we echo the LAST one bearing an opaque token — the reasoning closest to the answer,
+    // i.e. the continuation context the model actually wants (and never a redacted block's empty text).
+    const thinkingBlocks = m.content.filter((b): b is Extract<ContentBlock, { type: "thinking" }> => b.type === "thinking");
+    const thinking = [...thinkingBlocks].reverse().find((t) => t.opaque) ?? thinkingBlocks[0];
     if (thinking) {
       if (thinking.text) msg.reasoning_text = thinking.text;
       if (thinking.opaque) msg.reasoning_opaque = thinking.opaque;

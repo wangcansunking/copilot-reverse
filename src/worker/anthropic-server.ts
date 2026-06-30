@@ -104,7 +104,10 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
             if (chunk.kind === "thinking") {
               if (thinkingIndex === undefined) {
                 thinkingIndex = next++;
-                res.write(frame("content_block_start", { type: "content_block_start", index: thinkingIndex, content_block: { type: "thinking", thinking: "" } }));
+                // Native parity: Anthropic opens a thinking block with BOTH empty `thinking` and empty
+                // `signature` strings; the real signature arrives later in a signature_delta. Mirror that
+                // exact shape so Claude Code's renderer sees the same opening frame as a direct API call.
+                res.write(frame("content_block_start", { type: "content_block_start", index: thinkingIndex, content_block: { type: "thinking", thinking: "", signature: "" } }));
               }
               if (chunk.opaque) lastOpaque = chunk.opaque;
               if (chunk.delta) res.write(frame("content_block_delta", { type: "content_block_delta", index: thinkingIndex, delta: { type: "thinking_delta", thinking: chunk.delta } }));

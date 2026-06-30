@@ -164,6 +164,27 @@ describe("CopilotAdapter", () => {
     expect(asst.content).toBe("answer");
   });
 
+  it("with several thinking blocks, echoes the LAST opaque-bearing one (Copilot reasoning is singular)", async () => {
+    let body: any;
+    const f = vi.fn(async (_u: string, init: RequestInit) => { body = JSON.parse(init.body as string); return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }); });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    await a.complete({
+      model: "gpt-4o", stream: false, maxTokens: 10,
+      messages: [
+        // a redacted_thinking (empty text) precedes the real reasoning — must NOT echo the empty one
+        { role: "assistant", content: [
+          { type: "thinking", text: "", opaque: "REDACTED_FIRST" },
+          { type: "thinking", text: "real reasoning", opaque: "REAL_LAST" },
+          { type: "text", text: "answer" },
+        ] },
+        { role: "user", content: [{ type: "text", text: "continue" }] },
+      ],
+    });
+    const asst = body.messages.find((m: any) => m.role === "assistant" && m.content === "answer");
+    expect(asst.reasoning_text).toBe("real reasoning");
+    expect(asst.reasoning_opaque).toBe("REAL_LAST"); // the continuation token closest to the answer
+  });
+
   // --- Inline tool-call recovery: some models emit a tool call as TEXT XML instead of native
   // tool_calls. The adapter must recover it into structured tool chunks when the request has tools.
   // Tags are built via concatenation so no literal close-tag appears in this source file.

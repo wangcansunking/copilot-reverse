@@ -326,6 +326,8 @@ describe("worker Anthropic endpoint — extended thinking (#33)", () => {
     // thinking opens at index 0, text at index 1
     expect(starts[0].data.index).toBe(0);
     expect(starts[0].data.content_block.type).toBe("thinking");
+    // native shape: the thinking block opens with empty thinking + signature strings (Anthropic parity)
+    expect(starts[0].data.content_block).toEqual({ type: "thinking", thinking: "", signature: "" });
     expect(starts[1].data.content_block.type).toBe("text");
     expect(starts[1].data.index).toBe(1);
     // thinking content arrives as thinking_delta on index 0
