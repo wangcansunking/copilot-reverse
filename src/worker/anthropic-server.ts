@@ -76,9 +76,24 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
 
         for (let iter = 0; iter < MAX_TOOL_ITERS && !runaway; iter++) {
           let textIndex: number | undefined;                              // Anthropic index of this turn's text block
+          let thinkingIndex: number | undefined;                          // Anthropic index of this turn's thinking block
+          let lastOpaque: string | undefined;                             // most recent reasoning continuation token
           const byCopilotIdx = new Map<number, { id: string; name: string; args: string }>();
           const buffered: { id: string; name: string; args: string }[] = []; // tool calls seen this turn, in order
           let turnStop: "stop" | "length" | "tool_use" | "error" = "stop";
+
+          // Anthropic blocks are sequential, never interleaved: a thinking block must be CLOSED before
+          // any text/tool block opens. Reasoning always streams first (upstream emits it ahead of the
+          // answer), so we close it lazily the moment non-thinking content begins.
+          const closeThinking = () => {
+            if (thinkingIndex !== undefined) {
+              // The Anthropic thinking block is finalized with a signature_delta carrying the opaque
+              // continuation token, then closed — matching the native extended-thinking wire shape.
+              if (lastOpaque) res.write(frame("content_block_delta", { type: "content_block_delta", index: thinkingIndex, delta: { type: "signature_delta", signature: lastOpaque } }));
+              res.write(frame("content_block_stop", { type: "content_block_stop", index: thinkingIndex }));
+              thinkingIndex = undefined;
+            }
+          };
 
           for await (const chunk of provider.stream(canon)) {
             if (chunk.done) {
@@ -86,7 +101,15 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
               if (chunk.usage) { lastPrompt = chunk.usage.promptTokens ?? lastPrompt; lastCached = chunk.usage.cachedTokens ?? 0; sumCompletion += chunk.usage.completionTokens ?? 0; }
               break;
             }
-            if (chunk.kind === "text") {
+            if (chunk.kind === "thinking") {
+              if (thinkingIndex === undefined) {
+                thinkingIndex = next++;
+                res.write(frame("content_block_start", { type: "content_block_start", index: thinkingIndex, content_block: { type: "thinking", thinking: "" } }));
+              }
+              if (chunk.opaque) lastOpaque = chunk.opaque;
+              if (chunk.delta) res.write(frame("content_block_delta", { type: "content_block_delta", index: thinkingIndex, delta: { type: "thinking_delta", thinking: chunk.delta } }));
+            } else if (chunk.kind === "text") {
+              closeThinking();
               if (textIndex === undefined) {
                 textIndex = next++;
                 res.write(frame("content_block_start", { type: "content_block_start", index: textIndex, content_block: { type: "text", text: "" } }));
@@ -95,6 +118,7 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
               // Degenerate-stream kill-switch: a model looping on a short token is cut here.
               if (guard.push(chunk.delta)) { runaway = true; runawayReason = guard.reason ?? "repetition"; turnStop = "length"; break; }
             } else if (chunk.kind === "tool_use_start") {
+              closeThinking();
               if (!byCopilotIdx.has(chunk.index)) { const t = { id: chunk.id, name: chunk.name, args: "" }; byCopilotIdx.set(chunk.index, t); buffered.push(t); }
             } else if (chunk.kind === "tool_use_delta") {
               const t = byCopilotIdx.get(chunk.index); if (t) t.args += chunk.argsDelta;
@@ -103,6 +127,7 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
             // guard, so without this a model spamming calls would relay until the socket died.
             if (Date.now() > deadline) { runaway = true; runawayReason = "deadline"; turnStop = "length"; break; }
           }
+          closeThinking(); // a thinking-only turn (no text/tool followed) still needs its block closed
           if (textIndex !== undefined) res.write(frame("content_block_stop", { type: "content_block_stop", index: textIndex }));
 
           // Runaway tripped mid-text: stop now as max_tokens. Don't forward partial tool calls or

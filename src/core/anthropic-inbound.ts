@@ -1,15 +1,20 @@
 import type { CanonicalRequest, CanonicalResponse, CanonicalMessage, ContentBlock } from "./canonical.js";
 import { GATEWAY_TOOL_DEFS, isGatewayTool } from "./server-tools.js";
+import { reasoningFromThinking } from "./reasoning.js";
 
 interface AnthropicImageSource { type: "base64" | "url"; media_type?: string; data?: string; url?: string }
-interface AnthropicBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; source?: AnthropicImageSource }
+interface AnthropicBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; source?: AnthropicImageSource; thinking?: string; signature?: string }
 interface AnthropicMsg { role: "user" | "assistant"; content: string | AnthropicBlock[] }
 // Custom tools carry an input_schema. Server-side tools (web_search, web_fetch, bash, computer, …)
 // instead carry a dated `type` (e.g. "web_search_20250305") and a bare `name`, with no schema.
 interface AnthropicTool { type?: string; name: string; description?: string; input_schema?: Record<string, unknown> }
+// `thinking` gates extended reasoning: { type: "enabled"|"disabled", budget_tokens? }. We map the
+// token budget to the nearest canonical effort (see reasoningFromThinking).
+interface AnthropicThinking { type?: string; budget_tokens?: number }
 interface AnthropicRequest {
   model: string; max_tokens: number; stream?: boolean; temperature?: number;
   system?: string | AnthropicBlock[]; tools?: AnthropicTool[]; messages: AnthropicMsg[];
+  thinking?: AnthropicThinking;
 }
 
 // The Anthropic `system` field may be a plain string or an array of text blocks (the Claude Code
@@ -35,6 +40,11 @@ function blocksToCanonical(content: string | AnthropicBlock[]): ContentBlock[] {
     }
     else if (b.type === "tool_use") out.push({ type: "tool_use", id: b.id!, name: b.name!, input: b.input });
     else if (b.type === "tool_result") out.push({ type: "tool_result", toolUseId: b.tool_use_id!, content: typeof b.content === "string" ? b.content : JSON.stringify(b.content) });
+    // A prior assistant thinking block round-trips so the opaque continuation token (signature) can be
+    // echoed upstream, preserving the model's reasoning context across tool-call turns. redacted_thinking
+    // (encrypted-only, no text) is carried the same way via its data field.
+    else if (b.type === "thinking") out.push({ type: "thinking", text: b.thinking ?? "", opaque: b.signature });
+    else if (b.type === "redacted_thinking") out.push({ type: "thinking", text: "", opaque: (b as { data?: string }).data });
   }
   return out;
 }
@@ -52,6 +62,7 @@ export function anthropicRequestToCanonical(req: AnthropicRequest): CanonicalReq
     model: req.model, stream: Boolean(req.stream), temperature: req.temperature, maxTokens: req.max_tokens,
     tools: mapTools(req.tools),
     messages,
+    reasoning: reasoningFromThinking(req.thinking),
   };
 }
 
@@ -80,6 +91,9 @@ export function canonicalToAnthropicResponse(r: CanonicalResponse) {
   const content = r.content.map((b) =>
     b.type === "text" ? { type: "text", text: b.text } :
     b.type === "tool_use" ? { type: "tool_use", id: b.id, name: b.name, input: b.input } :
+    // A thinking block carries the chain-of-thought plus the opaque continuation token as `signature`
+    // (Anthropic's extended-thinking shape), so a non-stream client renders + can echo it back.
+    b.type === "thinking" ? { type: "thinking", thinking: b.text, ...(b.opaque ? { signature: b.opaque } : {}) } :
     { type: "text", text: "" });
   const stop = r.finishReason === "tool_use" ? "tool_use" : r.finishReason === "length" ? "max_tokens" : "end_turn";
   return {

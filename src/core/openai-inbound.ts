@@ -1,5 +1,6 @@
 import type { CanonicalRequest, CanonicalResponse, CanonicalChunk, CanonicalMessage, ContentBlock } from "./canonical.js";
 import { joinText } from "./canonical.js";
+import { reasoningFromEffort } from "./reasoning.js";
 
 interface OpenAIImageUrl { url?: string }
 interface OpenAIContentPart { type?: string; text?: string; image_url?: OpenAIImageUrl }
@@ -22,6 +23,8 @@ interface OpenAITool { type: "function"; function: { name: string; description?:
 interface OpenAIChatRequest {
   model: string; messages: OpenAIMsg[]; stream?: boolean;
   temperature?: number; max_tokens?: number; tools?: OpenAITool[];
+  // OpenAI reasoning models (and Copilot's gpt-5.x / Claude on /chat) take a top-level effort enum.
+  reasoning_effort?: string;
 }
 
 function msgToCanonical(m: OpenAIMsg): CanonicalMessage {
@@ -49,6 +52,7 @@ export function openaiRequestToCanonical(req: OpenAIChatRequest): CanonicalReque
     maxTokens: req.max_tokens,
     tools: req.tools?.map((t) => ({ name: t.function.name, description: t.function.description, parameters: t.function.parameters })),
     messages: req.messages.map(msgToCanonical),
+    reasoning: reasoningFromEffort(req.reasoning_effort),
   };
 }
 

@@ -295,6 +295,42 @@ describe("E2E: tool calls", () => {
     expect(res.body.content.find((b: any) => b.type === "tool_use").name).toBe("now");
   });
 
+  it("EP-19b extended thinking: a thinking stream yields an Anthropic thinking block (thinking_delta + signature) before the text", async () => {
+    const thinker: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => ({ id: "c1", model: "m", content: [{ type: "thinking", text: "reasoning", opaque: "S" }, { type: "text", text: "answer" }], finishReason: "stop", usage: { promptTokens: 1, completionTokens: 1 } }),
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        yield { kind: "thinking", delta: "let me ", opaque: "S", done: false };
+        yield { kind: "thinking", delta: "think", done: false };
+        yield { kind: "text", delta: "answer", done: false };
+        yield { kind: "done", done: true, finishReason: "stop" };
+      },
+    };
+    const { worker } = wired(thinker);
+    const res = await request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 50, stream: true, thinking: { type: "enabled", budget_tokens: 8000 }, messages: [{ role: "user", content: "hard" }] });
+    const f = frames(res.text);
+    const starts = f.filter((x) => x.event === "content_block_start");
+    // thinking block opens at index 0 (before text at 1); reasoning streams as thinking_delta
+    expect(starts.find((s) => s.data.content_block.type === "thinking")!.data.index).toBe(0);
+    expect(starts.find((s) => s.data.content_block.type === "text")!.data.index).toBe(1);
+    const think = f.filter((x) => x.event === "content_block_delta" && x.data.delta.type === "thinking_delta").map((x) => x.data.delta.thinking).join("");
+    expect(think).toBe("let me think");
+    // a signature_delta carries the opaque continuation token before the thinking block closes
+    expect(f.some((x) => x.event === "content_block_delta" && x.data.delta.type === "signature_delta" && x.data.delta.signature === "S")).toBe(true);
+  });
+
+  it("EP-19c a client-sent thinking budget reaches the provider as canonical reasoning effort", async () => {
+    let seen: any;
+    const spy: ProviderAdapter = {
+      name: "copilot",
+      complete: async (req) => { seen = req; return { id: "c1", model: "m", content: [{ type: "text", text: "ok" }], finishReason: "stop", usage: { promptTokens: 1, completionTokens: 1 } }; },
+      async *stream() { yield { kind: "done", done: true, finishReason: "stop" } as const; },
+    };
+    const { worker } = wired(spy);
+    await request(worker).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 20, thinking: { type: "enabled", budget_tokens: 16000 }, messages: [{ role: "user", content: "hi" }] });
+    expect(seen.reasoning).toEqual({ effort: "high" }); // 16k budget -> high bucket
+  });
+
   it("EP-20 OpenAI tool round-trip: an assistant tool_call + tool result reach the provider", async () => {
     let seen: any;
     const echo: ProviderAdapter = {

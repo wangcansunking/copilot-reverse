@@ -110,3 +110,32 @@ describe("LIVE: count_tokens", () => {
     expect(res.body.input_tokens).toBeGreaterThan(0);
   });
 });
+
+// EXTENDED THINKING (issue #33) — proves the reasoning channel round-trips through the REAL upstream:
+// a `thinking`-enabled Anthropic request must come back as a native thinking block (thinking_delta +
+// signature_delta) ahead of the answer text. Uses a Claude model routed without remapping. If Copilot
+// ever stops returning reasoning_text, or our translation regresses, this trips.
+describe("LIVE: extended thinking (#33)", () => {
+  liveIt("a thinking-enabled request streams a real Anthropic thinking block before the text", async () => {
+    const store = new CopilotTokenStore(gh!);
+    const token = await store.get();
+    const ids = await fetchCopilotModels(token);
+    const claude = ids.find((m) => m.includes("claude-opus")) ?? ids.find((m) => m.includes("claude")) ?? "claude-opus-4.8";
+    const router = new Router([new CopilotAdapter(store)], {});
+    router.setAvailableModels(ids);
+    const worker = createWorkerApp(router, () => {});
+    const res = await request(worker).post("/anthropic/v1/messages")
+      .send({ model: claude, max_tokens: 600, stream: true, thinking: { type: "enabled", budget_tokens: 8000 }, messages: [{ role: "user", content: "What is 17*23? Think briefly, then give the number." }] });
+    const fr = res.text.split("\n\n").map((b) => ({ event: b.split("\n").find((l) => l.startsWith("event: "))?.slice(7) ?? "", data: JSON.parse(b.split("\n").find((l) => l.startsWith("data: "))?.slice(6) ?? "{}") }));
+    const starts = fr.filter((f) => f.event === "content_block_start");
+    const thinkingText = fr.filter((f) => f.event === "content_block_delta" && f.data.delta?.type === "thinking_delta").map((f) => f.data.delta.thinking).join("");
+    const answer = fr.filter((f) => f.event === "content_block_delta" && f.data.delta?.type === "text_delta").map((f) => f.data.delta.text).join("");
+    // eslint-disable-next-line no-console
+    console.log(`[thinking #33] thinking="${thinkingText.slice(0, 80)}..." answer="${answer.slice(0, 60)}"`);
+    // a thinking block opened before any text block, and reasoning actually streamed
+    const thinkingStart = starts.find((s) => s.data.content_block?.type === "thinking");
+    expect(thinkingStart).toBeDefined();
+    expect(thinkingText.length).toBeGreaterThan(0);
+    expect(answer).toContain("391");
+  }, 45_000);
+});

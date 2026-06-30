@@ -28,6 +28,8 @@ provider so no live network/token is needed. Spec: [`copilot-reverse.e2e.test.ts
 | EP-17 | Anthropic image block | round-trips through the proxy as image content (vision) |
 | EP-18 | mixed text+tool stream | text@0, tool@1, `stop_reason=tool_use` |
 | EP-19 | non-stream tool_use response | maps to Anthropic `tool_use` content |
+| EP-19b | extended-thinking stream | thinking block @0 (`thinking_delta`+`signature_delta`) before text @1 |
+| EP-19c | client thinking budget | `thinking.budget_tokens` → canonical `reasoning.effort` reaches the provider |
 | EP-20 | OpenAI assistant tool_call + tool result | both reach the provider as canonical blocks |
 | EP-21 | failed request | error message persists in `request_log`, queryable via `/api/requests` |
 | EP-22 | control API | exposes status, doctor, requests endpoints |

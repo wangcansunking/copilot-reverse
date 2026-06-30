@@ -3,6 +3,17 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-30 (extended thinking / reasoning channel, #33)** — added a reasoning axis end-to-end:
+  `thinking`/`reasoning_effort` inbound → `reasoning_effort` (chat) / `reasoning: {effort}` (responses)
+  upstream → `reasoning_text`/`reasoning_opaque` deltas parsed → native Anthropic thinking blocks
+  (`thinking_delta` + `signature_delta`) relayed ahead of the answer, with the opaque continuation token
+  round-tripping across tool turns. New hermetic cases **EP-19b** (thinking stream → thinking block @0
+  before text @1) and **EP-19c** (client thinking budget → canonical effort reaches the provider); a
+  docker http-e2e golden case (real Claude round-trip → native thinking block over the socket); and a
+  live integration guard. Both real-upstream tests RETRY across attempts and assert reasoning on a turn
+  that reasons, because the upstream surfaces `reasoning_text` non-deterministically (~3/5 runs) — the
+  answer is always asserted, a no-reasoning run degrades to a note. `tsc` clean.
+
 - **2026-06-30 (502/crash triage: empty choices, max_output_tokens floor, EADDRINUSE orphan)** — three
   independent failures the user hit in a real Claude session, all surfacing in the dashboard error log.
   (1) The daemon wedged **unhealthy** under a `listen EADDRINUSE :7891` crash loop: a forked worker

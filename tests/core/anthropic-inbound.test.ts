@@ -79,4 +79,43 @@ describe("anthropic inbound", () => {
     expect((ws?.parameters as any)?.type).toBe("object");
     expect((ws?.parameters as any)?.properties?.query).toBeTruthy();
   });
+
+  it("maps an Anthropic thinking budget to a canonical reasoning effort", () => {
+    const c = anthropicRequestToCanonical({
+      model: "claude-opus-4-8", max_tokens: 100,
+      messages: [{ role: "user", content: "hard problem" }],
+      thinking: { type: "enabled", budget_tokens: 16000 },
+    } as any);
+    expect(c.reasoning).toEqual({ effort: "high" }); // 16k budget -> high bucket
+  });
+
+  it("leaves reasoning undefined when thinking is disabled or absent", () => {
+    const off = anthropicRequestToCanonical({
+      model: "claude-opus-4-8", max_tokens: 100, messages: [{ role: "user", content: "hi" }],
+      thinking: { type: "disabled" },
+    } as any);
+    const absent = anthropicRequestToCanonical({
+      model: "claude-opus-4-8", max_tokens: 100, messages: [{ role: "user", content: "hi" }],
+    });
+    expect(off.reasoning).toBeUndefined();
+    expect(absent.reasoning).toBeUndefined();
+  });
+
+  it("parses a prior assistant thinking block (with signature) back into a canonical thinking block", () => {
+    const c = anthropicRequestToCanonical({
+      model: "claude-opus-4-8", max_tokens: 100,
+      messages: [
+        { role: "user", content: "hi" },
+        { role: "assistant", content: [
+          { type: "thinking", thinking: "earlier reasoning", signature: "OPAQUE99" },
+          { type: "text", text: "earlier answer" },
+        ] },
+        { role: "user", content: "continue" },
+      ],
+    } as any);
+    // the assistant turn's thinking block round-trips, carrying its opaque continuation token
+    const assistantMsg = c.messages.find((m) => m.role === "assistant")!;
+    expect(assistantMsg.content[0]).toEqual({ type: "thinking", text: "earlier reasoning", opaque: "OPAQUE99" });
+    expect(assistantMsg.content[1]).toEqual({ type: "text", text: "earlier answer" });
+  });
 });

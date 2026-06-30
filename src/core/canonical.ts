@@ -2,7 +2,11 @@ export interface TextBlock { type: "text"; text: string }
 export interface ImageBlock { type: "image"; dataUrl: string } // full data URI, e.g. data:image/png;base64,...
 export interface ToolUseBlock { type: "tool_use"; id: string; name: string; input: unknown }
 export interface ToolResultBlock { type: "tool_result"; toolUseId: string; content: string }
-export type ContentBlock = TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock;
+// Extended-thinking / reasoning output. `text` is the human-readable chain of thought; `opaque` is the
+// upstream's signed/encrypted continuation token (Copilot's `reasoning_opaque`) that must be echoed back
+// on the next turn to preserve the model's reasoning context across tool calls. Either may be empty.
+export interface ThinkingBlock { type: "thinking"; text: string; opaque?: string }
+export type ContentBlock = TextBlock | ImageBlock | ToolUseBlock | ToolResultBlock | ThinkingBlock;
 
 export interface CanonicalMessage {
   role: "system" | "user" | "assistant" | "tool";
@@ -12,6 +16,14 @@ export interface CanonicalTool {
   name: string;
   description?: string;
   parameters: Record<string, unknown>; // JSON Schema
+}
+// Reasoning controls. `effort` is the normalized knob clients ask for; the adapter maps it to each
+// upstream's wire form (Copilot /chat + /responses take a top-level `reasoning_effort` enum). A client
+// that sends an Anthropic-style token budget instead is mapped to the nearest effort by the inbound
+// translator, so the canonical request always carries the normalized enum.
+export type ReasoningEffort = "none" | "low" | "medium" | "high" | "xhigh" | "max";
+export interface ReasoningConfig {
+  effort?: ReasoningEffort;
 }
 export interface CanonicalRequest {
   model: string;
@@ -24,6 +36,9 @@ export interface CanonicalRequest {
   // run server-side, rather than translating to function tools or executing itself. Used for Copilot's
   // native web_search on /responses (gpt-5 models), which Codex requests and Copilot fulfils directly.
   hostedTools?: string[];
+  // Extended-thinking request knob. Present when a client asked the model to reason (Anthropic
+  // `thinking`, OpenAI `reasoning_effort`); the adapter forwards it as the upstream's reasoning_effort.
+  reasoning?: ReasoningConfig;
 }
 export interface CanonicalResponse {
   id: string;
@@ -36,6 +51,7 @@ export interface CanonicalResponse {
 // Streaming deltas. Tool-call deltas accumulate by index in the translator.
 export type CanonicalChunk =
   | { kind: "text"; delta: string; done: false }
+  | { kind: "thinking"; delta: string; opaque?: string; done: false }
   | { kind: "tool_use_start"; index: number; id: string; name: string; done: false }
   | { kind: "tool_use_delta"; index: number; argsDelta: string; done: false }
   | { kind: "done"; done: true; finishReason?: CanonicalResponse["finishReason"]; usage?: { promptTokens: number; completionTokens: number; cachedTokens?: number } };

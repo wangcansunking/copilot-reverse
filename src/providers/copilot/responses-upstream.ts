@@ -29,6 +29,8 @@ export interface ResponsesBody {
   temperature?: number;
   max_output_tokens?: number;
   tools?: ResponsesToolEntry[];
+  // Reasoning models on /responses take a nested reasoning config (vs /chat's flat reasoning_effort).
+  reasoning?: { effort: string };
 }
 
 function textOf(content: ContentBlock[]): string {
@@ -77,6 +79,7 @@ export function canonicalToResponsesBody(req: CanonicalRequest): ResponsesBody {
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
     ...(req.maxTokens !== undefined ? { max_output_tokens: Math.max(req.maxTokens, MIN_OUTPUT_TOKENS) } : {}),
     ...(tools.length ? { tools } : {}),
+    ...(req.reasoning?.effort ? { reasoning: { effort: req.reasoning.effort } } : {}),
   };
 }
 

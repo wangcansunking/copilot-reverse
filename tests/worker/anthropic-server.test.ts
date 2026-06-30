@@ -305,6 +305,46 @@ describe("worker Anthropic endpoint", () => {
   });
 });
 
+describe("worker Anthropic endpoint — extended thinking (#33)", () => {
+  // Provider that streams reasoning (thinking) deltas before the answer text, plus a non-stream
+  // complete() that returns a leading thinking block — mirroring Copilot's reasoning_text shape.
+  const thinkingProvider: ProviderAdapter = {
+    name: "copilot",
+    complete: async () => ({ id: "c1", model: "m", content: [{ type: "thinking", text: "let me reason", opaque: "SIG" }, { type: "text", text: "the answer" }], finishReason: "stop", usage: { promptTokens: 2, completionTokens: 2 } }),
+    async *stream(): AsyncIterable<CanonicalChunk> {
+      yield { kind: "thinking", delta: "let me ", opaque: "SIG", done: false };
+      yield { kind: "thinking", delta: "reason", done: false };
+      yield { kind: "text", delta: "the answer", done: false };
+      yield { kind: "done", done: true, finishReason: "stop" };
+    },
+  };
+
+  it("streams a thinking block at index 0 (thinking_delta) before the text block at index 1", async () => {
+    const res = await request(app(thinkingProvider)).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, stream: true, thinking: { type: "enabled", budget_tokens: 8000 }, messages: [{ role: "user", content: "hard" }] });
+    const frames = parseFrames(res.text);
+    const starts = frames.filter((f) => f.event === "content_block_start");
+    // thinking opens at index 0, text at index 1
+    expect(starts[0].data.index).toBe(0);
+    expect(starts[0].data.content_block.type).toBe("thinking");
+    expect(starts[1].data.content_block.type).toBe("text");
+    expect(starts[1].data.index).toBe(1);
+    // thinking content arrives as thinking_delta on index 0
+    const thinkingDeltas = frames.filter((f) => f.event === "content_block_delta" && f.data.delta?.type === "thinking_delta");
+    expect(thinkingDeltas.map((f) => f.data.delta.thinking).join("")).toBe("let me reason");
+    expect(thinkingDeltas.every((f) => f.data.index === 0)).toBe(true);
+    // and the answer text routes to index 1
+    const textDelta = frames.find((f) => f.event === "content_block_delta" && f.data.delta?.type === "text_delta");
+    expect(textDelta!.data.index).toBe(1);
+  });
+
+  it("non-stream: a leading thinking block maps to an Anthropic thinking content block", async () => {
+    const res = await request(app(thinkingProvider)).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, thinking: { type: "enabled", budget_tokens: 8000 }, messages: [{ role: "user", content: "hard" }] });
+    expect(res.status).toBe(200);
+    expect(res.body.content[0]).toMatchObject({ type: "thinking", thinking: "let me reason" });
+    expect(res.body.content[1]).toMatchObject({ type: "text", text: "the answer" });
+  });
+});
+
 describe("worker Anthropic endpoint — gateway tool loop (web_search/web_fetch)", () => {
   // A provider that calls web_search on turn 1, then answers with text on turn 2. Tracks how many
   // times stream() ran so we can assert the gateway looped (ran the tool) rather than forwarding it.
