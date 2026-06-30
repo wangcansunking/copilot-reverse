@@ -1,3 +1,7 @@
+## v0.10.1 — 2026-06-30
+
+fix(tui): the "what's new" banner now shows **one line per recent version**, each surfacing that version's main change — instead of flattening all changes from the newest version (which let a single bundled release fill every slot). For a version that bundled several changesets it picks the headline change (a `feat`/`perf`, or hand-written prose, over a `fix`/`chore`; ties broken by length), so e.g. v0.9.0 shows the network access-modes feature rather than the release-plumbing fix.
+
 ## v0.10.0 — 2026-06-30
 
 feat(tui): the startup "what's new" banner now shows the real recent headlines (top 3 across recent releases, version-tagged) instead of a generic "type /changes" pointer — so a freshly shipped feature is actually visible on launch rather than the banner looking empty. `/changes` now lists every change in a bundled release: `gen-changes` captures all paragraphs of each release (not just the first), so a headline feature merged alongside a plumbing fix is no longer hidden. Each release renders as a header with one bullet per change.

@@ -2,6 +2,14 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.10.1",
+    "date": "2026-06-30",
+    "summary": "fix(tui): the \"what's new\" banner now shows **one line per recent version**, each surfacing that version's main change — instead of flattening all changes from the newest version (which let a single bundled release fill every slot). For a version that bundled several changesets it picks the headline change (a `feat`/`perf`, or hand-written prose, over a `fix`/`chore`; ties broken by length), so e.g. v0.9.0 shows the network access-modes feature rather than the release-plumbing fix.",
+    "summaries": [
+      "fix(tui): the \"what's new\" banner now shows **one line per recent version**, each surfacing that version's main change — instead of flattening all changes from the newest version (which let a single bundled release fill every slot). For a version that bundled several changesets it picks the headline change (a `feat`/`perf`, or hand-written prose, over a `fix`/`chore`; ties broken by length), so e.g. v0.9.0 shows the network access-modes feature rather than the release-plumbing fix."
+    ]
+  },
+  {
     "version": "0.10.0",
     "date": "2026-06-30",
     "summary": "feat(tui): the startup \"what's new\" banner now shows the real recent headlines (top 3 across recent releases, version-tagged) instead of a generic \"type /changes\" pointer — so a freshly shipped feature is actually visible on launch rather than the banner looking empty. `/changes` now lists every change in a bundled release: `gen-changes` captures all paragraphs of each release (not just the first), so a headline feature merged alongside a plumbing fix is no longer hidden. Each release renders as a header with one bullet per change.",
@@ -73,14 +81,6 @@ export const APP_CHANGES: ChangeEntry[] = [
     "summary": "Fix the daemon going permanently dead during dogfooding. The worker had no `unhandledRejection` handler, so a stray floating rejection silently killed it (exit 1, empty stderr) on Node ≥15; once that happened 5×/60s the supervisor marked it `unhealthy` and gave up forever, leaving a running daemon with a dead worker. The worker now handles `unhandledRejection`, writes the cause to stderr *before* the IPC report (so crashes are no longer blind), the supervisor persists each crash to `crash.log`, and `unhealthy` now recovers: after a 30s cooldown it resets the window and tries again instead of staying down.",
     "summaries": [
       "Fix the daemon going permanently dead during dogfooding. The worker had no `unhandledRejection` handler, so a stray floating rejection silently killed it (exit 1, empty stderr) on Node ≥15; once that happened 5×/60s the supervisor marked it `unhealthy` and gave up forever, leaving a running daemon with a dead worker. The worker now handles `unhandledRejection`, writes the cause to stderr *before* the IPC report (so crashes are no longer blind), the supervisor persists each crash to `crash.log`, and `unhealthy` now recovers: after a 30s cooldown it resets the window and tries again instead of staying down."
-    ]
-  },
-  {
-    "version": "0.5.1",
-    "date": "2026-06-28",
-    "summary": "Fix the app dropping back to the shell during concurrent use. The TUI and supervisor share one process, but several synchronous throw sites had no handler — most importantly an SSE write to a client socket that died between broadcasts (likely with multiple clients connected), which crashed the whole process. Each broadcast listener is now isolated and a dead SSE connection is dropped instead of retried; `readGhToken` returns null on a corrupt/locked read instead of throwing on the heartbeat tick; and a process-level backstop logs any remaining stray throw/rejection to `~/.copilot-reverse/crash.log` and keeps the TUI alive.",
-    "summaries": [
-      "Fix the app dropping back to the shell during concurrent use. The TUI and supervisor share one process, but several synchronous throw sites had no handler — most importantly an SSE write to a client socket that died between broadcasts (likely with multiple clients connected), which crashed the whole process. Each broadcast listener is now isolated and a dead SSE connection is dropped instead of retried; `readGhToken` returns null on a corrupt/locked read instead of throwing on the heartbeat tick; and a process-level backstop logs any remaining stray throw/rejection to `~/.copilot-reverse/crash.log` and keeps the TUI alive."
     ]
   }
 ];
