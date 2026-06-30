@@ -28,6 +28,7 @@ import { claudeCopilotReverseEnv } from "../tui/setup/clients.js";
 import { stripOneM } from "../core/model-canonical.js";
 import { bestModelMatch } from "../core/fuzzy.js";
 import { dataDir } from "../shared/paths.js";
+import { ensureProfileSeeded } from "../shared/profile.js";
 import { defaultConfig } from "../shared/config.js";
 import { APP_VERSION } from "../version.js";
 import { APP_CHANGES } from "../changes.js";
@@ -89,6 +90,9 @@ function networkInfoOf(workerPort: number): NetworkInfo {
 
 async function launchTui(): Promise<void> {
   installProcessBackstop();
+  // Seed a fresh non-default profile (e.g. dev) from the prod data dir BEFORE any dataDir() read, so a
+  // dev instance starts already signed-in instead of forcing a re-/login. No-op for the prod profile.
+  const { profile } = ensureProfileSeeded();
   const cfg = defaultConfig();
   const existingToken = readGhToken(dataDir());
   if (!existingToken) {
@@ -238,6 +242,7 @@ async function launchTui(): Promise<void> {
     React.createElement(App, {
       registry,
       title: "copilot-reverse",
+      profile: profile.name,
       initialModel: persistedModel ?? DEFAULT_MODEL,
       statusSource: () => client.status(),
       metricsSource: () => client.metrics(),

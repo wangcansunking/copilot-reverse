@@ -1,3 +1,5 @@
+import { resolveProfile } from "./profile.js";
+
 export interface RestartPolicy {
   maxCrashes: number;
   windowMs: number;
@@ -25,10 +27,14 @@ export interface AppConfig {
 }
 
 export function defaultConfig(): AppConfig {
+  // Ports come from the active profile so a dev instance (COPILOT_REVERSE_PROFILE=dev → 7990/7991)
+  // doesn't fight the installed prod instance for :7890/:7891. The default profile resolves to the
+  // historical 7890/7891; an explicit SUPERVISOR_PORT / WORKER_PORT still wins inside resolveProfile.
+  const profile = resolveProfile();
   return {
     bindHost: "127.0.0.1",
-    supervisorPort: 7890,
-    workerPort: 7891,
+    supervisorPort: profile.supervisorPort,
+    workerPort: profile.workerPort,
     restart: { maxCrashes: 5, windowMs: 60_000, baseBackoffMs: 500, maxBackoffMs: 8_000, unhealthyCooldownMs: 30_000 },
     // Token failure is rare and GitHub rate-limits, so a slow cadence is plenty; overridable for tests/tuning.
     heartbeat: { intervalMs: 60_000, initialDelayMs: 2_000 },

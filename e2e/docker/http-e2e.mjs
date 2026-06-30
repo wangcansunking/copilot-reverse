@@ -305,6 +305,43 @@ async function main() {
       });
     }
 
+    // Profile isolation (dev profile): a second, fully independent stack booted under
+    // COPILOT_REVERSE_PROFILE=dev must (a) land on the dev ports 7990/7991 — NOT the prod 7890/7891 —
+    // proving the env propagates through the in-process supervisor to the forked worker, and (b) have
+    // SEEDED its own data dir from prod on first boot: the GitHub token carried over (no re-login),
+    // while clients.json is deliberately NOT copied (it records a prod-port client) and the LAN posture
+    // is reset to safe localhost. This is the cross-process behavior unit tests can't reach.
+    log("\n[profile] COPILOT_REVERSE_PROFILE=dev → isolated ports + seeded-from-prod data dir");
+    {
+      const DEV_SUP = 7990, DEV_WRK = 7991;
+      // Same HOME as prod so the seed source is THIS run's prod data dir (which already has creds.json +
+      // network.json written above). The dev profile derives ~/.copilot-reverse-dev beside it.
+      const devHome = join(DATA_DIR, "..");
+      const devData = join(devHome, ".copilot-reverse-dev");
+      // Pre-existing prod-only artifacts the seed must NOT carry over, to prove the exclusion.
+      writeFileSync(join(DATA_DIR, "clients.json"), JSON.stringify({ claude: true, codex: true }));
+      writeFileSync(join(DATA_DIR, "network.json"), JSON.stringify({ mode: "lan", key: "prod-lan-key" }));
+      const devSup = spawn("node", ["dist/supervisor/index.js"], {
+        stdio: "inherit",
+        env: { ...process.env, COPILOT_REVERSE_PROFILE: "dev" },
+      });
+      try {
+        const upSup = await ready(`http://${HOST}:${DEV_SUP}/api/status`);
+        check("dev supervisor up on 7990 (not prod 7890)", upSup);
+        check("dev worker up on 7991 (not prod 7891)", await ready(`http://${HOST}:${DEV_WRK}/healthz`));
+        // Prod stack on 7890/7891 must be untouched and still serving — the two coexist.
+        check("prod supervisor still ready on 7890 (coexists)", (await jget(supUrl("/api/status"))).j?.workerState === "ready");
+        // Seed assertions, read straight off the dev data dir on disk.
+        const devCreds = JSON.parse(readFileSync(join(devData, "creds.json"), "utf8"));
+        check("dev seeded the prod GitHub token (no re-login)", devCreds.ghToken === (token || "ghu_dummy0000000000000000000000000000000"), devCreds.ghToken?.slice(0, 8));
+        check("dev did NOT inherit clients.json (prod-port client)", !existsSync(join(devData, "clients.json")));
+        const devNet = existsSync(join(devData, "network.json")) ? JSON.parse(readFileSync(join(devData, "network.json"), "utf8")) : {};
+        check("dev carried the access KEY but reset mode off LAN", devNet.key === "prod-lan-key" && devNet.mode !== "lan", JSON.stringify(devNet));
+      } finally { devSup.kill(); }
+      // Restore prod's safe default so any later block (and the golden round-trips) see loopback mode.
+      writeFileSync(join(DATA_DIR, "network.json"), JSON.stringify({ mode: "localhost", key: "e2e-secret" }));
+    }
+
     if (token) {
       log("\n[golden] real round-trips");
       const a = await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "gpt-4o", max_tokens: 16, messages: [{ role: "user", content: "say OK" }] }));
