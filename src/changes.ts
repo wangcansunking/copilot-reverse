@@ -2,6 +2,14 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.10.0",
+    "date": "2026-06-30",
+    "summary": "feat(tui): the startup \"what's new\" banner now shows the real recent headlines (top 3 across recent releases, version-tagged) instead of a generic \"type /changes\" pointer — so a freshly shipped feature is actually visible on launch rather than the banner looking empty. `/changes` now lists every change in a bundled release: `gen-changes` captures all paragraphs of each release (not just the first), so a headline feature merged alongside a plumbing fix is no longer hidden. Each release renders as a header with one bullet per change.",
+    "summaries": [
+      "feat(tui): the startup \"what's new\" banner now shows the real recent headlines (top 3 across recent releases, version-tagged) instead of a generic \"type /changes\" pointer — so a freshly shipped feature is actually visible on launch rather than the banner looking empty. `/changes` now lists every change in a bundled release: `gen-changes` captures all paragraphs of each release (not just the first), so a headline feature merged alongside a plumbing fix is no longer hidden. Each release renders as a header with one bullet per change."
+    ]
+  },
+  {
     "version": "0.9.0",
     "date": "2026-06-30",
     "summary": "fix(release): update CHANGELOG before the build so the just-released version appears in `/changes`. gen-changes.mjs runs in prebuild and reads CHANGELOG, but the workflow appended the new entry only after publish — so each release's own notes lagged one version behind. CHANGELOG is now written before build; changesets are still consumed after publish.",
@@ -73,14 +81,6 @@ export const APP_CHANGES: ChangeEntry[] = [
     "summary": "Fix the app dropping back to the shell during concurrent use. The TUI and supervisor share one process, but several synchronous throw sites had no handler — most importantly an SSE write to a client socket that died between broadcasts (likely with multiple clients connected), which crashed the whole process. Each broadcast listener is now isolated and a dead SSE connection is dropped instead of retried; `readGhToken` returns null on a corrupt/locked read instead of throwing on the heartbeat tick; and a process-level backstop logs any remaining stray throw/rejection to `~/.copilot-reverse/crash.log` and keeps the TUI alive.",
     "summaries": [
       "Fix the app dropping back to the shell during concurrent use. The TUI and supervisor share one process, but several synchronous throw sites had no handler — most importantly an SSE write to a client socket that died between broadcasts (likely with multiple clients connected), which crashed the whole process. Each broadcast listener is now isolated and a dead SSE connection is dropped instead of retried; `readGhToken` returns null on a corrupt/locked read instead of throwing on the heartbeat tick; and a process-level backstop logs any remaining stray throw/rejection to `~/.copilot-reverse/crash.log` and keeps the TUI alive."
-    ]
-  },
-  {
-    "version": "0.5.0",
-    "date": "2026-06-28",
-    "summary": "Add a GitHub-token heartbeat: the supervisor now re-checks every ~60s whether the stored GitHub login still works, and the TUI footer shows a live `github ✓` / `✗ /login` badge — so an expired or revoked login surfaces within ~60s instead of only on the next failed request or a manual `/status`. A transient network/rate-limit hiccup is distinguished from a real auth failure, so the badge never flips on a single blip.",
-    "summaries": [
-      "Add a GitHub-token heartbeat: the supervisor now re-checks every ~60s whether the stored GitHub login still works, and the TUI footer shows a live `github ✓` / `✗ /login` badge — so an expired or revoked login surfaces within ~60s instead of only on the next failed request or a manual `/status`. A transient network/rate-limit hiccup is distinguished from a real auth failure, so the badge never flips on a single blip."
     ]
   }
 ];
