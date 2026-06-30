@@ -1,12 +1,14 @@
 // A self-contained, dependency-free dashboard served at GET /. It polls the control API
-// (/api/status, /api/requests, /api/doctor, /api/clients, /api/models) every 2s and renders worker
+// (/api/status, /api/metrics, /api/doctor, /api/clients, /api/models) every 2s and renders worker
 // health, GitHub login, web-search backend, the advertised model list, per-scope client config, and —
-// most usefully — recent request errors with their messages.
+// most usefully — real lifetime request totals + a per-model breakdown + recent errors with messages.
 //
-// Parity with the TUI is deliberate: a request counts as an error when `status >= 400 OR error != null`
-// (the shared isError rule), so a runaway-tagged 200 (a degenerate stream cut early) shows here too,
-// not only in /logs + /metrics. /api/doctor is polled WITHOUT ?ping so the 2s cadence never fires real
-// model requests; per-model connectivity is the on-demand TUI /doctor's job.
+// Totals come from /api/metrics (a real SQL COUNT(*)/SUM over the WHOLE request_log), NOT a capped
+// /api/requests fetch — the old page aggregated the last 100 rows, so "total 100" was a meaningless
+// ceiling and the flat "recent requests" dump was just 30 identical 200s. Errors are flagged with the
+// same shared isError rule as the TUI (status >= 400 OR error != null), computed server-side in SQL, so
+// a runaway-tagged 200 (a degenerate stream cut early) is counted here too. /api/doctor is polled
+// WITHOUT ?ping so the 2s cadence never fires real model requests.
 export function dashboardHtml(): string {
   return `<!doctype html>
 <html lang="en">
@@ -29,7 +31,18 @@ export function dashboardHtml(): string {
   th { color: #6b7689; font-weight: 600; }
   .badge { padding: 1px 8px; border-radius: 999px; font-size: 12px; }
   .ok { color: #6ee7b7; } .bad { color: #f87171; } .warn { color: #fbbf24; }
-  .err { color: #f87171; white-space: pre-wrap; word-break: break-word; }
+  /* Expandable error rows: a one-line summary, click to reveal the full upstream body (a 502 can be a
+     whole HTML page). <details> keeps it dependency-free; .open state is preserved across the 2s poll. */
+  details.errrow { border-bottom: 1px solid #161b27; }
+  details.errrow > summary { cursor: pointer; padding: 4px 8px; display: flex; gap: 10px; align-items: baseline; list-style: none; white-space: nowrap; overflow: hidden; }
+  details.errrow > summary::-webkit-details-marker { display: none; }
+  details.errrow > summary::before { content: "▸"; color: #6b7689; }
+  details.errrow[open] > summary::before { content: "▾"; }
+  details.errrow > summary .msg { color: #f87171; overflow: hidden; text-overflow: ellipsis; flex: 1; }
+  details.errrow > summary time { color: #6b7689; }
+  details.errrow > summary .st { color: #f87171; font-weight: 600; }
+  details.errrow > summary .ep { color: #9aa7bd; }
+  details.errrow > pre.full { margin: 0; padding: 8px 8px 12px 26px; color: #f87171; white-space: pre-wrap; word-break: break-word; background: #160d10; }
   .pill-ready { background: #064e3b; color: #6ee7b7; }
   .pill-bad { background: #4c1d24; color: #f87171; }
   .empty { color: #6b7689; font-style: italic; }
@@ -64,20 +77,27 @@ export function dashboardHtml(): string {
     <div id="models"><span class="empty">loading…</span></div>
   </section>
   <section class="wide">
-    <h2>Recent errors</h2>
-    <div id="errors"><span class="empty">loading…</span></div>
+    <h2>By model</h2>
+    <div id="bymodel"><span class="empty">loading…</span></div>
   </section>
   <section class="wide">
-    <h2>Recent requests</h2>
-    <div id="requests"><span class="empty">loading…</span></div>
+    <h2>Recent errors</h2>
+    <div id="errors"><span class="empty">loading…</span></div>
   </section>
 </main>
 <script>
 const esc = (s) => String(s ?? "").replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
 const fmt = (ts) => new Date(ts).toLocaleTimeString();
-// Parity with the TUI's shared isError: a runaway-tagged 200 (error set, stream cut) is an error too.
-const isErr = (r) => r.status >= 400 || r.error != null;
+// Totals + per-model counts come pre-computed from the SQL rollup (/api/metrics), which flags failures
+// with the shared rule (status >= 400 OR error IS NOT NULL) — so the dashboard no longer re-derives
+// errors from a capped row fetch. recentErrors arrives already filtered to the failed rows.
+const k = (n) => (n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n));
 async function getJson(p) { const r = await fetch(p); if (!r.ok) throw new Error(p + " -> " + r.status); return r.json(); }
+
+// Which error rows the user has expanded, keyed by ts — the 2s poll rebuilds the table's innerHTML, so
+// without this every open <details> would snap shut twice a second. Toggled from each summary's onclick.
+const openErrors = new Set();
+function toggleErr(ts, isOpen) { if (isOpen) openErrors.add(ts); else openErrors.delete(ts); }
 
 function pill(el, label, ok) {
   el.textContent = label;
@@ -119,30 +139,49 @@ function renderModels(models) {
     return '<span class="chip">' + esc((m.display_name || m.id)) + (oneM ? ' <span class="tag">1M</span>' : "") + "</span>";
   }).join("");
 }
-function renderRequests(reqs) {
-  const total = reqs.length, errors = reqs.filter(isErr).length;
+// Render the SQL rollup from /api/metrics: real lifetime + 24h totals (a true COUNT(*), not min(rows,
+// 100)), the recent error rows (from the WHOLE table, so failures past the last-100 window still show),
+// and a per-model breakdown — far more useful than a flat dump of 30 identical 200s.
+function renderMetrics(m) {
+  const all = m.all || { total: 0, errors: 0, tokensIn: 0, tokensOut: 0, byModel: [] };
+  const day = m.day || { total: 0, errors: 0 };
+  const line = (label, w) =>
+    '<div class="kv"><span class="k">' + label + '</span><span><b>' + w.total + '</b> reqs &nbsp; <b class="' +
+    (w.errors ? "bad" : "ok") + '">' + w.errors + '</b> err</span></div>';
   document.getElementById("metrics").innerHTML =
-    '<div>total <b>' + total + '</b> &nbsp; errors <b class="' + (errors ? "bad" : "ok") + '">' + errors + "</b></div>";
+    line("all-time", all) + line("last 24h", day) +
+    '<div class="kv"><span class="k">tokens</span><span>' + k(all.tokensIn || 0) + " ↑ / " + k(all.tokensOut || 0) + " ↓</span></div>";
 
-  const errs = reqs.filter(isErr).slice(0, 30);
+  const errs = (m.recentErrors || []).slice(0, 30);
+  // Each error is a <details> row: the summary is a single contained line (long upstream bodies are
+  // ellipsised by CSS, not truncated here, so the full text is still available on expand); clicking
+  // reveals the whole message. flat() collapses newlines for the summary so a 502 HTML page can't break
+  // the one-line layout — the <pre> below keeps the original formatting.
+  const flat = (s) => String(s == null ? "(no message)" : s).replace(/\\s+/g, " ").trim();
   document.getElementById("errors").innerHTML = errs.length
-    ? "<table><tr><th>time</th><th>status</th><th>endpoint</th><th>model</th><th>error</th></tr>" + errs.map((r) =>
-        "<tr><td>" + fmt(r.ts) + '</td><td class="bad">' + r.status + "</td><td>" + esc(r.endpoint) + "</td><td>" + esc(r.model) + '</td><td class="err">' + esc(r.error || "(no message)") + "</td></tr>"
-      ).join("") + "</table>"
+    ? errs.map((r) => {
+        const full = r.error == null ? "(no message)" : String(r.error);
+        const open = openErrors.has(r.ts) ? " open" : "";
+        return '<details class="errrow"' + open + ' ontoggle="toggleErr(' + r.ts + ', this.open)">' +
+          '<summary><time>' + fmt(r.ts) + '</time><span class="st">' + r.status + '</span><span class="ep">' +
+          esc(r.endpoint) + " " + esc(r.model) + '</span><span class="msg">' + esc(flat(r.error)) + "</span></summary>" +
+          '<pre class="full">' + esc(full) + "</pre></details>";
+      }).join("")
     : '<span class="empty">no request errors — everything\\'s green ✓</span>';
 
-  const recent = reqs.slice(0, 30);
-  document.getElementById("requests").innerHTML = recent.length
-    ? "<table><tr><th>time</th><th>status</th><th>endpoint</th><th>model</th><th>ms</th></tr>" + recent.map((r) =>
-        "<tr><td>" + fmt(r.ts) + '</td><td class="' + (isErr(r) ? "bad" : "ok") + '">' + r.status + "</td><td>" + esc(r.endpoint) + "</td><td>" + esc(r.model) + "</td><td>" + r.latencyMs + "</td></tr>"
+  const rows = all.byModel || [];
+  document.getElementById("bymodel").innerHTML = rows.length
+    ? "<table><tr><th>model</th><th>reqs</th><th>errors</th><th>avg ms</th><th>tokens in/out</th></tr>" + rows.map((r) =>
+        "<tr><td>" + esc(r.model) + "</td><td>" + r.count + '</td><td class="' + (r.errors ? "bad" : "ok") + '">' + r.errors + "</td><td>" + r.avgMs + '</td><td class="muted">' + k(r.tokensIn || 0) + " / " + k(r.tokensOut || 0) + "</td></tr>"
       ).join("") + "</table>"
     : '<span class="empty">no requests yet</span>';
 }
 async function tick() {
   try {
-    // Light doctor only (no ?ping) — the 2s cadence must never fire real model requests.
-    const [status, reqs, doctor, clients, models] = await Promise.all([
-      getJson("/api/status"), getJson("/api/requests"), getJson("/api/doctor"),
+    // Light doctor only (no ?ping) — the 2s cadence must never fire real model requests. Totals come
+    // from /api/metrics (SQL rollup over the whole request_log), not a capped /api/requests fetch.
+    const [status, metrics, doctor, clients, models] = await Promise.all([
+      getJson("/api/status"), getJson("/api/metrics"), getJson("/api/doctor"),
       getJson("/api/clients"), getJson("/api/models"),
     ]);
     renderState(status.workerState);
@@ -151,7 +190,7 @@ async function tick() {
     renderWeb(doctor.checks || []);
     renderClients(clients);
     renderModels(models.models || []);
-    renderRequests(reqs.requests || []);
+    renderMetrics(metrics);
     document.getElementById("updated").textContent = "updated " + new Date().toLocaleTimeString();
   } catch (e) {
     document.getElementById("updated").textContent = "control API unreachable: " + e.message;

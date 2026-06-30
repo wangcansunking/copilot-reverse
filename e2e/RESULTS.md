@@ -3,6 +3,29 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-30 (/metrics real totals, no 100-row cap)** — `/metrics` aggregated a 100-row `/api/requests`
+  fetch, so `total` was `min(rows, 100)` — "100 reqs" was a display ceiling, and errors/tokens/cost/
+  per-model were all bounded to a meaningless sliding window. Now rolled up in SQL over the WHOLE
+  `request_log`: new `aggregateRequests(db, sinceMs?)` + `recentErrorRows(db, limit)`, a new
+  `/api/metrics` endpoint serving `{all, day, recentErrors}`, and `withCost()` to add list-price cost in
+  the TUI. The card shows **all-time + last 24h**. `/logs` and `/report` also switched to the dedicated
+  SQL error query, so a failure that scrolled past the last-100-requests window still shows. The
+  assistant's own `metrics` / `recent_errors` SDK tools were moved onto the same `/api/metrics` rollup,
+  so the agent reports the same real totals the card does (not a capped `requests()` fetch). The browser
+  **dashboard** (`/` on :7890) had the bug on its own surface too — it derived totals from the capped
+  `/api/requests` fetch (stuck at "total 100") and its "Recent requests" panel was a flat dump of 30
+  identical 200s; it now renders the `/api/metrics` rollup (all-time + 24h totals + a per-model
+  breakdown), errors from the full-table SQL query. A consistency pass unified token/cost formatting
+  across every metrics surface (card, /metrics, /logs, dashboard, assistant tools) behind shared
+  `fmtTokens`/`fmtCost`, routed the assistant's `recent_errors` through `oneLine()`, and aligned the
+  empty-state wording. New units:
+  `db` aggregate/error-rows (4), `withCost` (2), shared `fmtTokens`/`fmtCost` (2), api `/api/metrics`
+  all-time+day (2), dashboard real totals + per-model + runaway-200 via `/api/metrics` (2); fixtures
+  updated to the server-shaped `MetricsResponse`. HTTP docker e2e gained 4 checks (insert >100 rows into
+  the supervisor's own DB, assert `/api/metrics` total>100, day≤all, a pre-100 failure surfaces, and the
+  dashboard HTML wires to `/api/metrics` not the capped `/api/requests`) — **30 passed** (was 26). Full
+  suite **489 passed** (62 files), build clean.
+
 - **2026-06-29 (/doctor self-check + dashboard parity)** — `/doctor` graduated from 2 checks
   (github-auth, worker) to a real self-check: GitHub login, worker, resolved web-search backend
   (copilot/webiq/unavailable), model discovery, and — on the on-demand TUI run (`?ping=1`) — a real

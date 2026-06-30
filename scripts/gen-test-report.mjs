@@ -15,7 +15,7 @@ const ms = (n) => (n == null ? "" : n < 1000 ? `${Math.round(n)}ms` : `${(n / 10
 
 // The Docker HTTP e2e runs outside vitest (real worker + supervisor in a container); record its
 // headline result here so the single report reflects the FULL verification, not just unit/integration.
-const docker = { name: "Docker HTTP e2e (hermetic: real worker + supervisor)", passed: 26, failed: 0 };
+const docker = { name: "Docker HTTP e2e (hermetic: real worker + supervisor)", passed: 30, failed: 0 };
 
 const files = report.testResults.map((f) => {
   const rel = relative(root, f.name).replace(/\\/g, "/");

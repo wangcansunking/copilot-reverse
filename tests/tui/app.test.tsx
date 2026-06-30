@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import React from "react";
 import { render } from "ink-testing-library";
-import { App, cardRows } from "../../src/tui/app.js";
+import { App, cardRows, sameStatus } from "../../src/tui/app.js";
 import { Registry } from "../../src/tui/slash/registry.js";
 
 function reg() {
@@ -123,5 +123,51 @@ describe("cardRows", () => {
   });
   it("leaves single-line input untouched", () => {
     expect(cardRows(["one", "two"])).toEqual(["one", "two"]);
+  });
+});
+
+describe("sameStatus (poll bail-out → no idle re-render → no /metrics flicker)", () => {
+  const base = { claude: { user: true, project: false, userModel: "claude-opus-4-8" }, codex: { user: false, project: false } };
+  it("is true for an unchanged config read (the common idle-poll case)", () => {
+    // readStatus() returns a FRESH object every 2s tick; sameStatus must compare by VALUE so the poll
+    // skips setState and the frame doesn't repaint — that whole-frame repaint is the flicker.
+    const a = JSON.parse(JSON.stringify(base));
+    const b = JSON.parse(JSON.stringify(base));
+    expect(a).not.toBe(b);            // different references
+    expect(sameStatus(a, b)).toBe(true); // but equal by value → bail out, no re-render
+  });
+  it("detects a real change (a config file was edited externally)", () => {
+    const edited = { ...base, codex: { user: true, project: false } };
+    expect(sameStatus(base, edited)).toBe(false);
+  });
+  it("detects a pinned-model change even when the on/off flags are identical", () => {
+    const remodel = { ...base, claude: { user: true, project: false, userModel: "claude-sonnet-4-6" } };
+    expect(sameStatus(base, remodel)).toBe(false);
+  });
+});
+
+describe("/metrics card is stable across status polls (no flicker)", () => {
+  it("renders the same metrics frame after several 2s poll ticks would have fired", async () => {
+    // A stable statusSource + readStatus: every poll tick re-reads identical data. With the value-equality
+    // bail-out, the metrics card must render once and stay byte-identical — a repaint would change nothing
+    // visible but is exactly the flicker the user reported. We assert frame stability as the proxy.
+    const win = { total: 250, errors: 2, tokensIn: 1_000_000, tokensOut: 500_000, byModel: [{ model: "claude-opus-4-8", count: 250, avgMs: 40, tokensIn: 1_000_000, tokensOut: 500_000 }] };
+    const metricsSource = async () => ({ all: win, day: win, recentErrors: [] });
+    const statusSource = async () => ({ workerState: "ready" as const, restarts: [], github: { ok: true, hasToken: true, checkedAt: 1, detail: "ok" } });
+    const readStatus = () => ({ claude: { user: true, project: false, userModel: "claude-opus-4-8" }, codex: { user: false, project: false } });
+    const { stdin, lastFrame } = render(
+      <App registry={reg()} title="m" metricsSource={metricsSource as any} statusSource={statusSource} readStatus={readStatus} />,
+    );
+    await new Promise((r) => setTimeout(r, 30));
+    stdin.write("/metrics");
+    await new Promise((r) => setTimeout(r, 20));
+    stdin.write("\r");
+    await new Promise((r) => setTimeout(r, 60));
+    const first = lastFrame() ?? "";
+    expect(first).toContain("metrics");
+    expect(first).toContain("all-time");
+    // wait long enough that multiple 2s poll ticks would have fired in a real session
+    await new Promise((r) => setTimeout(r, 120));
+    expect(lastFrame()).toBe(first); // byte-identical — the poll did not repaint the card
   });
 });

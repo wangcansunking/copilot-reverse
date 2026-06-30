@@ -1,4 +1,4 @@
-import type { MetricSample } from "../../shared/control-types.js";
+import type { MetricSample, MetricsWindow } from "../../shared/control-types.js";
 
 export interface ModelRow { model: string; count: number; avgMs: number; tokensIn: number; tokensOut: number; costUsd: number }
 export interface Aggregate { total: number; errors: number; tokensIn: number; tokensOut: number; costUsd: number; byModel: ModelRow[] }
@@ -26,6 +26,14 @@ export function estimateCost(model: string, tokensIn: number, tokensOut: number)
   return (tokensIn * r.in + tokensOut * r.out) / 1_000_000;
 }
 
+// Shared display formatters so every surface that renders metrics — the /metrics card (app.tsx), the
+// /metrics + /logs slash commands, and the assistant's metrics/recent_errors tools — agrees on how a
+// token count and a cost look. Token counts compress to "39.6k"; cost shows 3 decimals under $1 (so a
+// few cents doesn't read as "$0.00") and 2 above. Previously these were duplicated as local lambdas in
+// two files and absent from the tools, so the assistant printed raw "39602000↑/777000↓ $649.870".
+export const fmtTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
+export const fmtCost = (n: number): string => `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+
 export function aggregate(samples: MetricSample[]): Aggregate {
   const map = new Map<string, { count: number; sum: number; tin: number; tout: number }>();
   let errors = 0;
@@ -52,4 +60,19 @@ export function aggregate(samples: MetricSample[]): Aggregate {
 // the actually-useful "log" — what failed and why — as opposed to worker restart events.
 export function recentErrors(samples: MetricSample[], limit: number): MetricSample[] {
   return samples.filter(isError).slice(0, limit);
+}
+
+// Annotate a server-computed MetricsWindow (a real SQL rollup over the WHOLE request_log) with
+// list-price cost — the supervisor only knows token counts, cost lives in the TUI's PRICING table.
+// Returns the same Aggregate shape the MetricsCard already renders, so all-time and 24h windows share
+// one renderer. Errors carry through unchanged (the SQL counts them with the same isError rule).
+export function withCost(w: MetricsWindow): Aggregate {
+  const byModel: ModelRow[] = w.byModel.map((r) => ({
+    model: r.model, count: r.count, avgMs: r.avgMs,
+    tokensIn: r.tokensIn, tokensOut: r.tokensOut, costUsd: estimateCost(r.model, r.tokensIn, r.tokensOut),
+  }));
+  return {
+    total: w.total, errors: w.errors, tokensIn: w.tokensIn, tokensOut: w.tokensOut,
+    costUsd: byModel.reduce((n, r) => n + r.costUsd, 0), byModel,
+  };
 }

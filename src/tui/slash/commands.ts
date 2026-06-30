@@ -1,6 +1,6 @@
 import { Registry, type SlashContext } from "./registry.js";
 import { claudeCodeConfig, codexConfig, type Endpoint } from "../setup/clients.js";
-import { aggregate, recentErrors } from "../panels/metrics-agg.js";
+import { withCost, fmtTokens as k, fmtCost as usd } from "../panels/metrics-agg.js";
 import { openUrl as defaultOpenUrl } from "../../shared/open-url.js";
 import { buildIssueUrl, PLACEHOLDER_REPO } from "../report.js";
 import { APP_CHANGES } from "../../changes.js";
@@ -31,24 +31,27 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
   reg.add({ name: "/stop", describe: "stop the worker", run: async (_a, c) => { await c.client.stop(); return ["worker stopped"]; } });
   reg.add({ name: "/start", describe: "start the worker", run: async (_a, c) => { await c.client.start(); return ["worker started"]; } });
   reg.add({ name: "/logs", describe: "recent request errors (what failed & why)", run: async (_a, c) => {
-    const errs = recentErrors(await c.client.requests(), 20);
+    // recentErrors comes from a SQL query over the WHOLE request_log, so errors that scrolled past the
+    // last-100-requests window still show (the old path filtered a 100-row fetch and could miss them).
+    const errs = (await c.client.metrics()).recentErrors.slice(0, 20);
     if (!errs.length) return ["no request errors logged — everything's green ✓"];
     // oneLine() flattens the message: upstream failures can carry a whole HTML page (a Copilot 502)
     // or a "raw\nhint" pair, and a newline here would shatter the bordered card it renders into.
     return errs.map((e) => `${new Date(e.ts).toISOString()} ${e.status} ${e.endpoint} ${e.model} — ${oneLine(e.error, 160) || "(no message)"}`);
   } });
   reg.add({ name: "/metrics", describe: "request metrics, tokens, cost + recent errors", run: async (_a, c) => {
-    const reqs = await c.client.requests();
-    const a = aggregate(reqs);
+    // Real lifetime rollup over the whole request_log (not a capped 100-row fetch), cost from list price.
+    const m = await c.client.metrics();
+    const a = withCost(m.all), d = withCost(m.day);
     if (!a.total) return ["no requests yet"];
-    const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
-    const usd = (n: number) => `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+    const line = (label: string, x: typeof a) => `${label}: ${x.total}  errors: ${x.errors}  tokens: ${k(x.tokensIn)}↑ ${k(x.tokensOut)}↓  est. cost: ${usd(x.costUsd)}`;
     const lines = [
-      `requests: ${a.total}  errors: ${a.errors}  tokens: ${k(a.tokensIn)}↑ ${k(a.tokensOut)}↓  est. cost: ${usd(a.costUsd)}`,
+      line("all-time", a),
+      line("last 24h", d),
       ...a.byModel.map((r) => `  ${r.model.padEnd(20)} n=${r.count} avg=${r.avgMs}ms  ${k(r.tokensIn)}↑ ${k(r.tokensOut)}↓ ~${usd(r.costUsd)}`),
       "  cost is a list-price estimate (Copilot is flat-fee)",
     ];
-    const errs = recentErrors(reqs, 5);
+    const errs = m.recentErrors.slice(0, 5);
     if (errs.length) {
       lines.push("recent errors:");
       for (const e of errs) lines.push(`  ${e.status} ${e.model} — ${oneLine(e.error, 80) || "(no message)"}`);
@@ -76,10 +79,10 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
   reg.add({ name: "/report", describe: "open a pre-filled GitHub issue with diagnostics", run: async (_a, c) => {
     const repo = opts.reportRepo;
     if (!repo || repo === PLACEHOLDER_REPO) return ["set reportRepo (owner/repo) in config to enable /report"];
-    const [status, doctor, reqs] = await Promise.all([c.client.status(), c.client.doctor(), c.client.requests()]);
+    const [status, doctor, metrics] = await Promise.all([c.client.status(), c.client.doctor(), c.client.metrics()]);
     const url = buildIssueUrl({
       repo, version: opts.appVersion ?? "0.0.0", platform: opts.platform ?? process.platform,
-      status, doctor, errors: recentErrors(reqs, 10),
+      status, doctor, errors: metrics.recentErrors.slice(0, 10),
     });
     openUrl(url);
     return [`opening a pre-filled GitHub issue for ${repo} in your browser…`];

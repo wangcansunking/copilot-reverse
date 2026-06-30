@@ -35,3 +35,28 @@ export interface MetricSample {
   tokensOut?: number; // completion tokens (output); absent if upstream reported none
   error?: string; // failure message for non-2xx requests; absent on success
 }
+
+// Per-model rollup computed in SQL over the WHOLE request_log (not a capped fetch). Cost is added
+// later in the TUI from list prices; the supervisor only knows counts/latency/tokens.
+export interface ModelRollup {
+  model: string;
+  count: number;
+  errors: number;
+  avgMs: number;
+  tokensIn: number;
+  tokensOut: number;
+}
+// One time-window's totals + per-model breakdown. `total` is a real COUNT(*), not min(rows, 100).
+export interface MetricsWindow {
+  total: number;
+  errors: number;
+  tokensIn: number;
+  tokensOut: number;
+  byModel: ModelRollup[];
+}
+// /api/metrics payload: lifetime + last-24h rollups, and the recent error rows for display.
+export interface MetricsResponse {
+  all: MetricsWindow;
+  day: MetricsWindow;
+  recentErrors: MetricSample[];
+}

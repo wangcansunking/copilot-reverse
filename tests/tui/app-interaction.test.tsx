@@ -108,11 +108,15 @@ describe("TUI: Repl autocomplete navigation", () => {
 });
 
 describe("TUI: /metrics styled card", () => {
-  it("renders summary stats and a per-model row from metricsSource", async () => {
-    const metricsSource = async () => [
-      { ts: 2, endpoint: "/anthropic/v1/messages", model: "claude-opus-4-8", status: 200, latencyMs: 820, tokensIn: 20000, tokensOut: 8000 },
-      { ts: 1, endpoint: "/openai/chat/completions", model: "gpt-4o", status: 200, latencyMs: 210, tokensIn: 1000, tokensOut: 400 },
-    ];
+  it("renders all-time + 24h summary stats and a per-model row from metricsSource", async () => {
+    const win = {
+      total: 2, errors: 0, tokensIn: 21000, tokensOut: 8400,
+      byModel: [
+        { model: "claude-opus-4-8", count: 1, errors: 0, avgMs: 820, tokensIn: 20000, tokensOut: 8000 },
+        { model: "gpt-4o", count: 1, errors: 0, avgMs: 210, tokensIn: 1000, tokensOut: 400 },
+      ],
+    };
+    const metricsSource = async () => ({ all: win, day: win, recentErrors: [] });
     const { stdin, lastFrame } = render(<App registry={reg()} title="m" metricsSource={metricsSource as any} />);
     await tick();
     stdin.write("/metrics");
@@ -121,6 +125,8 @@ describe("TUI: /metrics styled card", () => {
     await tick(80);
     const f = lastFrame() ?? "";
     expect(f).toContain("metrics");
+    expect(f).toMatch(/all-time/);
+    expect(f).toMatch(/last 24h/);
     expect(f).toMatch(/2 reqs/);
     expect(f).toMatch(/opus-4-8/);
     expect(f).toMatch(/est/);

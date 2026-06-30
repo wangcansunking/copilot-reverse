@@ -1,4 +1,4 @@
-import type { StatusResponse, DoctorCheck, MetricSample } from "../shared/control-types.js";
+import type { StatusResponse, DoctorCheck, MetricSample, MetricsResponse } from "../shared/control-types.js";
 
 export class DaemonClient {
   constructor(private base: string, private fetchFn: typeof fetch = fetch) {}
@@ -11,5 +11,8 @@ export class DaemonClient {
   // light check (also what the dashboard polls). The TUI /doctor passes true.
   async doctor(ping = false): Promise<DoctorCheck[]> { return ((await (await this.fetchFn(`${this.base}/api/doctor${ping ? "?ping=1" : ""}`)).json()) as { checks: DoctorCheck[] }).checks; }
   async requests(): Promise<MetricSample[]> { return ((await (await this.fetchFn(`${this.base}/api/requests`)).json()) as { requests: MetricSample[] }).requests; }
+  // Real lifetime + 24h rollups computed server-side over the whole request_log. /metrics uses this
+  // instead of aggregating a 100-row requests() fetch.
+  async metrics(): Promise<MetricsResponse> { return (await (await this.fetchFn(`${this.base}/api/metrics`)).json()) as MetricsResponse; }
   eventsUrl(): string { return `${this.base}/api/events`; }
 }

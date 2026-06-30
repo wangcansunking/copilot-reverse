@@ -4,6 +4,7 @@ export interface SlashContext {
     restart(): Promise<void>; stop(): Promise<void>; start(): Promise<void>;
     doctor(ping?: boolean): Promise<import("../../shared/control-types.js").DoctorCheck[]>;
     requests(): Promise<import("../../shared/control-types.js").MetricSample[]>;
+    metrics(): Promise<import("../../shared/control-types.js").MetricsResponse>;
   };
   quit: () => void;
 }

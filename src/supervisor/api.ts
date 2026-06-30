@@ -1,8 +1,10 @@
 import express, { type Express } from "express";
-import { listRestarts, recentRequests, type Db } from "./db.js";
+import { listRestarts, recentRequests, aggregateRequests, recentErrorRows, type Db } from "./db.js";
 import { dashboardHtml } from "./dashboard.js";
 import type { WorkerState, DoctorCheck, GithubStatus } from "../shared/control-types.js";
 import type { ClientStatus } from "../tui/setup/status.js";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 export interface DashModel { id: string; display_name?: string }
 export interface ControlDeps {
@@ -15,6 +17,7 @@ export interface ControlDeps {
   github: () => GithubStatus | undefined;
   clients: () => ClientStatus;          // per-scope Claude/Codex config read from the real files
   models: () => Promise<DashModel[]>;   // advertised models (proxied from the worker), for the dashboard
+  now?: () => number;                   // clock for the 24h metrics window; injectable for tests
   subscribe: (send: (event: string, data: unknown) => void) => () => void;
 }
 
@@ -30,6 +33,17 @@ export function createControlApp(deps: ControlDeps): Express {
   // 2s poll omits it and gets the cheap, upstream-free checks. Only the on-demand TUI /doctor sets it.
   app.get("/api/doctor", async (req, res) => res.json({ checks: await deps.doctor(req.query.ping === "1") }));
   app.get("/api/requests", (_req, res) => res.json({ requests: recentRequests(deps.db, 100) }));
+  // Real metrics: lifetime + last-24h rollups computed in SQL over the WHOLE request_log (not a capped
+  // 100-row fetch), plus the recent error rows. This is what /metrics renders — "100 reqs" used to be
+  // a display ceiling, not a count.
+  app.get("/api/metrics", (_req, res) => {
+    const now = (deps.now ?? Date.now)();
+    res.json({
+      all: aggregateRequests(deps.db),
+      day: aggregateRequests(deps.db, now - DAY_MS),
+      recentErrors: recentErrorRows(deps.db, 20),
+    });
+  });
   app.get("/api/clients", (_req, res) => res.json(deps.clients()));
   // Proxied from the worker so the dashboard shows the SAME models the picker advertises. Best-effort:
   // an empty list (worker momentarily down) renders as "discovery unavailable", not a 500.

@@ -66,7 +66,11 @@ async function main() {
 
     log("\n[supervisor] control lifecycle");
     check("status workerState=ready", (await jget(supUrl("/api/status"))).j?.workerState === "ready");
+    const dashHtml = await (await fetch(supUrl("/"))).text();
     check("dashboard HTML at /", (await fetch(supUrl("/"))).headers.get("content-type")?.includes("html"));
+    // The dashboard must pull real totals from the SQL rollup (/api/metrics), NOT the capped
+    // /api/requests fetch that made it stick at "total 100" and render a flat dump of identical 200s.
+    check("dashboard wires to /api/metrics (not capped /api/requests)", dashHtml.includes("/api/metrics") && /renderMetrics|byModel/.test(dashHtml), dashHtml.includes("/api/requests") ? "still references /api/requests for totals" : "");
     check("doctor checks[]", Array.isArray((await jget(supUrl("/api/doctor"))).j?.checks));
     check("requests[]", Array.isArray((await jget(supUrl("/api/requests"))).j?.requests));
 
@@ -103,6 +107,24 @@ async function main() {
       const rendered = `${new Date(failed.ts).toISOString()} ${failed.status} ${failed.endpoint} ${failed.model} — ${oneLine(failed.error, 160) || "(no message)"}`;
       check("/logs line has no embedded newline", !/\r?\n/.test(rendered), JSON.stringify(rendered).slice(0, 160));
     }
+
+    // /api/metrics must roll up the WHOLE request_log in SQL, not a 100-row fetch. Insert >100 rows
+    // straight into the supervisor's own DB (same file, WAL so a 2nd connection sees committed writes),
+    // then assert the reported total exceeds 100 and the 24h window is bounded — the old /metrics capped
+    // at 100 and "100 reqs" was a meaningless ceiling once you crossed it.
+    log("\n[/metrics] real lifetime rollup over the whole request_log (not a 100-row cap)");
+    const { openDb, recordRequest } = await import("../../dist/supervisor/db.js");
+    const { dbPath } = await import("../../dist/shared/paths.js");
+    const seedDb = openDb(dbPath());
+    const baseTotal = (await jget(supUrl("/api/metrics"))).j?.all?.total ?? 0;
+    const now = Date.now();
+    for (let i = 0; i < 150; i++) recordRequest(seedDb, { ts: now - i * 1000, endpoint: "/anthropic/v1/messages", model: "gpt-4o", status: 200, latencyMs: 10, tokensIn: 2, tokensOut: 1 });
+    recordRequest(seedDb, { ts: now - 3 * 24 * 60 * 60 * 1000, endpoint: "/anthropic/v1/messages", model: "gpt-4o", status: 502, latencyMs: 5, error: "old failure 3 days ago" });
+    seedDb.close();
+    const met = (await jget(supUrl("/api/metrics"))).j;
+    check("/api/metrics counts >100 rows (no display cap)", met?.all?.total >= baseTotal + 151, `total=${met?.all?.total} base=${baseTotal}`);
+    check("/api/metrics day window <= all-time", met?.day?.total <= met?.all?.total && met?.day?.total >= 150, `day=${met?.day?.total} all=${met?.all?.total}`);
+    check("/api/metrics surfaces the old (pre-100) failure in recentErrors", (met?.recentErrors ?? []).some((e) => e.error === "old failure 3 days ago"), JSON.stringify((met?.recentErrors ?? []).map((e) => e.error)).slice(0, 160));
     await jpost(supUrl("/api/restart"), "{}"); await sleep(1500);
     check("worker ready after restart", (await jget(supUrl("/api/status"))).j?.workerState === "ready");
 

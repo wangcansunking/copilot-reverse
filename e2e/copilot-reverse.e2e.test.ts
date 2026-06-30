@@ -526,15 +526,20 @@ describe("E2E: error capture & dashboard", () => {
 });
 
 describe("E2E: TUI commands", () => {
-  const ctx = () => ({
-    client: {
-      status: async () => ({ workerState: "ready" as const, restarts: [] }),
-      restart: async () => {}, stop: async () => {}, start: async () => {},
-      doctor: async () => [{ name: "worker", ok: true, detail: "ready" }],
-      requests: async () => [{ ts: 1, endpoint: "/v1/messages", model: "claude-opus-4-8", status: 502, latencyMs: 4, error: "context_length_exceeded" }],
-    },
-    quit: () => {},
-  });
+  const ctx = () => {
+    const err = { ts: 1, endpoint: "/v1/messages", model: "claude-opus-4-8", status: 502, latencyMs: 4, error: "context_length_exceeded" };
+    const win = { total: 1, errors: 1, tokensIn: 0, tokensOut: 0, byModel: [{ model: "claude-opus-4-8", count: 1, errors: 1, avgMs: 4, tokensIn: 0, tokensOut: 0 }] };
+    return {
+      client: {
+        status: async () => ({ workerState: "ready" as const, restarts: [] }),
+        restart: async () => {}, stop: async () => {}, start: async () => {},
+        doctor: async () => [{ name: "worker", ok: true, detail: "ready" }],
+        requests: async () => [err],
+        metrics: async () => ({ all: win, day: win, recentErrors: [err] }),
+      },
+      quit: () => {},
+    };
+  };
   const endpoint = { host: "127.0.0.1", port: 7891, apiKey: "k" };
 
   it("EP-07 /logs surfaces recent request errors with their messages", async () => {

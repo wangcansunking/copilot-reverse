@@ -60,6 +60,35 @@ describe("control api", () => {
     const res = await request(fixture().app).get("/api/requests");
     expect(res.body.requests[0].model).toBe("gpt-4o");
   });
+  it("/api/metrics rolls up the whole request_log (all-time + day) over a real count", async () => {
+    const db = openDb(":memory:");
+    for (let i = 0; i < 150; i++) recordRequest(db, { ts: 1000 + i, endpoint: "/v1/messages", model: "gpt-4o", status: 200, latencyMs: 10, tokensIn: 2, tokensOut: 1 });
+    recordRequest(db, { ts: 5, endpoint: "/v1/messages", model: "gpt-4o", status: 502, latencyMs: 3, error: "boom" }); // old failure
+    const app = createControlApp({
+      db, getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {},
+      doctor: async () => [], github: () => undefined, ...dash, now: () => 1100, // 24h window cuts at 1100-86400000 < 0, so day == all here
+      subscribe: () => () => {},
+    });
+    const res = await request(app).get("/api/metrics");
+    expect(res.body.all.total).toBe(151);            // real COUNT(*), beyond the 100-row cap
+    expect(res.body.all.errors).toBe(1);
+    expect(res.body.all.tokensIn).toBe(300);
+    expect(res.body.recentErrors[0].error).toBe("boom"); // surfaced even though it's not in the last 100
+    expect(res.body.day.total).toBe(151);
+  });
+  it("/api/metrics day window filters to the last 24h via injectable now()", async () => {
+    const db = openDb(":memory:");
+    const now = 1_000_000_000_000;
+    recordRequest(db, { ts: now - 2 * 24 * 60 * 60 * 1000, endpoint: "/v1/messages", model: "gpt-4o", status: 200, latencyMs: 10 }); // 2 days ago
+    recordRequest(db, { ts: now - 60 * 1000, endpoint: "/v1/messages", model: "gpt-4o", status: 200, latencyMs: 10 });               // a minute ago
+    const app = createControlApp({
+      db, getState: () => "ready", restart: () => {}, stop: () => {}, start: () => {},
+      doctor: async () => [], github: () => undefined, ...dash, now: () => now, subscribe: () => () => {},
+    });
+    const res = await request(app).get("/api/metrics");
+    expect(res.body.all.total).toBe(2);
+    expect(res.body.day.total).toBe(1); // only the recent one falls inside 24h
+  });
   it("serves client config at /api/clients", async () => {
     const res = await request(fixture().app).get("/api/clients");
     expect(res.body).toHaveProperty("claude");
