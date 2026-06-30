@@ -114,11 +114,11 @@ describe("slash commands", () => {
     expect((await reg.run("/login")).join("\n")).toMatch(/not available/);
     expect((await reg.run("/logout")).join("\n")).toMatch(/not available/);
   });
-  it("/changes lists recent versions and ends with the changelog url", async () => {
+  it("/changes lists recent versions as headers with bulleted changes and ends with the changelog url", async () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/changes");
     expect(out.length).toBeGreaterThan(1);
-    expect(out.length).toBeLessThanOrEqual(12); // <=10 entries + blank + url
-    expect(out[0]).toMatch(/^v\d+\.\d+\.\d+ \(/);
+    expect(out[0]).toMatch(/^v\d+\.\d+\.\d+ \(\d{4}-\d{2}-\d{2}\)$/); // header line, no inline summary
+    expect(out.some((l) => /^ {2}• /.test(l))).toBe(true);          // at least one bulleted change
     expect(out.at(-1)).toMatch(/blob\/master\/CHANGELOG\.md$/);
   });
   it("/changes uses the configured repo for the changelog url", async () => {
