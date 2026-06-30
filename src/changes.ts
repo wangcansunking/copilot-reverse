@@ -2,6 +2,16 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.11.1",
+    "date": "2026-06-30",
+    "summary": "fix(worker,supervisor): stop three recurring 502/crash failures behind `/doctor` and the daemon",
+    "summaries": [
+      "fix(worker,supervisor): stop three recurring 502/crash failures behind `/doctor` and the daemon",
+      "- **EADDRINUSE crash loop → daemon \"unhealthy\"**: a forked worker no longer orphans when its supervisor dies abnormally (terminal closed/killed/crashed). The worker now exits on IPC `disconnect`, releasing `:7891` instead of squatting it so the next supervisor's worker can't bind. The supervisor's manual restart also waits for the old worker to fully exit before spawning the replacement, closing the kill/respawn race that hit the same `listen EADDRINUSE :7891`. - **502 `Cannot read properties of undefined (reading 'message')`**: the Copilot adapter's non-stream `complete()` guards an empty `choices` array (a content-filtered turn or a 1-token ping) and returns an empty completion instead of throwing. - **502 `Invalid 'max_output_tokens'` on responses-only models (e.g. gpt-5.5)**: `max_output_tokens` is clamped up to the Responses API minimum of 16, so `/doctor`'s 1-token ping (and Claude Code's connection probe) no longer 400s.",
+      "Docker HTTP e2e gains an EADDRINUSE regression block (orphaned worker releases its port when the IPC parent drops; daemon stays `ready` through restart churn); new units cover the empty-choices guard, the `max_output_tokens` floor, and the restart-waits-for-exit ordering."
+    ]
+  },
+  {
     "version": "0.11.0",
     "date": "2026-06-30",
     "summary": "fix(tui): `/logs` and `/metrics` no longer shatter their bordered card when an upstream error carries newlines (a Copilot 502 returns a whole HTML page). Errors are flattened to a single line at the source (`errorDetail`) and again where the commands render them, and `OutputCard` now splits any multiline content into separate rows as a final backstop.",
@@ -78,14 +88,6 @@ export const APP_CHANGES: ChangeEntry[] = [
     "summary": "fix(worker): stop the empty-tool-call loop (\"call: call: call:…\") that froze sessions. Inline-XML blocks that recover no tool are now passed through verbatim instead of silently swallowed; nameless `function_call` items on the /responses path are dropped instead of streamed as a blank `call:`; and the runaway deadline now covers tool-call streams, not just text — a model looping on tool calls is cut cleanly instead of relaying forever.",
     "summaries": [
       "fix(worker): stop the empty-tool-call loop (\"call: call: call:…\") that froze sessions. Inline-XML blocks that recover no tool are now passed through verbatim instead of silently swallowed; nameless `function_call` items on the /responses path are dropped instead of streamed as a blank `call:`; and the runaway deadline now covers tool-call streams, not just text — a model looping on tool calls is cut cleanly instead of relaying forever."
-    ]
-  },
-  {
-    "version": "0.5.3",
-    "date": "2026-06-29",
-    "summary": "Fix inline tool-call XML (`<invoke name=…>`) leaking as literal text instead of running. The extractor that recovers these blocks only ran on the chat path when the request declared tools, and never on the Codex `/responses` path. It now runs always-on across both streaming and non-stream paths, so a follow-up turn or a `/responses` model can no longer dump raw XML into the reply.",
-    "summaries": [
-      "Fix inline tool-call XML (`<invoke name=…>`) leaking as literal text instead of running. The extractor that recovers these blocks only ran on the chat path when the request declared tools, and never on the Codex `/responses` path. It now runs always-on across both streaming and non-stream paths, so a follow-up turn or a `/responses` model can no longer dump raw XML into the reply."
     ]
   }
 ];
