@@ -2,6 +2,17 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.12.0",
+    "date": "2026-06-30",
+    "summary": "feat(tui): LAN switch now shows paste-ready remote client config (Claude + Codex)",
+    "summaries": [
+      "feat(tui): LAN switch now shows paste-ready remote client config (Claude + Codex)",
+      "Switching `/network` to LAN used to dump the URL + key and a one-line \"send it as `Authorization: Bearer`\" hint, leaving the user to hand-assemble each remote machine's config and guess which slot the key goes in. The LAN success card now renders **paste-ready config blocks** for both clients, with the key already in the correct place:",
+      "- **Claude** → `~/.claude/settings.json` `env` block (key in `ANTHROPIC_API_KEY`) - **Codex** → `~/.codex/config.toml` provider block (key in `experimental_bearer_token`)",
+      "Blocks are built by a new pure helper (`tui/setup/remote-config.ts`) that reuses the same `claudeCopilotReverseEnv` / codex-toml shape local `/setup` writes, so a remote config matches what local setup produces — only the LAN host + real key replace loopback + the local placeholder. Each block uses the model this machine has pinned for that client (falling back to sensible defaults) and its real context window when known (Claude `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, Codex `model_context_window`), so the remote client sizes context like the local one instead of assuming a default ~200K window for a 1M model. If the LAN IPv4 can't be determined, the card falls back to a `<this-machine-LAN-IP>` placeholder instead of crashing."
+    ]
+  },
+  {
     "version": "0.11.1",
     "date": "2026-06-30",
     "summary": "fix(worker,supervisor): stop three recurring 502/crash failures behind `/doctor` and the daemon",
@@ -80,14 +91,6 @@ export const APP_CHANGES: ChangeEntry[] = [
     "summary": "ci: gate PRs on a changeset. A pull request with no file in `.changes/` now fails the `changeset` check, so merges can't silently skip the release (the v0.5.3 freeze). Docs/test-only PRs opt out with a `no-changeset` label.",
     "summaries": [
       "ci: gate PRs on a changeset. A pull request with no file in `.changes/` now fails the `changeset` check, so merges can't silently skip the release (the v0.5.3 freeze). Docs/test-only PRs opt out with a `no-changeset` label."
-    ]
-  },
-  {
-    "version": "0.5.4",
-    "date": "2026-06-29",
-    "summary": "fix(worker): stop the empty-tool-call loop (\"call: call: call:…\") that froze sessions. Inline-XML blocks that recover no tool are now passed through verbatim instead of silently swallowed; nameless `function_call` items on the /responses path are dropped instead of streamed as a blank `call:`; and the runaway deadline now covers tool-call streams, not just text — a model looping on tool calls is cut cleanly instead of relaying forever.",
-    "summaries": [
-      "fix(worker): stop the empty-tool-call loop (\"call: call: call:…\") that froze sessions. Inline-XML blocks that recover no tool are now passed through verbatim instead of silently swallowed; nameless `function_call` items on the /responses path are dropped instead of streamed as a blank `call:`; and the runaway deadline now covers tool-call streams, not just text — a model looping on tool calls is cut cleanly instead of relaying forever."
     ]
   }
 ];
