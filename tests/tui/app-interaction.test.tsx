@@ -323,7 +323,7 @@ describe("TUI: /network access mode", () => {
     let mode: "localhost" | "lan" = "localhost";
     const info = () => (mode === "lan" ? lanInfo : localhostInfo);
     const setAccessMode = vi.fn(async (m: "localhost" | "lan") => { mode = m; return info(); });
-    const { stdin, lastFrame } = render(<App registry={reg()} title="m" networkInfo={info} setAccessMode={setAccessMode} rotateKey={async () => info()} />);
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" networkInfo={info} setAccessMode={setAccessMode} rotateKey={async () => info()} clientModels={() => ({ claude: "claude-opus-4-8[1m]", codex: "gpt-5.5" })} />);
     await tick();
     stdin.write("/network");
     await tick();
@@ -339,6 +339,11 @@ describe("TUI: /network access mode", () => {
     expect(f).toContain("192.168.1.5:7891"); // LAN URL shown
     expect(f).toContain("/anthropic");       // protocol path spelled out (Claude Code can't connect without it)
     expect(f).toContain("/openai");          // and for Codex
+    // Paste-ready remote config blocks for both clients, with the key in the RIGHT slot.
+    expect(f).toContain("~/.claude/settings.json");      // Claude block header
+    expect(f).toContain("ANTHROPIC_API_KEY");            // key slot for Claude
+    expect(f).toContain("~/.codex/config.toml");         // Codex block header
+    expect(f).toContain("experimental_bearer_token");    // key slot for Codex
   });
 
   it("from LAN, the first action switches back to localhost (private)", async () => {
