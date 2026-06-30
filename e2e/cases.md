@@ -145,3 +145,11 @@ runs the full remote key matrix over it, plus a contrast check that the very sam
 serves **loopback** with no key. Same IP, same probe, only the bind host changes → open↔refused proves
 the boundary, not just the config value. (Skipped only if the container has no non-loopback IPv4.)
 
+It also pins the **EADDRINUSE regression** that left the daemon wedged `unhealthy`. The harness forks
+the REAL `dist/worker` with a Node IPC channel (so the `disconnect` guard is armed, exactly as a
+supervisor-spawned worker), confirms the port is held while connected, then drops the channel with
+`child.disconnect()` — the same `disconnect` event an abnormally-dead supervisor leaves behind — and
+asserts the orphaned worker exits and **releases the port** (raw-TCP probe flips `open → refused`)
+rather than squatting it and starving the next worker's `listen` on the same port. A companion check
+asserts the daemon is still `ready` (never flipped to `unhealthy`) after the rapid `/api/restart`
+churn, covering the manual-restart kill/respawn race fixed in `restartManually()`.

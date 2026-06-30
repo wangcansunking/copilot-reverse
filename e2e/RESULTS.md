@@ -3,6 +3,23 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-30 (502/crash triage: empty choices, max_output_tokens floor, EADDRINUSE orphan)** — three
+  independent failures the user hit in a real Claude session, all surfacing in the dashboard error log.
+  (1) The daemon wedged **unhealthy** under a `listen EADDRINUSE :7891` crash loop: a forked worker
+  doesn't die when its supervisor dies abnormally, so an orphan kept holding `:7891` and every respawn
+  failed to bind. Fixed with a worker IPC-`disconnect` guard (orphan exits, frees the port) plus a
+  supervisor `restartManually()` that waits for the old worker's `exit` before spawning (closes the
+  kill/respawn port race — the reason a manual `restart` could itself trigger the conflict). (2) A
+  non-stream Copilot 200 with an **empty `choices`** array threw `Cannot read properties of undefined
+  (reading 'message')` → 502 (the `/doctor` ping path); the adapter now treats it as an empty
+  completion. (3) Responses-only models (gpt-5.5) 400'd on the `/doctor` 1-token ping because the
+  Responses API requires `max_output_tokens ≥ 16`; we clamp the floor. New units: empty-choices guard
+  (adapter), `max_output_tokens` floor (responses body), restart-waits-for-exit ordering (monitor
+  lifecycle); the fake worker mirrors the real `disconnect` guard. Docker HTTP e2e gains an EADDRINUSE
+  regression block (fork the real worker with an IPC channel, drop the channel, assert the port is
+  released; daemon stays `ready` through restart churn) — validated against the real `dist/worker`
+  on-host (Docker daemon was down). Full suite **550 passed** (65 files), build clean.
+
 - **2026-06-30 (/metrics real totals, no 100-row cap)** — `/metrics` aggregated a 100-row `/api/requests`
   fetch, so `total` was `min(rows, 100)` — "100 reqs" was a display ceiling, and errors/tokens/cost/
   per-model were all bounded to a meaningless sliding window. Now rolled up in SQL over the WHOLE

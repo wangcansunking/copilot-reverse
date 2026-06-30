@@ -58,6 +58,15 @@ const hb = setInterval(() => send({ type: "heartbeat", ts: Date.now() }), 5_000)
 
 process.on("message", (m: { type?: string }) => { if (m?.type === "shutdown") { clearInterval(hb); server.close(() => process.exit(0)); } });
 
+// Parent-death guard: a forked child does NOT die when its supervisor dies abnormally (terminal
+// closed, killed, crashed). An orphaned worker keeps holding :7891, so the NEXT supervisor's worker
+// can't bind it → "listen EADDRINUSE :7891" crash loop → daemon marked unhealthy. `disconnect` fires
+// when the IPC channel to the supervisor drops (a graceful stop already exited via the message above),
+// so treat it as "my parent is gone" and exit NOW — the OS releases the socket on exit. We don't wait
+// on server.close(): its callback never fires while a long-lived SSE stream is open, which is exactly
+// when we most need to let go. Guarded by process.connected so it's inert for a never-forked worker.
+if (process.connected) process.on("disconnect", () => process.exit(0));
+
 // Crash diagnostics: write to STDERR FIRST so the supervisor's stderr capture (and crash.log) records
 // the reason even when the IPC channel is already gone; the IPC send is a best-effort extra. Without
 // the unhandledRejection handler, a stray floating rejection silently kills the worker on Node ≥15 —

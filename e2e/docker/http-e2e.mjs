@@ -191,6 +191,52 @@ async function main() {
     check("throwing listener does not escape emit", !escaped);
     check("live subscriber still served after a peer throws", live > 0);
 
+    // EADDRINUSE regression (the daemon-unhealthy crash loop): TWO independent failure modes that both
+    // ended in "listen EADDRINUSE :7891" → repeated worker-crash → daemon marked unhealthy.
+    //
+    //   (a) ORPHAN: a forked worker does NOT die when its supervisor dies abnormally. The orphan keeps
+    //       holding the port, so the NEXT supervisor's worker can't bind it. Fixed by the worker's
+    //       'disconnect' guard (src/worker/index.ts): when the IPC channel to the parent drops, the
+    //       worker exits and releases the port. We reproduce a dead parent deterministically by forking
+    //       the REAL worker with an IPC channel (exactly as the supervisor does) and then dropping that
+    //       channel — child.disconnect() fires the same 'disconnect' event a crashed supervisor would.
+    //
+    //   (b) RESTART RACE: restartManually() used to kill+respawn synchronously, racing the dying worker
+    //       for the port. Fixed by deferring the spawn to the old child's exit. The 6× rapid restart
+    //       loop above exercises it; the steady-state assert below proves it didn't wedge the daemon.
+    log("\n[crash-guard] EADDRINUSE regression: orphaned worker releases its port when the IPC parent drops");
+    {
+      const { fork } = await import("node:child_process");
+      const ORPHAN_PORT = 7898;
+      const home = join(DATA_DIR, "..", "cr-orphan");
+      const data = join(home, ".copilot-reverse");
+      mkdirSync(data, { recursive: true });
+      writeFileSync(join(data, "creds.json"), JSON.stringify({ ghToken: "ghu_dummy0000000000000000000000000000000" }));
+      // fork() gives the child a Node IPC channel — so process.connected is true and the disconnect
+      // guard is armed, just like a supervisor-spawned worker (plain spawn() would not arm it).
+      const worker = fork("dist/worker/index.js", [], {
+        stdio: ["ignore", "ignore", "inherit", "ipc"],
+        env: { ...process.env, HOME: home, USERPROFILE: home, WORKER_PORT: String(ORPHAN_PORT), BIND_HOST: "127.0.0.1" },
+      });
+      const up = await ready(`http://127.0.0.1:${ORPHAN_PORT}/healthz`);
+      check("orphan-test worker came up on its port", up);
+      check("port held while IPC parent is connected", (await tcpProbe("127.0.0.1", ORPHAN_PORT)) === "open");
+      // Drop the IPC channel WITHOUT a {shutdown} message — the worker only sees 'disconnect', exactly
+      // what an abnormally-dead supervisor leaves behind. With the guard it exits and frees the port.
+      worker.disconnect();
+      let freed = "open";
+      for (let i = 0; i < 40; i++) { await sleep(250); if ((freed = await tcpProbe("127.0.0.1", ORPHAN_PORT)) !== "open") break; }
+      check(`orphaned worker released :${ORPHAN_PORT} after its parent dropped (disconnect guard)`, freed !== "open", `probe=${freed}`);
+      try { worker.kill("SIGKILL"); } catch {} // belt-and-suspenders if the guard ever regressed
+    }
+
+    // After everything above (incl. the 6× rapid restart loop), the daemon must still be ready and must
+    // NOT have wedged into "unhealthy" — the end-state symptom the user reported. A restart that raced
+    // the port would have logged worker-crash rows and, after maxCrashes, flipped workerState away from
+    // ready. Assert the healthy steady state explicitly.
+    log("\n[crash-guard] daemon is ready (not unhealthy) after restart churn");
+    check("workerState ready (never wedged unhealthy)", (await jget(supUrl("/api/status"))).j?.workerState === "ready");
+
     // Access modes (#25): the worker auth gate reads network.json LAZILY per request, so we can flip
     // the posture on disk without a restart and assert the gate's behavior over real HTTP. These requests
     // all originate from 127.0.0.1 (this process), so they exercise the LOOPBACK side of the policy: a

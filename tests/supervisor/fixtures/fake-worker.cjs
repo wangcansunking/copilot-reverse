@@ -16,6 +16,9 @@ if (mode === "instant") {
   if (mode === "metric") send({ type: "request-metric", endpoint: "/v1/messages", model: "m", status: 200, latencyMs: 3 });
   if (mode === "crash") setTimeout(() => process.exit(1), Number(process.env.FAKE_CRASH_MS || 20));
   process.on("message", (m) => { if (m && m.type === "shutdown") process.exit(0); });
+  // Parent-death guard, mirroring the real worker (src/worker/index.ts): when the supervisor dies
+  // abnormally the IPC channel drops and 'disconnect' fires — exit so we don't orphan and squat :7891.
+  process.on("disconnect", () => process.exit(0));
   // keep the event loop alive
   setInterval(() => {}, 1000);
 }

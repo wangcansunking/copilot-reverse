@@ -56,6 +56,12 @@ function messageToItems(m: CanonicalMessage): ResponsesInputItem[] {
   return items;
 }
 
+// The Responses API rejects max_output_tokens below 16 with a 400 ("Invalid 'max_output_tokens':
+// integer below minimum value"). Tiny caps reach us legitimately — Claude Code's connection probe
+// and /doctor's ping send max_tokens:1 — so clamp UP to the API floor rather than forwarding a value
+// the upstream will reject. A 1-token answer is meaningless anyway; this just keeps the request valid.
+const MIN_OUTPUT_TOKENS = 16;
+
 export function canonicalToResponsesBody(req: CanonicalRequest): ResponsesBody {
   const system = req.messages.filter((m) => m.role === "system").map((m) => textOf(m.content)).filter(Boolean).join("\n");
   const input: ResponsesInputItem[] = [];
@@ -69,7 +75,7 @@ export function canonicalToResponsesBody(req: CanonicalRequest): ResponsesBody {
     model: req.model, input, stream: req.stream,
     ...(system ? { instructions: system } : {}),
     ...(req.temperature !== undefined ? { temperature: req.temperature } : {}),
-    ...(req.maxTokens !== undefined ? { max_output_tokens: req.maxTokens } : {}),
+    ...(req.maxTokens !== undefined ? { max_output_tokens: Math.max(req.maxTokens, MIN_OUTPUT_TOKENS) } : {}),
     ...(tools.length ? { tools } : {}),
   };
 }
