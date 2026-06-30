@@ -318,6 +318,35 @@ async function main() {
       const reqs = (await jget(supUrl("/api/requests"))).j?.requests ?? [];
       const top = reqs[0] ?? {};
       check("metric carries token counts", typeof top.tokensIn === "number" && typeof top.tokensOut === "number", JSON.stringify(top));
+
+      // Extended thinking (#33): a `thinking`-enabled streaming request to a real Claude model must
+      // carry a NATIVE Anthropic thinking block — content_block_start type:thinking + thinking_delta —
+      // emitted before the answer text. Proves the reasoning round-trip end-to-end over real HTTP (effort
+      // in -> upstream reasoning_text -> thinking block out). NOTE: the upstream decides PER TURN whether
+      // to surface reasoning_text (it's non-deterministic — a trivial prompt may answer with none), so we
+      // retry a few times and assert the path works on a turn that DOES reason; the answer must always
+      // come through regardless. A run where no turn reasoned degrades to a logged note, never a failure.
+      let sawThinking = false, sawAnswer = false, thinkSample = "";
+      for (let attempt = 0; attempt < 4 && !sawThinking; attempt++) {
+        const think = await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({
+          model: "claude-opus-4-8[1m]", max_tokens: 600, stream: true,
+          thinking: { type: "enabled", budget_tokens: 8000 },
+          messages: [{ role: "user", content: "What is 17*23? Show your step-by-step reasoning, then state the answer." }],
+        }));
+        const tf = think.t.split("\n\n").map((b) => {
+          const ev = b.split("\n").find((l) => l.startsWith("event: "))?.slice(7);
+          const d = b.split("\n").find((l) => l.startsWith("data: "))?.slice(6);
+          try { return ev && d ? { ev, d: JSON.parse(d) } : null; } catch { return null; }
+        }).filter(Boolean);
+        const ts = tf.find((f) => f.ev === "content_block_start" && f.d.content_block?.type === "thinking");
+        const tt = tf.filter((f) => f.ev === "content_block_delta" && f.d.delta?.type === "thinking_delta").map((f) => f.d.delta.thinking).join("");
+        const ans = tf.filter((f) => f.ev === "content_block_delta" && f.d.delta?.type === "text_delta").map((f) => f.d.delta.text).join("");
+        if (ans.includes("391")) sawAnswer = true;
+        if (ts && tt.length > 0) { sawThinking = true; thinkSample = tt.slice(0, 60); }
+      }
+      check("thinking: answer delivered through the proxy (391)", sawAnswer);
+      if (sawThinking) check("thinking: native thinking block + thinking_delta streamed (#33)", true, `thinking="${thinkSample}"`);
+      else log(`  ⊘ thinking: upstream returned no reasoning in 4 attempts (non-deterministic) — path untested this run, answer ok`);
     } else log("\n[golden] SKIPPED (no real token)");
   } finally { sup.kill(); }
   log(`\n${failures === 0 ? "ALL PASSED" : failures + " FAILED"} (${passes} passed)`);
