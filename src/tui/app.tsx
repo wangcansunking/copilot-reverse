@@ -8,6 +8,7 @@ import { ConfigScreen, type ConfigInfo } from "./screens/config.js";
 import { WebIqKeyScreen } from "./screens/webiq-key.js";
 import { NetworkScreen, type NetworkInfo, type NetworkAction } from "./screens/network.js";
 import { summarizeStatus, githubLoginState, type StatusSummary, type GithubLoginState } from "./status-summary.js";
+import { remoteConfigBlocks } from "./setup/remote-config.js";
 import type { Scope, ApplyResult } from "./setup/apply.js";
 import type { ClientStatus, ScopeStatus } from "./setup/status.js";
 import { theme } from "./theme.js";
@@ -102,6 +103,10 @@ export interface AppProps {
   networkInfo?: () => NetworkInfo;
   setAccessMode?: (mode: "localhost" | "lan") => Promise<NetworkInfo>;
   rotateKey?: () => Promise<NetworkInfo>;
+  // Each client's pinned model on THIS machine (from the real config files) + its real context
+  // window, used to fill the remote-setup config blocks shown when switching to LAN. Optional →
+  // blocks fall back to defaults and omit the window.
+  clientModels?: () => { claude?: string; codex?: string; claudeWindow?: number; codexWindow?: number };
   // One-time status overview shown as the first card on startup.
   startupStatus?: StatusSummary;
   // "What's new" banner shown a few launches then suppressed; the cli decides via prefs and passes
@@ -215,7 +220,7 @@ function ClientBadge({ name, status }: { name: string; status: { user: boolean; 
 export function App({
   registry, title, workerState = "starting", initialModel = "—",
   statusSource, metricsSource, readStatus, modelLimits, onChat,
-  loadModels, setup, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, networkInfo, setAccessMode, rotateKey, startupStatus, githubStatus, changeBanner, onChangeSeen,
+  loadModels, setup, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, networkInfo, setAccessMode, rotateKey, clientModels, startupStatus, githubStatus, changeBanner, onChangeSeen,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
   const [entries, setEntries] = useState<Entry[]>(() => [
@@ -420,14 +425,32 @@ export function App({
       try {
         if (a === "lan" && setAccessMode) {
           const r = await setAccessMode("lan"); setNet(r); setScreen(null);
-          add({ type: "card", title: "/network", tone: "ok", lines: [
+          const head = [
             "✓ LAN mode — the proxy is now reachable from other machines (worker restarting to re-bind)",
             r.lanUrl ? `Claude    ${r.lanUrl}/anthropic` : "",
             r.lanUrl ? `Codex     ${r.lanUrl}/openai` : "",
             r.key ? `key       ${r.key}` : "",
+          ].filter(Boolean);
+          // Paste-ready remote config: each block has the LAN host + key already in the right slot
+          // (Claude → ANTHROPIC_API_KEY, Codex → experimental_bearer_token). Only when we know the LAN
+          // URL + key (both hold in LAN; the URL can be null only if we couldn't read a LAN IPv4).
+          const blocks: string[] = [];
+          if (r.lanUrl && r.key) {
+            const models = clientModels?.() ?? {};
+            for (const b of remoteConfigBlocks({ lanUrl: r.lanUrl, key: r.key, claudeModel: models.claude, codexModel: models.codex, claudeContextWindow: models.claudeWindow, codexContextWindow: models.codexWindow })) {
+              const label = b.client === "claude" ? "Claude" : "Codex";
+              blocks.push("", `── ${label} (remote) → ${b.path} ──`, ...b.lines);
+            }
+          } else {
+            blocks.push("", "set each remote client's base URL to http://<this-machine-LAN-IP>:7891 (+/anthropic or /openai)");
+          }
+          add({ type: "card", title: "/network", tone: "ok", lines: [
+            ...head,
+            ...blocks,
+            "",
             "remote machines must send the key as Authorization: Bearer <key> or x-api-key — without it → 401",
             "this machine keeps working over 127.0.0.1 with no key",
-          ].filter(Boolean) });
+          ] });
         } else if (a === "localhost" && setAccessMode) {
           const r = await setAccessMode("localhost"); setNet(r); setScreen(null);
           add({ type: "card", title: "/network", tone: "ok", lines: ["✓ localhost mode — loopback only, private to this machine (worker restarting to re-bind)"] });

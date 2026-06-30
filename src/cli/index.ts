@@ -25,6 +25,8 @@ import { summarizeStatus } from "../tui/status-summary.js";
 import { applyCodexToml } from "../tui/setup/codex-toml.js";
 import type { SetupClient } from "../tui/setup/wizard.js";
 import { claudeCopilotReverseEnv } from "../tui/setup/clients.js";
+import { stripOneM } from "../core/model-canonical.js";
+import { bestModelMatch } from "../core/fuzzy.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 import { APP_VERSION } from "../version.js";
@@ -266,6 +268,24 @@ async function launchTui(): Promise<void> {
       networkInfo: () => networkInfoOf(cfg.workerPort),
       setAccessMode: async (mode) => { persistAccessMode(dataDir(), mode); await client.restart(); return networkInfoOf(cfg.workerPort); },
       rotateKey: async () => { rotateAccessKey(dataDir()); return networkInfoOf(cfg.workerPort); },
+      // Each client's pinned model on THIS machine (user scope, else project) + its real context
+      // window, to fill the LAN remote-setup config blocks so they size context exactly like local
+      // setup. Claude's pinned id is the canonical dashed [1m] form, but modelLimits is keyed by
+      // Copilot's dotted id — map back via bestModelMatch so the window lookup hits. Codex stores the
+      // raw Copilot id, so it indexes modelLimits directly. Undefined window (limits not loaded) →
+      // the block omits the field, same as a local setup run before limits resolve.
+      clientModels: () => {
+        const s = readClientStatus();
+        const claudeModel = s.claude.userModel ?? s.claude.projectModel;
+        const codexModel = s.codex.userModel ?? s.codex.projectModel;
+        const limitFor = (canonical?: string): number | undefined => {
+          if (!canonical) return undefined;
+          if (modelLimits[canonical] !== undefined) return modelLimits[canonical]; // already a Copilot id (Codex)
+          const copilotId = bestModelMatch(stripOneM(canonical), Object.keys(modelLimits)); // dashed→dotted (Claude)
+          return copilotId ? modelLimits[copilotId] : undefined;
+        };
+        return { claude: claudeModel, codex: codexModel, claudeWindow: limitFor(claudeModel), codexWindow: limitFor(codexModel) };
+      },
       startupStatus,
       changeBanner,
       onChangeSeen: () => markChangeShown(dataDir(), CHANGE_ID),
