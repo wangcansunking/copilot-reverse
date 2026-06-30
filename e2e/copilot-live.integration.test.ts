@@ -150,3 +150,32 @@ describe("LIVE: extended thinking (#33)", () => {
     else console.warn("[thinking #33] upstream surfaced no reasoning in 4 attempts — reasoning path untested this run");
   }, 90_000);
 });
+
+// PROMPT CACHING (issue #34) — Copilot caches AUTOMATICALLY by prompt-prefix matching; no
+// cache_control markers are needed (a probe confirmed cache_control is silently ignored on /chat).
+// Our code already parses prompt_tokens_details.cached_tokens (adapter.ts) and relays it as
+// cache_read_input_tokens (anthropic-server.ts, unit-covered by EP-12). This live guard proves the
+// full stack actually realizes a cache HIT end-to-end: send a large, identical prompt twice and
+// assert the second turn reports a non-trivial cache_read. If auto-caching ever regresses — or our
+// request construction stops being prefix-stable — the second-call hit collapses and this trips.
+describe("LIVE: prompt caching is automatic (#34)", () => {
+  liveIt("a repeated large prompt reports a cache_read hit on the second turn", async () => {
+    // ~4000-token stable system prefix — the realistic cache target (system prompt + tools).
+    const bigSystem = "You are a meticulous assistant. Follow these rules precisely. ".repeat(360);
+    const send = async () => {
+      const res = await request(liveWorker()).post("/anthropic/v1/messages")
+        .send({ model: "claude-opus-4.8", max_tokens: 8, stream: true, system: bigSystem, messages: [{ role: "user", content: "reply with the single word: ok" }] });
+      const delta = res.text.split("\n\n").map((b) => b.split("\n").find((l) => l.startsWith("data: "))?.slice(6))
+        .filter((d): d is string => !!d && d.trim() !== "[DONE]").map((d) => { try { return JSON.parse(d); } catch { return null; } })
+        .find((e) => e?.type === "message_delta");
+      return delta?.usage ?? {};
+    };
+    const first = await send();            // populates the upstream cache
+    await new Promise((r) => setTimeout(r, 1000));
+    const second = await send();           // should hit it
+    // eslint-disable-next-line no-console
+    console.log(`[cache #34] first cache_read=${first.cache_read_input_tokens} second cache_read=${second.cache_read_input_tokens} (input=${second.input_tokens})`);
+    // The second turn must report a substantial cache_read — proof the auto-cache fired and we relay it.
+    expect(second.cache_read_input_tokens).toBeGreaterThan(1000);
+  }, 45_000);
+});
