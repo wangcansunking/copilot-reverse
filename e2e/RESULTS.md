@@ -57,6 +57,39 @@ and update this file (paste the summary).
   a failing request → read the real stored metric → render it through the real `dist` formatter → assert
   no newline (**20 passed**, was 18). Full suite **454 passed** (60 files), build clean.
 
+- **2026-06-30 (LAN exempts loopback — only remote needs the key)** — Refined the LAN gate: a request
+  is challenged for the key ONLY when it arrives from off-box. Requests over loopback
+  (`127/8`, `::1`, `::ffff:127.x`) are always served unauthenticated, in both modes — so the user's own
+  on-machine Claude/Codex keep working with no key when they flip to LAN; only genuinely remote callers
+  must present it (missing/invalid → 401, no-key-configured → 503 fail-closed). The local-vs-remote
+  decision is TCP-layer only (`req.socket.remoteAddress`), never a spoofable header (`X-Forwarded-For`
+  etc.) — `express` `trust proxy` stays off and the socket address is read directly. New pure
+  `isLoopbackAddr` (handles IPv4-mapped-IPv6, fail-safe on unknown → non-local) with 6 unit cases;
+  `requireAccess` takes an injectable `isLocal` so tests simulate a remote peer. `http-e2e.mjs` now
+  splits the matrix: loopback checks assert local-is-exempt; the full remote key matrix (401/401/
+  same-length-401/200×2/oversized-401/503 + a loopback-still-open contrast) runs over the container's
+  LAN IP in the bind-boundary block. Suite **481 passed**, build clean.
+
+- **2026-06-29 (network access modes)** — New explicit access posture (#25): `localhost` (default,
+  loopback only — behavior unchanged, now a named mode) vs `lan` (worker proxy binds `0.0.0.0`, every
+  request must carry a key or it's rejected `401` before any upstream call). The supervisor control API
+  (:7890) stays loopback always — the control plane is never exposed. Auth is a minimal shared key
+  (timing-safe; `Authorization: Bearer` or `x-api-key`), read lazily so rotation needs no restart; the
+  bind change is applied by restarting the worker. **Fail-closed**: entering LAN mints a key if none
+  exists (the store refuses keyless LAN), and the gate refuses all requests (`503`) if LAN is ever
+  active with no key. As defense-in-depth the gate ALSO requires a key whenever the worker is bound to
+  a non-loopback interface (`exposed`), regardless of what the mode file momentarily says — closing the
+  fail-open window on a lan→localhost switch (the socket stays on `0.0.0.0` until the restart rebinds).
+  New `src/shared/network.ts` + `workerBindHost`, `src/worker/auth.ts` (mounted
+  before the body parser, `/healthz` stays open), a `bindHostProvider` in `WorkerMonitor`, and a
+  `/network` TUI panel (+ `/config` row, HUD `net` indicator). Covered by network-store, worker-auth
+  (incl. the `exposed` backstop + a same-length-key check for the constant-time compare),
+  monitor-lifecycle (bind host echoed), and TUI-interaction unit tests, plus access-mode HTTP
+  edge-case checks in `http-e2e.mjs` (gate-before-body-parser: a keyless oversized body → 401 not 413;
+  and a **bind-boundary** probe — a 127.0.0.1-bound worker is raw-TCP **refused** on the container's
+  LAN IP while a 0.0.0.0-bound one is reachable there but still 401s keyless, proving localhost is
+  "can't even connect", not just unauthorized). Suite **472 passed**, e2e **43 passed**, build clean.
+
 - **2026-06-29 (canonical model ids)** — `/anthropic/v1/models` now maps Copilot's dotted ids to the
   dashed canonical ids Claude Code's native picker recognises (`claude-opus-4.8` → `claude-opus-4-8[1m]`,
   friendly display, `[1m]` for opus 4.6/4.7/4.8 + sonnet 4.6); inbound `resolveModel` strips `[1m]` and

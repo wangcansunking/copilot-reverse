@@ -32,7 +32,11 @@ export class WorkerMonitor {
   private stderrTail = "";
   private state: WorkerState = "starting";
   private stopped = false;
-  constructor(private config: AppConfig, private workerEntry: string, private hooks: MonitorHooks) {
+  // Optional: resolves the worker's BIND_HOST at EACH spawn from the live access mode (localhost →
+  // loopback, lan → 0.0.0.0). Falls back to the static config.bindHost when not provided, so existing
+  // callers/tests keep loopback. Because it's read per spawn, a manual restart after a mode change
+  // re-binds the socket to the new posture.
+  constructor(private config: AppConfig, private workerEntry: string, private hooks: MonitorHooks, private bindHostProvider?: () => string) {
     this.controller = new RestartController(config.restart);
   }
   start(): void { this.spawn(); }
@@ -40,8 +44,9 @@ export class WorkerMonitor {
   private set(s: WorkerState): void { this.state = s; this.hooks.onStateChange(s); }
   private spawn(): void {
     this.set("starting");
+    const bindHost = this.bindHostProvider?.() ?? this.config.bindHost;
     const child = fork(this.workerEntry, [], {
-      env: { ...process.env, WORKER_PORT: String(this.config.workerPort), BIND_HOST: this.config.bindHost },
+      env: { ...process.env, WORKER_PORT: String(this.config.workerPort), BIND_HOST: bindHost },
       stdio: ["ignore", "ignore", "pipe", "ipc"],
     });
     this.child = child;

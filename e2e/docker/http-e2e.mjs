@@ -11,11 +11,14 @@
 import { spawn } from "node:child_process";
 import { mkdirSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { connect } from "node:net";
+import { networkInterfaces } from "node:os";
 
 const HOST = "127.0.0.1";
 const SUP = 7890, WRK = 7891;
 const supUrl = (p) => `http://${HOST}:${SUP}${p}`;
 const wrkUrl = (p) => `http://${HOST}:${WRK}${p}`;
+const wrkUrl2 = (port, p) => `http://${HOST}:${port}${p}`; // loopback URL for an ad-hoc worker on `port`
 const TOKEN_FILE = process.env.TOKEN_FILE || "/run/secrets/creds.json";
 const DATA_DIR = `${process.env.HOME || "/root"}/.copilot-reverse`;
 
@@ -32,6 +35,46 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 async function ready(url, n = 60) { for (let i = 0; i < n; i++) { try { if ((await fetch(url)).ok) return true; } catch {} await sleep(250); } return false; }
 async function jget(u) { const r = await fetch(u); return { s: r.status, j: await r.json().catch(() => null) }; }
 async function jpost(u, body, h) { const r = await fetch(u, { method: "POST", headers: { "content-type": "application/json", ...h }, body }); return { s: r.status, t: await r.text() }; }
+
+// The host's primary non-loopback IPv4 (e.g. the container's eth0 address), or null. Used to prove the
+// bind boundary: a worker bound to 127.0.0.1 must be UNREACHABLE on this address, while one bound to
+// 0.0.0.0 must be reachable on it.
+function nonLoopbackIPv4() {
+  for (const addrs of Object.values(networkInterfaces())) {
+    for (const a of addrs ?? []) if (a.family === "IPv4" && !a.internal) return a.address;
+  }
+  return null;
+}
+// Raw-TCP reachability probe — distinguishes "kernel accepted the connection" (socket is bound on this
+// address) from "connection refused / timed out" (no socket on this address). fetch() can't tell these
+// apart as cleanly: a refused TCP connect is the exact "can't even connect" boundary localhost mode
+// relies on. Returns "open" | "refused" | "timeout".
+function tcpProbe(host, port, timeoutMs = 1500) {
+  return new Promise((resolve) => {
+    const sock = connect({ host, port });
+    let done = false;
+    const finish = (r) => { if (!done) { done = true; try { sock.destroy(); } catch {} resolve(r); } };
+    sock.setTimeout(timeoutMs);
+    sock.on("connect", () => finish("open"));
+    sock.on("timeout", () => finish("timeout"));
+    sock.on("error", () => finish("refused")); // ECONNREFUSED (no listener on this addr) / EHOSTUNREACH
+  });
+}
+// Boot a standalone worker on a chosen BIND_HOST + port with an isolated data dir, wait for /healthz on
+// loopback, run `fn`, then kill it. Lets us exercise the bind boundary without disturbing the main
+// supervisor-managed worker on :7891.
+async function withWorker({ bindHost, port, mode, key }, fn) {
+  const home = join(DATA_DIR, `..`, `cr-bind-${port}`);
+  const data = join(home, ".copilot-reverse");
+  mkdirSync(data, { recursive: true });
+  writeFileSync(join(data, "creds.json"), JSON.stringify({ ghToken: "ghu_dummy0000000000000000000000000000000" }));
+  writeFileSync(join(data, "network.json"), JSON.stringify({ mode, ...(key ? { key } : {}) }));
+  const child = spawn("node", ["dist/worker/index.js"], { stdio: "inherit", env: { ...process.env, HOME: home, USERPROFILE: home, WORKER_PORT: String(port), BIND_HOST: bindHost } });
+  try {
+    if (!(await ready(`http://127.0.0.1:${port}/healthz`))) throw new Error(`worker(${bindHost}:${port}) never up`);
+    return await fn();
+  } finally { child.kill(); await sleep(200); }
+}
 
 async function main() {
   const token = realToken();
@@ -147,6 +190,74 @@ async function main() {
     let escaped = false; try { bus.emit("metric", { a: 1 }); bus.emit("metric", { a: 2 }); } catch { escaped = true; }
     check("throwing listener does not escape emit", !escaped);
     check("live subscriber still served after a peer throws", live > 0);
+
+    // Access modes (#25): the worker auth gate reads network.json LAZILY per request, so we can flip
+    // the posture on disk without a restart and assert the gate's behavior over real HTTP. These requests
+    // all originate from 127.0.0.1 (this process), so they exercise the LOOPBACK side of the policy: a
+    // local client is NEVER challenged for a key, in either mode. The genuinely-remote checks (where the
+    // key IS required) are in the bind-boundary block below, driven over the container's LAN IP.
+    log("\n[access-modes] loopback is never key-gated (localhost AND lan); only remote is");
+    const NET = join(DATA_DIR, "network.json");
+    const withKey = (k) => ({ authorization: `Bearer ${k}` });
+    // localhost (default): open, no key needed.
+    check("localhost: /openai/models open from loopback (no key)", (await fetch(wrkUrl("/openai/models"))).status === 200);
+    // Flip to LAN. The LOCAL machine's own clients keep working with NO key — the behavior users expect
+    // (their on-box Claude/Codex don't suddenly need the key when they share the proxy on the LAN).
+    writeFileSync(NET, JSON.stringify({ mode: "lan", key: "e2e-secret" }));
+    check("lan: loopback served WITHOUT a key (local client unaffected)", (await fetch(wrkUrl("/openai/models"))).status === 200);
+    check("lan: loopback served even WITH a (wrong) key — local is exempt, key ignored", (await fetch(wrkUrl("/openai/models"), { headers: withKey("whatever") })).status === 200);
+    check("lan: /healthz stays OPEN (supervisor probe)", (await fetch(wrkUrl("/healthz"))).status === 200);
+    // Fail-closed only bites REMOTE callers (below); loopback stays open even with no key configured.
+    writeFileSync(NET, JSON.stringify({ mode: "lan" }));
+    check("lan + no key: loopback still served (fail-closed is for remote, not local)", (await fetch(wrkUrl("/openai/models"))).status === 200);
+    // Restore the safe default for the golden round-trips.
+    writeFileSync(NET, JSON.stringify({ mode: "localhost", key: "e2e-secret" }));
+    check("back to localhost: open again from loopback (no key)", (await fetch(wrkUrl("/openai/models"))).status === 200);
+
+    // The bind BOUNDARY — the kernel-level reason localhost mode is "you can't even connect", not 401.
+    // A worker bound to 127.0.0.1 has no socket on any other interface, so a TCP connect to the host's
+    // LAN IP is REFUSED (no listener) — the request never reaches the HTTP/auth layer at all. The same
+    // worker bound to 0.0.0.0 (LAN mode's bind) IS reachable on that exact address. Same IP, same probe,
+    // only the bind host changes: open↔refused proves the boundary, not just the config value.
+    log("\n[access-modes] bind boundary: localhost is unreachable off-loopback; LAN binds all interfaces");
+    const lanIp = nonLoopbackIPv4();
+    if (!lanIp) {
+      log("  ⊘ no non-loopback IPv4 in this container — skipping the reachability probe");
+    } else {
+      const PORT = 7899;
+      // Sanity: loopback is reachable in BOTH binds (the worker is genuinely up either way).
+      await withWorker({ bindHost: "127.0.0.1", port: PORT, mode: "localhost" }, async () => {
+        check("localhost-bound: reachable on 127.0.0.1 (worker is up)", (await tcpProbe("127.0.0.1", PORT)) === "open");
+        // The actual boundary: bound to 127.0.0.1 → NOT reachable on the LAN IP.
+        const r = await tcpProbe(lanIp, PORT);
+        check(`localhost-bound: UNREACHABLE on LAN ip ${lanIp} (connect refused, never hits HTTP)`, r !== "open", `probe=${r}`);
+      });
+      // LAN bind (0.0.0.0) → reachable on the very same LAN IP that was refused above.
+      await withWorker({ bindHost: "0.0.0.0", port: PORT, mode: "lan", key: "e2e-secret" }, async () => {
+        check(`lan-bound (0.0.0.0): reachable on LAN ip ${lanIp}`, (await tcpProbe(lanIp, PORT)) === "open");
+        // REMOTE (over the LAN IP) is where the key is actually enforced. This is the true off-box path.
+        const rem = (p, h) => fetch(`http://${lanIp}:${PORT}${p}`, h ? { headers: h } : undefined).then((r) => r.status).catch(() => 0);
+        check("remote: no key → 401", (await rem("/openai/models")) === 401);
+        check("remote: wrong key → 401", (await rem("/openai/models", withKey("nope"))) === 401);
+        // Same length as "e2e-secret" (10 chars) → only the constant-time compare can reject it.
+        check("remote: same-length wrong key → 401", (await rem("/openai/models", withKey("e2e-secres"))) === 401);
+        check("remote: valid Bearer key → 200", (await rem("/openai/models", withKey("e2e-secret"))) === 200);
+        check("remote: valid x-api-key → 200", (await rem("/openai/models", { "x-api-key": "e2e-secret" })) === 200);
+        // Gate runs before the body parser: a keyless remote >20mb body → 401 (gate), not 413 (parser).
+        const huge = JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "x".repeat(21 * 1024 * 1024) }] });
+        const big = await fetch(`http://${lanIp}:${PORT}/openai/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body: huge }).then((r) => r.status).catch(() => 0);
+        check("remote: oversized keyless body → 401 (gate before body parser, not 413)", big === 401);
+        // CONTRAST: the SAME exposed worker still serves LOOPBACK with no key — only the network is gated.
+        check("lan-bound: loopback STILL served without a key (local exempt on the same worker)", (await fetch(wrkUrl2(PORT, "/openai/models"))).status === 200);
+      });
+      // Fail-closed is a REMOTE property: an exposed worker with NO key configured refuses the network
+      // (503) but still serves loopback. Proven on a fresh worker booted keyless in lan mode.
+      await withWorker({ bindHost: "0.0.0.0", port: PORT, mode: "lan" }, async () => {
+        const rem503 = await fetch(`http://${lanIp}:${PORT}/openai/models`, { headers: withKey("anything") }).then((r) => r.status).catch(() => 0);
+        check("remote + no key configured → 503 fail-closed (never an open proxy)", rem503 === 503);
+        check("lan-bound keyless: loopback still served (fail-closed is for remote only)", (await fetch(wrkUrl2(PORT, "/openai/models"))).status === 200);
+      });
+    }
 
     if (token) {
       log("\n[golden] real round-trips");

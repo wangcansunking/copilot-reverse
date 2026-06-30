@@ -1,3 +1,19 @@
+## v0.10.1 — 2026-06-30
+
+fix(tui): the "what's new" banner now shows **one line per recent version**, each surfacing that version's main change — instead of flattening all changes from the newest version (which let a single bundled release fill every slot). For a version that bundled several changesets it picks the headline change (a `feat`/`perf`, or hand-written prose, over a `fix`/`chore`; ties broken by length), so e.g. v0.9.0 shows the network access-modes feature rather than the release-plumbing fix.
+
+## v0.10.0 — 2026-06-30
+
+feat(tui): the startup "what's new" banner now shows the real recent headlines (top 3 across recent releases, version-tagged) instead of a generic "type /changes" pointer — so a freshly shipped feature is actually visible on launch rather than the banner looking empty. `/changes` now lists every change in a bundled release: `gen-changes` captures all paragraphs of each release (not just the first), so a headline feature merged alongside a plumbing fix is no longer hidden. Each release renders as a header with one bullet per change.
+
+## v0.9.0 — 2026-06-30
+
+fix(release): update CHANGELOG before the build so the just-released version appears in `/changes`. gen-changes.mjs runs in prebuild and reads CHANGELOG, but the workflow appended the new entry only after publish — so each release's own notes lagged one version behind. CHANGELOG is now written before build; changesets are still consumed after publish.
+
+feat(tui): `/metrics` now renders a styled card — a colored summary row (reqs · errors · tokens↑↓ · est. cost) over an aligned per-model table — instead of flat gray lines. Numbers carry accent/state colors, labels are dimmed, models sort by request count.
+
+feat(network): explicit access modes — **localhost** (default, loopback only — private to this machine) vs **LAN** (`/network` to enable). LAN exposes the worker proxy on the network and requires a key on every request **from another machine** — `Authorization: Bearer <key>` or `x-api-key` — rejecting a remote request without it (`401`) before any upstream call. Your own machine keeps working over `127.0.0.1` with no key, so local Claude/Codex need no change when you flip to LAN (the local-vs-remote decision is TCP-layer only, never a spoofable header). It's **fail-closed**: enabling LAN auto-generates a key (no keyless LAN), and a remote request is refused (`503`) if a key ever goes missing — never an open relay. The key (timing-safe compare) is read per request, so rotation needs no restart; flipping the mode restarts the worker to rebind the socket. The supervisor control plane stays on localhost regardless. New `/network` panel, a `/config` row, and a `net` HUD indicator.
+
 ## v0.8.0 — 2026-06-29
 
 Map Copilot model ids to the canonical ids Claude Code's native /model picker recognises, so models show friendly names and the 1M-context badge instead of bare ids. Outbound, `/anthropic/v1/models` dashes claude ids (`claude-opus-4.8` → `claude-opus-4-8[1m]`) and tags opus 4.6/4.7/4.8 + sonnet 4.6 as 1M; setup's default ANTHROPIC_MODEL is dashed the same way so the picker matches it; inbound, requests resolve back to the real Copilot model. GPT/o3 pass through unchanged.

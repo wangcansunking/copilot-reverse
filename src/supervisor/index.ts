@@ -5,9 +5,10 @@ import { openDb, recordRestart, recordRequest } from "./db.js";
 import { WorkerMonitor } from "./monitor.js";
 import { EventBus } from "./events.js";
 import { createControlApp } from "./api.js";
-import { defaultConfig } from "../shared/config.js";
+import { defaultConfig, workerBindHost } from "../shared/config.js";
 import { dataDir, dbPath } from "../shared/paths.js";
 import { readGhToken } from "../shared/creds.js";
+import { readAccessMode } from "../shared/network.js";
 import { probeGithubAuth } from "../providers/copilot/token.js";
 import { GithubHeartbeat, SIGNED_OUT_DETAIL } from "./github-heartbeat.js";
 import { appendCrashLog } from "../shared/crash-log.js";
@@ -41,7 +42,9 @@ export function startSupervisor(): { stop: () => void } {
         bus.emit("metric", sample);
       }
     },
-  });
+  // Bind the worker proxy per the LIVE access mode each spawn: localhost → loopback, lan → 0.0.0.0.
+  // The control API below stays loopback always (the control plane is never on the network).
+  }, () => workerBindHost(readAccessMode(dataDir()), config));
 
   const workerBase = `http://${config.bindHost}:${config.workerPort}`;
 

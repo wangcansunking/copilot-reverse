@@ -66,6 +66,7 @@ Prefer commands? Type `/` to see them all. The essentials:
 |---|---|
 | `/setup-claude` · `/setup-codex` | Point Claude Code / Codex at copilot-reverse |
 | `/model` | Switch the chat model (1M-context models marked) |
+| `/network` | Choose access mode: localhost (private) or LAN (shared, key required) |
 | `/status` · `/doctor` | Is everything healthy? (`/status` shows each client's scope + model) |
 | `/logs` · `/metrics` | What ran, what failed, and why |
 | `/dashboard` | Open a live web dashboard in your browser |
@@ -98,6 +99,37 @@ export ANTHROPIC_API_KEY=local
 claude
 ```
 
+### Share it on your network (LAN mode)
+
+By default the proxy is **localhost** — bound to `127.0.0.1`, reachable only from this machine. To let
+another device (a second laptop, a phone, a teammate) use it, run `/network` and switch to **LAN**:
+
+- The worker rebinds to all interfaces and the panel shows your **LAN URL** (e.g. `http://192.168.1.5:7891`) and a generated **access key**.
+- **Your own machine keeps working with no key.** The key is required only for requests coming from *other* machines — anything from this host over `127.0.0.1` is served as before. So your local Claude Code / Codex need no change when you flip to LAN.
+- On the other machine, point your tool at that URL **plus the protocol path** — `…:7891/anthropic` for Claude Code, `…:7891/openai` for Codex/OpenAI — and send the key: `Authorization: Bearer <key>` (OpenAI/Codex) or `x-api-key: <key>` (Anthropic/Claude Code). A remote request **without a valid key is rejected (401)**.
+
+```bash
+# On the remote machine — Claude Code against the shared proxy:
+export ANTHROPIC_BASE_URL=http://192.168.1.5:7891/anthropic
+export ANTHROPIC_API_KEY=<the key from /network>
+claude
+```
+
+For **Codex** on the remote machine, set the base URL (with the `/openai` path) and the key in
+`~/.codex/config.toml` — the key goes in the `experimental_bearer_token` field:
+
+```toml
+# ~/.codex/config.toml on the remote machine
+[model_providers.copilot-reverse]
+base_url = "http://192.168.1.5:7891/openai"
+experimental_bearer_token = "<the key from /network>"
+```
+
+- LAN is **fail-closed**: you can't enable it without a key, and the proxy refuses to serve if a key ever goes missing — it's never an open relay. Rotate the key anytime from the same panel (remote clients then re-paste the new key). Switch back to localhost to make it private again.
+- **Firewall:** on Windows/macOS, the first time the worker binds all interfaces your OS may prompt to allow it — or you may need to add an inbound allow for port `7891`. If a second machine can't connect while the panel shows `⚠ LAN`, the host firewall is the usual cause.
+
+> The supervisor/control plane (dashboard, restart) always stays on localhost — only the model proxy is ever exposed, and only behind the key.
+
 ---
 
 ## The status bar, decoded
@@ -110,6 +142,7 @@ model claude-opus-4.8  ·  daemon ready  ·  claude u:✓ p:○  codex u:○ p:�
 
 - **worker / daemon** — green `ready` means the proxy is up and self-healing.
 - **claude u:✓ p:○** — Claude Code is configured at the **u**ser (global) level, not in this **p**roject. Read live from your real config files.
+- **net** — your access mode: `localhost` (private) or a highlighted `⚠ LAN` when the proxy is shared on the network (run `/network` to change).
 
 ---
 

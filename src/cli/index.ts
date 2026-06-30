@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import React from "react";
+import { networkInterfaces as osNetworkInterfaces } from "node:os";
 import { render } from "ink";
 import { Command } from "commander";
 import { App } from "../tui/app.js";
@@ -14,6 +15,8 @@ import { readGhToken, clearGhToken, hasGhTokenFile } from "../shared/creds.js";
 import { writeWebIqKey, readWebIqKey, clearWebIqKey, readWebSearchMode, writeWebSearchMode, resolveWebSearchBackend } from "../shared/webiq-key.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
 import { readChatModel, writeChatModel, shouldShowChange, markChangeShown } from "../shared/prefs.js";
+import { readAccessMode, readAccessKey, setAccessMode as persistAccessMode, rotateAccessKey } from "../shared/network.js";
+import type { NetworkInfo } from "../tui/screens/network.js";
 import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
 import { fetchCopilotModels, fetchModelLimits } from "../providers/copilot/models.js";
 import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
@@ -25,6 +28,8 @@ import { claudeCopilotReverseEnv } from "../tui/setup/clients.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 import { APP_VERSION } from "../version.js";
+import { APP_CHANGES } from "../changes.js";
+import { buildChangeBannerLines } from "../tui/whats-new.js";
 import { appendCrashLog } from "../shared/crash-log.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -60,6 +65,24 @@ function installProcessBackstop(): void {
       process.exit(1);
     }
   });
+}
+
+// The host's primary LAN IPv4 (first non-internal IPv4 across interfaces), or null if it can't be
+// determined — used to show other machines the address to point at in LAN mode. Best-effort only;
+// the proxy binds 0.0.0.0 regardless, so a null here just means "we couldn't pretty-print the URL".
+function lanIPv4(): string | null {
+  const ifaces = osNetworkInterfaces();
+  for (const addrs of Object.values(ifaces)) {
+    for (const a of addrs ?? []) {
+      if (a.family === "IPv4" && !a.internal) return a.address;
+    }
+  }
+  return null;
+}
+function networkInfoOf(workerPort: number): NetworkInfo {
+  const mode = readAccessMode(dataDir());
+  const ip = mode === "lan" ? lanIPv4() : null;
+  return { mode, key: readAccessKey(dataDir()), lanUrl: ip ? `http://${ip}:${workerPort}` : null };
 }
 
 async function launchTui(): Promise<void> {
@@ -188,12 +211,14 @@ async function launchTui(): Promise<void> {
 
   const persistedModel = readChatModel(dataDir());
 
-  // "What's new" banner: IMPORTANT messages only (new capabilities, things worth noticing) — NOT
-  // bug fixes. Keyed by version so each release re-announces, shown ~3 launches then quiet. The full
-  // list lives behind /changes; this is just a nudge.
+  // "What's new" banner: surface the real headlines from recent releases (newest first), not a
+  // generic pointer — a bundled release has several changes, so we flatten across releases and show
+  // the top few, each tagged with its version. Keyed by the current version so each release
+  // re-announces, shown ~3 launches then quiet. The full list lives behind /changes.
   const CHANGE_ID = `v${APP_VERSION}`;
-  const changeBanner = shouldShowChange(dataDir(), CHANGE_ID)
-    ? { lines: ["• type /changes to see what's new across recent releases"] }
+  const bannerLines = buildChangeBannerLines(APP_CHANGES);
+  const changeBanner = bannerLines.length && shouldShowChange(dataDir(), CHANGE_ID)
+    ? { lines: bannerLines }
     : undefined;
 
   // Startup overview. The token was already validated above (re-auth happens before we get here), so
@@ -232,6 +257,15 @@ async function launchTui(): Promise<void> {
       enableWebiq: (k: string) => { writeWebIqKey(k, dataDir()); writeWebSearchMode(dataDir(), "webiq"); },
       disableWebiq: () => { clearWebIqKey(dataDir()); },
       webSearchBackend: () => resolveWebSearchBackend(readWebSearchMode(dataDir()), Boolean(readWebIqKey(dataDir()))),
+      // Network access mode. networkInfo reads the live posture; setAccessMode persists then restarts
+      // the worker so the supervisor re-spawns it bound to the new host (loopback vs 0.0.0.0 — a live
+      // socket can't be rebound); rotateKey mints a fresh key (no restart needed — the gate reads it
+      // per request). Entering LAN is fail-closed in the store (a key is minted if none exists). The
+      // restart error is NOT swallowed: if the rebind fails the UI shows it (the still-running worker
+      // stays key-protected via the `exposed` backstop, so a failed lan→localhost is safe, not open).
+      networkInfo: () => networkInfoOf(cfg.workerPort),
+      setAccessMode: async (mode) => { persistAccessMode(dataDir(), mode); await client.restart(); return networkInfoOf(cfg.workerPort); },
+      rotateKey: async () => { rotateAccessKey(dataDir()); return networkInfoOf(cfg.workerPort); },
       startupStatus,
       changeBanner,
       onChangeSeen: () => markChangeShown(dataDir(), CHANGE_ID),

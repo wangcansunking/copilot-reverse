@@ -71,6 +71,7 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
   // only so the command is recognized and not reported as unknown.
   reg.add({ name: "/webiq", describe: "use Microsoft Web IQ for web search (/webiq clean to revert)", run: async () => ["opening webiq…"] });
   reg.add({ name: "/config", describe: "view & change configuration", run: async () => ["opening config panel…"] });
+  reg.add({ name: "/network", describe: "view & change network access mode (localhost / LAN)", run: async () => ["opening network panel…"] });
   reg.add({ name: "/dashboard", describe: "open the web dashboard in your browser", run: async () => {
     if (!opts.dashboardUrl) return ["dashboard URL not available"];
     openUrl(opts.dashboardUrl);
@@ -89,10 +90,15 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
   } });
   reg.add({ name: "/changes", describe: "what's new — recent releases", run: async () => {
     if (!APP_CHANGES.length) return ["no changelog bundled"];
-    const lines = APP_CHANGES.slice(0, 10).map((c) => {
-      const s = c.summary.length > 90 ? c.summary.slice(0, 87) + "…" : c.summary;
-      return `v${c.version} (${c.date}) — ${s}`;
-    });
+    // Header per release, then one bullet per bundled change. A release that merged several
+    // changesets has several summaries; listing only the first would hide every later change
+    // (e.g. a headline feature buried under a release-plumbing fix).
+    const clip = (s: string) => (s.length > 86 ? s.slice(0, 85) + "…" : s);
+    const lines: string[] = [];
+    for (const c of APP_CHANGES.slice(0, 10)) {
+      lines.push(`v${c.version} (${c.date})`);
+      for (const s of c.summaries) lines.push(`  • ${clip(s)}`);
+    }
     const repo = opts.reportRepo && opts.reportRepo !== PLACEHOLDER_REPO ? opts.reportRepo : "wangcansunking/copilot-reverse";
     lines.push("", `full changelog: https://github.com/${repo}/blob/master/CHANGELOG.md`);
     return lines;

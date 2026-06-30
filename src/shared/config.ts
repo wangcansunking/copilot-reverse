@@ -39,6 +39,15 @@ export function defaultConfig(): AppConfig {
   };
 }
 
+// The host the WORKER PROXY (:7891) binds, derived from the access mode. localhost → loopback only
+// (the default, unreachable from other machines); lan → all interfaces (0.0.0.0) so the LAN can reach
+// it, gated by the mandatory key in the worker's auth middleware. NOTE: this governs ONLY the worker
+// proxy. The supervisor control API (:7890 — restart/stop/dashboard) always stays on `bindHost`
+// (loopback): the control plane is never exposed on the network, regardless of mode.
+export function workerBindHost(mode: "localhost" | "lan", base: AppConfig = defaultConfig()): string {
+  return mode === "lan" ? "0.0.0.0" : base.bindHost;
+}
+
 type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] };
 export function mergeConfig(base: AppConfig, o: DeepPartial<AppConfig>): AppConfig {
   return {
