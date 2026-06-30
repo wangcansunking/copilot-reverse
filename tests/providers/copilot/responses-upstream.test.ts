@@ -24,6 +24,26 @@ describe("canonicalToResponsesBody", () => {
     expect(body.input).toEqual([{ type: "message", role: "user", content: [{ type: "input_text", text: "hello" }] }]);
   });
 
+  // The Responses API rejects max_output_tokens below 16 ("Invalid 'max_output_tokens': integer
+  // below minimum value"). Claude Code's count-tokens/connection probes and /doctor's ping send
+  // max_tokens:1, which mapped straight through to a 400 → 502. Clamp the floor so a tiny cap still
+  // produces a valid request (a 1-token answer is meaningless anyway; 16 is the API minimum).
+  it("clamps max_output_tokens up to the Responses API minimum of 16", () => {
+    const body = canonicalToResponsesBody({
+      model: "gpt-5.5", stream: false, maxTokens: 1,
+      messages: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    });
+    expect(body.max_output_tokens).toBe(16);
+  });
+
+  it("leaves max_output_tokens unset when the request didn't specify one", () => {
+    const body = canonicalToResponsesBody({
+      model: "gpt-5.5", stream: false,
+      messages: [{ role: "user", content: [{ type: "text", text: "ping" }] }],
+    });
+    expect(body.max_output_tokens).toBeUndefined();
+  });
+
   it("maps assistant tool_use to function_call and tool_result to function_call_output", () => {
     const body = canonicalToResponsesBody({
       model: "gpt-5.5", stream: false,

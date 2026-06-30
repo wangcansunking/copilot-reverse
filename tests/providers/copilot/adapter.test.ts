@@ -16,6 +16,20 @@ describe("CopilotAdapter", () => {
     const init = f.mock.calls[0][1] as RequestInit;
     expect((init.headers as Record<string, string>).authorization).toBe("Bearer cop");
   });
+
+  // Copilot occasionally returns 200 with an EMPTY choices array (content-filtered turn, or a
+  // 1-token ping that produced nothing). The old code did data.choices[0].message blindly →
+  // "Cannot read properties of undefined (reading 'message')" → surfaced as a 502. A choice-less
+  // 200 is a valid empty completion: return empty content + a stop finish, never throw.
+  it("treats a 200 with empty choices as an empty completion (no throw)", async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ id: "c1", choices: [], usage: { prompt_tokens: 3 } }),
+      { status: 200, headers: { "content-type": "application/json" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    const r = await a.complete(base);
+    expect(r.content).toEqual([]);
+    expect(r.finishReason).toBe("stop");
+    expect(r.usage).toEqual({ promptTokens: 3, completionTokens: 0 });
+  });
   it("sends a canonical image block as an OpenAI image_url part on the wire", async () => {
     let body: any;
     const f = vi.fn(async (_url: string, init: RequestInit) => {

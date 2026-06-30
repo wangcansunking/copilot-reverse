@@ -32,6 +32,14 @@ export class WorkerMonitor {
   private stderrTail = "";
   private state: WorkerState = "starting";
   private stopped = false;
+  // The single pending respawn (crash backoff / unhealthy cooldown). Tracked so a manual restart or
+  // stop() can CANCEL it — otherwise a backoff respawn fires alongside the restart's respawn and the
+  // two race for :7891 (EADDRINUSE). Invariant: at most one respawn is ever scheduled at a time.
+  private respawnTimer?: ReturnType<typeof setTimeout>;
+  // True while a manual restart is waiting on the old worker's exit to spawn the replacement. A second
+  // restart in that window must NOT spawn again (it would double-bind the port); the in-flight exit
+  // handler already owns the next spawn, so we just let it proceed.
+  private restartPending = false;
   // Optional: resolves the worker's BIND_HOST at EACH spawn from the live access mode (localhost →
   // loopback, lan → 0.0.0.0). Falls back to the static config.bindHost when not provided, so existing
   // callers/tests keep loopback. Because it's read per spawn, a manual restart after a mode change
@@ -65,20 +73,52 @@ export class WorkerMonitor {
         // leave the daemon permanently dead. Mark unhealthy, then after a cooldown reset the window and
         // try once more — recovering on its own if the cause has passed.
         this.set("unhealthy");
-        setTimeout(() => { if (!this.stopped) { this.controller.reset(); this.spawn(); } }, this.config.restart.unhealthyCooldownMs);
+        this.scheduleRespawn(this.config.restart.unhealthyCooldownMs, true);
         return;
       }
       this.set("crashed");
-      setTimeout(() => this.spawn(), d.backoffMs);
+      this.scheduleRespawn(d.backoffMs, false);
     });
+  }
+  // Schedule the single pending respawn, replacing any already-pending one (cancel-then-set keeps the
+  // at-most-one invariant). resetWindow clears the crash counter first (the unhealthy-cooldown path).
+  private scheduleRespawn(delayMs: number, resetWindow: boolean): void {
+    if (this.respawnTimer) clearTimeout(this.respawnTimer);
+    this.respawnTimer = setTimeout(() => {
+      this.respawnTimer = undefined;
+      if (this.stopped) return;
+      if (resetWindow) this.controller.reset();
+      this.spawn();
+    }, delayMs);
   }
   restartManually(): void {
     this.controller.reset(); this.stopped = false;
-    if (this.child && !this.child.killed) { this.child.removeAllListeners("exit"); this.child.kill(); }
-    this.spawn();
+    // Cancel any pending crash/cooldown respawn — otherwise it fires alongside our respawn below and
+    // the two race for the port. We own the next spawn now.
+    if (this.respawnTimer) { clearTimeout(this.respawnTimer); this.respawnTimer = undefined; }
+    // A restart is already waiting on the old worker's exit — its handler will spawn the replacement.
+    // Spawning again here would double-bind :7891, so let the in-flight restart proceed.
+    if (this.restartPending) return;
+    const child = this.child;
+    // A live child still holds :7891 until it actually exits. kill() is async, so spawning on the next
+    // line (the old behavior) raced the dying worker → "listen EADDRINUSE :7891" → counted as a crash →
+    // daemon marked unhealthy after a few restarts. Defer the spawn to the child's REAL exit so the
+    // fresh worker only binds once the port is free. `connected` (IPC up) is the liveness signal: it
+    // stays true for a killed-but-not-yet-exited child and is false once it's gone, so we don't arm an
+    // exit listener that will never fire (which would wedge the daemon with no worker).
+    if (child && child.connected) {
+      this.restartPending = true;
+      this.child = undefined;                       // detach: its later crash-path exit must not run
+      child.removeAllListeners("exit");
+      child.once("exit", () => { this.restartPending = false; if (!this.stopped) this.spawn(); });
+      child.kill();
+    } else {
+      this.spawn();
+    }
   }
   stop(): void {
     this.stopped = true;
+    if (this.respawnTimer) { clearTimeout(this.respawnTimer); this.respawnTimer = undefined; }
     const child = this.child;
     if (!child || child.killed) return;
     // The IPC channel may already be torn down (e.g. right after a manual restart) — sending then

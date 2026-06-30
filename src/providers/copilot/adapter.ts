@@ -80,21 +80,26 @@ export class CopilotAdapter implements ProviderAdapter {
       throw new Error(`copilot completion failed: ${res.status}${detail}`);
     }
     const data = (await res.json()) as any;
-    const choice = data.choices[0];
     const content: ContentBlock[] = [];
+    // Copilot can answer 200 with an EMPTY choices array (a content-filtered turn, or a 1-token ping
+    // that emitted nothing). choices[0] is then undefined — reading .message threw "Cannot read
+    // properties of undefined (reading 'message')", which the server turned into a 502. A choice-less
+    // 200 is a valid empty completion: report it as such (empty content, stop) instead of crashing.
+    const choice = data.choices?.[0];
+    const message = choice?.message ?? {};
     // Recover inline-XML tool calls in non-stream replies too (same reason as the stream path).
     let xmlTool = false;
-    if (choice.message.content) {
+    if (message.content) {
       const ex = new ToolCallExtractor();
-      for (const ev of [...ex.feed(choice.message.content), ...ex.flush()]) {
+      for (const ev of [...ex.feed(message.content), ...ex.flush()]) {
         if (ev.kind === "text") { if (ev.text) content.push({ type: "text", text: ev.text }); }
         else { xmlTool = true; content.push({ type: "tool_use", id: ev.tool.id, name: ev.tool.name, input: ev.tool.input }); }
       }
     }
-    for (const tc of choice.message.tool_calls ?? []) content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input: safeJson(tc.function.arguments) });
+    for (const tc of message.tool_calls ?? []) content.push({ type: "tool_use", id: tc.id, name: tc.function.name, input: safeJson(tc.function.arguments) });
     return {
       id: data.id ?? `cmpl-${randomUUID().replace(/-/g, "")}`, model: req.model, content,
-      finishReason: choice.finish_reason === "tool_calls" || xmlTool ? "tool_use" : choice.finish_reason === "length" ? "length" : "stop",
+      finishReason: choice?.finish_reason === "tool_calls" || xmlTool ? "tool_use" : choice?.finish_reason === "length" ? "length" : "stop",
       usage: { promptTokens: data.usage?.prompt_tokens ?? 0, completionTokens: data.usage?.completion_tokens ?? 0 },
     };
   }
