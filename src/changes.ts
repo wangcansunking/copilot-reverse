@@ -2,6 +2,11 @@
 export interface ChangeEntry { version: string; date: string; summary: string }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.9.0",
+    "date": "2026-06-30",
+    "summary": "fix(release): update CHANGELOG before the build so the just-released version appears in `/changes`. gen-changes.mjs runs in prebuild and reads CHANGELOG, but the workflow appended the new entry only after publish — so each release's own notes lagged one version behind. CHANGELOG is now written before build; changesets are still consumed after publish."
+  },
+  {
     "version": "0.8.0",
     "date": "2026-06-29",
     "summary": "Map Copilot model ids to the canonical ids Claude Code's native /model picker recognises, so models show friendly names and the 1M-context badge instead of bare ids. Outbound, `/anthropic/v1/models` dashes claude ids (`claude-opus-4.8` → `claude-opus-4-8[1m]`) and tags opus 4.6/4.7/4.8 + sonnet 4.6 as 1M; setup's default ANTHROPIC_MODEL is dashed the same way so the picker matches it; inbound, requests resolve back to the real Copilot model. GPT/o3 pass through unchanged."
@@ -45,10 +50,5 @@ export const APP_CHANGES: ChangeEntry[] = [
     "version": "0.5.0",
     "date": "2026-06-28",
     "summary": "Add a GitHub-token heartbeat: the supervisor now re-checks every ~60s whether the stored GitHub login still works, and the TUI footer shows a live `github ✓` / `✗ /login` badge — so an expired or revoked login surfaces within ~60s instead of only on the next failed request or a manual `/status`. A transient network/rate-limit hiccup is distinguished from a real auth failure, so the badge never flips on a single blip."
-  },
-  {
-    "version": "0.4.0",
-    "date": "2026-06-26",
-    "summary": "Codex `/responses` support, web search via Microsoft Web IQ, and a tool-call recovery fix:"
   }
 ];
