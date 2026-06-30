@@ -105,7 +105,8 @@ By default the proxy is **localhost** — bound to `127.0.0.1`, reachable only f
 another device (a second laptop, a phone, a teammate) use it, run `/network` and switch to **LAN**:
 
 - The worker rebinds to all interfaces and the panel shows your **LAN URL** (e.g. `http://192.168.1.5:7891`) and a generated **access key**.
-- On the other machine, point your tool at that URL **plus the protocol path** — `…:7891/anthropic` for Claude Code, `…:7891/openai` for Codex/OpenAI — and send the key: `Authorization: Bearer <key>` (OpenAI/Codex) or `x-api-key: <key>` (Anthropic/Claude Code). Requests **without a valid key are rejected (401)**.
+- **Your own machine keeps working with no key.** The key is required only for requests coming from *other* machines — anything from this host over `127.0.0.1` is served as before. So your local Claude Code / Codex need no change when you flip to LAN.
+- On the other machine, point your tool at that URL **plus the protocol path** — `…:7891/anthropic` for Claude Code, `…:7891/openai` for Codex/OpenAI — and send the key: `Authorization: Bearer <key>` (OpenAI/Codex) or `x-api-key: <key>` (Anthropic/Claude Code). A remote request **without a valid key is rejected (401)**.
 
 ```bash
 # On the remote machine — Claude Code against the shared proxy:

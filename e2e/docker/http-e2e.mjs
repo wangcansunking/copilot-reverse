@@ -18,6 +18,7 @@ const HOST = "127.0.0.1";
 const SUP = 7890, WRK = 7891;
 const supUrl = (p) => `http://${HOST}:${SUP}${p}`;
 const wrkUrl = (p) => `http://${HOST}:${WRK}${p}`;
+const wrkUrl2 = (port, p) => `http://${HOST}:${port}${p}`; // loopback URL for an ad-hoc worker on `port`
 const TOKEN_FILE = process.env.TOKEN_FILE || "/run/secrets/creds.json";
 const DATA_DIR = `${process.env.HOME || "/root"}/.copilot-reverse`;
 
@@ -135,33 +136,27 @@ async function main() {
     check("live subscriber still served after a peer throws", live > 0);
 
     // Access modes (#25): the worker auth gate reads network.json LAZILY per request, so we can flip
-    // the posture on disk without a restart and assert the gate's behavior over real HTTP. /openai/models
-    // is gated but needs no upstream call, so these are deterministic on a dummy token. We restore
-    // localhost at the end so the golden round-trips below run unauthenticated as before.
-    log("\n[access-modes] LAN mode requires a key; localhost stays open");
+    // the posture on disk without a restart and assert the gate's behavior over real HTTP. These requests
+    // all originate from 127.0.0.1 (this process), so they exercise the LOOPBACK side of the policy: a
+    // local client is NEVER challenged for a key, in either mode. The genuinely-remote checks (where the
+    // key IS required) are in the bind-boundary block below, driven over the container's LAN IP.
+    log("\n[access-modes] loopback is never key-gated (localhost AND lan); only remote is");
     const NET = join(DATA_DIR, "network.json");
     const withKey = (k) => ({ authorization: `Bearer ${k}` });
     // localhost (default): open, no key needed.
-    check("localhost: /openai/models open (no key)", (await fetch(wrkUrl("/openai/models"))).status === 200);
-    // Flip to LAN with a key — every request must now carry it.
+    check("localhost: /openai/models open from loopback (no key)", (await fetch(wrkUrl("/openai/models"))).status === 200);
+    // Flip to LAN. The LOCAL machine's own clients keep working with NO key — the behavior users expect
+    // (their on-box Claude/Codex don't suddenly need the key when they share the proxy on the LAN).
     writeFileSync(NET, JSON.stringify({ mode: "lan", key: "e2e-secret" }));
-    check("lan: no key → 401", (await fetch(wrkUrl("/openai/models"))).status === 401);
-    check("lan: wrong key → 401", (await fetch(wrkUrl("/openai/models"), { headers: withKey("nope") })).status === 401);
-    // Same-length wrong key: rejected by the constant-time compare, not the length short-circuit.
-    check("lan: same-length wrong key → 401", (await fetch(wrkUrl("/openai/models"), { headers: withKey("e2e-secres") })).status === 401);
-    check("lan: valid Bearer key → 200", (await fetch(wrkUrl("/openai/models"), { headers: withKey("e2e-secret") })).status === 200);
-    check("lan: valid x-api-key → 200", (await fetch(wrkUrl("/openai/models"), { headers: { "x-api-key": "e2e-secret" } })).status === 200);
+    check("lan: loopback served WITHOUT a key (local client unaffected)", (await fetch(wrkUrl("/openai/models"))).status === 200);
+    check("lan: loopback served even WITH a (wrong) key — local is exempt, key ignored", (await fetch(wrkUrl("/openai/models"), { headers: withKey("whatever") })).status === 200);
     check("lan: /healthz stays OPEN (supervisor probe)", (await fetch(wrkUrl("/healthz"))).status === 200);
-    // Gate runs BEFORE the json body parser: a keyless request with a >20mb body is rejected 401 (gate)
-    // — NOT 413 (parser) — proving an unauthenticated LAN client can't make the worker buffer a huge body.
-    const huge = JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "x".repeat(21 * 1024 * 1024) }] });
-    check("lan: oversized keyless body → 401 (gate before body parser, not 413)", (await jpost(wrkUrl("/openai/chat/completions"), huge)).s === 401);
-    // Fail-closed: LAN with no key configured refuses ALL requests (503), never an open proxy.
+    // Fail-closed only bites REMOTE callers (below); loopback stays open even with no key configured.
     writeFileSync(NET, JSON.stringify({ mode: "lan" }));
-    check("lan + no key → 503 fail-closed", (await fetch(wrkUrl("/openai/models"), { headers: withKey("anything") })).status === 503);
+    check("lan + no key: loopback still served (fail-closed is for remote, not local)", (await fetch(wrkUrl("/openai/models"))).status === 200);
     // Restore the safe default for the golden round-trips.
     writeFileSync(NET, JSON.stringify({ mode: "localhost", key: "e2e-secret" }));
-    check("back to localhost: open again (no key)", (await fetch(wrkUrl("/openai/models"))).status === 200);
+    check("back to localhost: open again from loopback (no key)", (await fetch(wrkUrl("/openai/models"))).status === 200);
 
     // The bind BOUNDARY — the kernel-level reason localhost mode is "you can't even connect", not 401.
     // A worker bound to 127.0.0.1 has no socket on any other interface, so a TCP connect to the host's
@@ -184,9 +179,27 @@ async function main() {
       // LAN bind (0.0.0.0) → reachable on the very same LAN IP that was refused above.
       await withWorker({ bindHost: "0.0.0.0", port: PORT, mode: "lan", key: "e2e-secret" }, async () => {
         check(`lan-bound (0.0.0.0): reachable on LAN ip ${lanIp}`, (await tcpProbe(lanIp, PORT)) === "open");
-        // And once reachable, the gate still guards it: keyless request over that LAN address → 401.
-        const noKey = await fetch(`http://${lanIp}:${PORT}/openai/models`).then((r) => r.status).catch(() => 0);
-        check("lan-bound: reachable but gated — keyless over LAN ip → 401", noKey === 401, `status=${noKey}`);
+        // REMOTE (over the LAN IP) is where the key is actually enforced. This is the true off-box path.
+        const rem = (p, h) => fetch(`http://${lanIp}:${PORT}${p}`, h ? { headers: h } : undefined).then((r) => r.status).catch(() => 0);
+        check("remote: no key → 401", (await rem("/openai/models")) === 401);
+        check("remote: wrong key → 401", (await rem("/openai/models", withKey("nope"))) === 401);
+        // Same length as "e2e-secret" (10 chars) → only the constant-time compare can reject it.
+        check("remote: same-length wrong key → 401", (await rem("/openai/models", withKey("e2e-secres"))) === 401);
+        check("remote: valid Bearer key → 200", (await rem("/openai/models", withKey("e2e-secret"))) === 200);
+        check("remote: valid x-api-key → 200", (await rem("/openai/models", { "x-api-key": "e2e-secret" })) === 200);
+        // Gate runs before the body parser: a keyless remote >20mb body → 401 (gate), not 413 (parser).
+        const huge = JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "x".repeat(21 * 1024 * 1024) }] });
+        const big = await fetch(`http://${lanIp}:${PORT}/openai/chat/completions`, { method: "POST", headers: { "content-type": "application/json" }, body: huge }).then((r) => r.status).catch(() => 0);
+        check("remote: oversized keyless body → 401 (gate before body parser, not 413)", big === 401);
+        // CONTRAST: the SAME exposed worker still serves LOOPBACK with no key — only the network is gated.
+        check("lan-bound: loopback STILL served without a key (local exempt on the same worker)", (await fetch(wrkUrl2(PORT, "/openai/models"))).status === 200);
+      });
+      // Fail-closed is a REMOTE property: an exposed worker with NO key configured refuses the network
+      // (503) but still serves loopback. Proven on a fresh worker booted keyless in lan mode.
+      await withWorker({ bindHost: "0.0.0.0", port: PORT, mode: "lan" }, async () => {
+        const rem503 = await fetch(`http://${lanIp}:${PORT}/openai/models`, { headers: withKey("anything") }).then((r) => r.status).catch(() => 0);
+        check("remote + no key configured → 503 fail-closed (never an open proxy)", rem503 === 503);
+        check("lan-bound keyless: loopback still served (fail-closed is for remote only)", (await fetch(wrkUrl2(PORT, "/openai/models"))).status === 200);
       });
     }
 

@@ -12,14 +12,15 @@ export type MetricSink = (m: { endpoint: string; model: string; status: number; 
 // behavior.
 const OPEN: AccessControl = { mode: () => "localhost", key: () => null, exposed: false };
 
-export function createWorkerApp(router: Router, onMetric: MetricSink, gatewayRunner?: GatewayToolRunner, access: AccessControl = OPEN): Express {
+export function createWorkerApp(router: Router, onMetric: MetricSink, gatewayRunner?: GatewayToolRunner, access: AccessControl = OPEN, isLocal?: (req: { socket: { remoteAddress?: string } }) => boolean): Express {
   const app = express();
   // Readiness probe stays OPEN above the auth gate — the supervisor must reach /healthz to know the
   // worker is up even in LAN mode (it's a no-secret GET, not a proxy path).
   app.get("/healthz", (_req, res) => res.json({ ok: true }));
-  // Gate BEFORE the body parser: the key lives in headers, so an unauthenticated LAN request is
-  // rejected without ever buffering its (up-to-20mb) body. Healthz above is already answered.
-  app.use(requireAccess(access));
+  // Gate BEFORE the body parser: the key lives in headers, so an unauthenticated remote request is
+  // rejected without ever buffering its (up-to-20mb) body. Healthz above is already answered. `isLocal`
+  // is forwarded so tests can simulate a remote peer (real requests use the socket's remoteAddress).
+  app.use(requireAccess(access, isLocal));
   app.use(express.json({ limit: "20mb" }));
   mountOpenAI(app, router, onMetric);
   mountAnthropic(app, router, onMetric, gatewayRunner);

@@ -392,7 +392,8 @@ export function App({
             r.lanUrl ? `Claude    ${r.lanUrl}/anthropic` : "",
             r.lanUrl ? `Codex     ${r.lanUrl}/openai` : "",
             r.key ? `key       ${r.key}` : "",
-            "send the key as Authorization: Bearer <key> or x-api-key — requests without it are rejected (401)",
+            "remote machines must send the key as Authorization: Bearer <key> or x-api-key — without it → 401",
+            "this machine keeps working over 127.0.0.1 with no key",
           ].filter(Boolean) });
         } else if (a === "localhost" && setAccessMode) {
           const r = await setAccessMode("localhost"); setNet(r); setScreen(null);

@@ -36,7 +36,7 @@ export function NetworkScreen({ info, onAction }: { info: NetworkInfo; onAction:
       {isLan && info.lanUrl && row("LAN URL", info.lanUrl)}
       {isLan && info.lanUrl && <Text><Text color={theme.muted}>{"".padEnd(12)}</Text><Text color={theme.muted}>{`└ Claude: ${info.lanUrl}/anthropic · Codex: ${info.lanUrl}/openai`}</Text></Text>}
       {isLan
-        ? <Text color={theme.muted}>other machines: set base URL to the LAN URL + protocol path above, and send the key as <Text color={theme.output}>Authorization: Bearer …</Text> or <Text color={theme.output}>x-api-key</Text></Text>
+        ? <Text color={theme.muted}>other machines: set base URL to the LAN URL + protocol path above, and send the key as <Text color={theme.output}>Authorization: Bearer …</Text> or <Text color={theme.output}>x-api-key</Text>. This machine stays key-free over <Text color={theme.output}>127.0.0.1</Text>.</Text>
         : <Text color={theme.muted}>localhost is the safe default — only this machine can reach the proxy</Text>}
       <Text> </Text>
       <Select items={items} onSubmit={(v) => onAction(v.value as NetworkAction)} onCancel={() => onAction("back")} />

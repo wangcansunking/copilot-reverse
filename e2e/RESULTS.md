@@ -3,6 +3,19 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-30 (LAN exempts loopback — only remote needs the key)** — Refined the LAN gate: a request
+  is challenged for the key ONLY when it arrives from off-box. Requests over loopback
+  (`127/8`, `::1`, `::ffff:127.x`) are always served unauthenticated, in both modes — so the user's own
+  on-machine Claude/Codex keep working with no key when they flip to LAN; only genuinely remote callers
+  must present it (missing/invalid → 401, no-key-configured → 503 fail-closed). The local-vs-remote
+  decision is TCP-layer only (`req.socket.remoteAddress`), never a spoofable header (`X-Forwarded-For`
+  etc.) — `express` `trust proxy` stays off and the socket address is read directly. New pure
+  `isLoopbackAddr` (handles IPv4-mapped-IPv6, fail-safe on unknown → non-local) with 6 unit cases;
+  `requireAccess` takes an injectable `isLocal` so tests simulate a remote peer. `http-e2e.mjs` now
+  splits the matrix: loopback checks assert local-is-exempt; the full remote key matrix (401/401/
+  same-length-401/200×2/oversized-401/503 + a loopback-still-open contrast) runs over the container's
+  LAN IP in the bind-boundary block. Suite **481 passed**, build clean.
+
 - **2026-06-29 (network access modes)** — New explicit access posture (#25): `localhost` (default,
   loopback only — behavior unchanged, now a named mode) vs `lan` (worker proxy binds `0.0.0.0`, every
   request must carry a key or it's rejected `401` before any upstream call). The supervisor control API

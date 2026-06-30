@@ -37,21 +37,40 @@ function presentedKey(req: { get(name: string): string | undefined }): string | 
   return req.get("x-api-key")?.trim() || null;
 }
 
-// Gate every proxied request. A key is REQUIRED whenever the worker is reachable off-box — either the
-// active mode is `lan`, OR this process is bound to a non-loopback interface (`exposed`). The latter
-// covers the lan→localhost transition: the mode file flips immediately but this socket stays on
-// 0.0.0.0 until the supervisor restarts it, so we keep enforcing the key until a fresh, loopback-bound
-// worker takes over. When neither holds (localhost mode on a loopback socket) we serve unauthenticated,
-// exactly as before access modes existed.
-//   key required:
+// Whether a request originates from this machine's loopback interface. SECURITY: this is decided ONLY
+// from the TCP-layer peer address (`req.socket.remoteAddress`) — NEVER from any header (X-Forwarded-For
+// etc.), which a remote client could forge to impersonate localhost. Express's `trust proxy` is off by
+// default, so `req.ip` would also be the socket address, but we read the socket directly to be explicit
+// and immune to that setting. Covers the forms a loopback peer can present on a dual-stack 0.0.0.0
+// socket: IPv4 `127.0.0.0/8`, IPv6 `::1`, and IPv4-mapped-IPv6 `::ffff:127.x`. An unknown/empty address
+// is treated as NON-local (fail-safe: a request we can't attribute is gated, not exempted).
+export function isLoopbackAddr(addr: string | undefined): boolean {
+  if (!addr) return false;
+  const a = addr.toLowerCase();
+  if (a === "::1") return true;
+  const v4 = a.startsWith("::ffff:") ? a.slice(7) : a; // unwrap IPv4-mapped-IPv6
+  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(v4);
+}
+
+// Gate every proxied request. A key is required when the worker is reachable off-box — `mode === "lan"`
+// OR the socket is `exposed` (bound non-loopback) — AND the request actually came from off-box. Requests
+// arriving over loopback are ALWAYS served unauthenticated: in LAN mode the local client (the user's own
+// Claude/Codex on this machine) keeps working with no key, exactly as in localhost mode; only genuinely
+// remote callers must present the key. The loopback check is purely TCP-layer (see isLoopbackAddr) so it
+// can't be spoofed by a header. The `exposed` term still covers the lan→localhost transition: the mode
+// file flips immediately but this socket stays on 0.0.0.0 until the supervisor restarts it, so a REMOTE
+// caller keeps being gated until a fresh loopback-bound worker takes over.
+//   when a remote request needs a key:
 //     • no key configured  → 503, fail closed (must never be an open proxy; defense-in-depth backstop —
 //                            the UI/store already refuse to enter LAN keyless, so this only fires on a
 //                            hand-edited file or ACCESS_MODE=lan env with no ACCESS_KEY).
 //     • missing/invalid key → 401, rejected BEFORE any upstream call.
 // Mount AFTER /healthz (the supervisor's readiness probe must stay open) and BEFORE the proxy routes.
-export function requireAccess(ctl: AccessControl): RequestHandler {
+// `isLocal` is injectable so tests (which drive over loopback) can simulate a remote peer.
+export function requireAccess(ctl: AccessControl, isLocal: (req: { socket: { remoteAddress?: string } }) => boolean = (req) => isLoopbackAddr(req.socket.remoteAddress)): RequestHandler {
   return (req, res, next) => {
-    if (!ctl.exposed && ctl.mode() !== "lan") return next();
+    const gated = ctl.exposed || ctl.mode() === "lan";
+    if (!gated || isLocal(req)) return next();          // localhost-bound, or a loopback caller → no key
     const configured = ctl.key();
     if (!configured) {
       res.status(503).json({ error: { message: "this proxy is exposed on the network but no access key is configured — refusing to serve (fail-closed). Set a key or switch to localhost mode." } });

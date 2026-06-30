@@ -115,20 +115,25 @@ This black-box path caught two bugs nothing else did: a Codex tool-translation `
 and empty terminal Responses events (`output_*.done` carried no text → Codex rendered nothing).
 
 It also covers the **network access modes** (#25): the worker auth gate reads `network.json` lazily,
-so the harness flips the posture on disk mid-run and asserts over real HTTP — localhost serves
-`/openai/models` with no key; LAN rejects a missing key (401), a wrong key (401), and a **same-length**
-wrong key (401 — exercises the constant-time compare, not just the length check); accepts a valid key
-via both `Authorization: Bearer` and `x-api-key` (200); rejects a keyless **oversized** body with 401
-**not** 413 (proving the gate runs before the body parser); `/healthz` stays open behind the gate; and
-LAN with **no key configured is fail-closed** (503, never an open proxy). The default is restored
-before the golden round-trips.
+so the harness flips the posture on disk mid-run and asserts over real HTTP. The key is enforced **only
+for requests that arrive from off-box** — a request over loopback is never challenged, in either mode.
+So the loopback-driven checks assert the *local* side of the policy: localhost serves with no key, and
+**LAN still serves the local machine with no key** (a wrong key is ignored too; even keyless-LAN keeps
+loopback open — fail-closed is a remote property). The genuinely-remote checks run in the bind-boundary
+block below, over the container's LAN IP: a remote request with a missing key (401), a wrong key (401),
+a **same-length** wrong key (401 — exercises the constant-time compare, not just the length check), a
+valid key via both `Authorization: Bearer` and `x-api-key` (200), a keyless **oversized** body → 401
+**not** 413 (gate before the body parser), and a keyless remote against a keyless-LAN worker → **503**
+fail-closed. `/healthz` stays open behind the gate. The loopback-exemption decision is TCP-layer only
+(`req.socket.remoteAddress`, covering `127/8`, `::1`, and `::ffff:127.x`), never a spoofable header —
+unit-tested in `isLoopbackAddr`.
 
 It also pins the **bind boundary** — the kernel-level reason localhost mode is "you can't even
 connect", not a 401. The harness boots a throwaway worker bound to `127.0.0.1` and raw-TCP-probes it
 on the container's non-loopback IPv4: the connect is **refused** (no socket on that interface — the
 request never reaches the HTTP/auth layer), while loopback stays reachable. It then boots the same
-worker bound to `0.0.0.0` (LAN's bind) and confirms it **is** reachable on that exact LAN address, and
-that a keyless request over it still gets **401**. Same IP, same probe, only the bind host changes →
-open↔refused proves the boundary, not just the config value. (Skipped only if the container has no
-non-loopback IPv4.)
+worker bound to `0.0.0.0` (LAN's bind) and confirms it **is** reachable on that exact LAN address — and
+runs the full remote key matrix over it, plus a contrast check that the very same exposed worker still
+serves **loopback** with no key. Same IP, same probe, only the bind host changes → open↔refused proves
+the boundary, not just the config value. (Skipped only if the container has no non-loopback IPv4.)
 
