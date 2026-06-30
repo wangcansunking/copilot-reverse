@@ -18,4 +18,11 @@ describe("canonical helpers", () => {
   it("joinText returns empty string when there are no text blocks", () => {
     expect(joinText([{ type: "image", dataUrl: "x" }])).toBe("");
   });
+  it("joinText ignores thinking blocks (reasoning is not assistant-visible answer text)", () => {
+    const blocks: ContentBlock[] = [
+      { type: "thinking", text: "let me reason", opaque: "sig" },
+      { type: "text", text: "answer" },
+    ];
+    expect(joinText(blocks)).toBe("answer");
+  });
 });

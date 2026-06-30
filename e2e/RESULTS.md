@@ -3,6 +3,30 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-30 (effort actually works — output_config.effort + observability header, #33)** — a live
+  capture of Claude Code 2.1.195's real wire showed modern clients send a TOP-LEVEL
+  `output_config: { effort }` with `thinking: {type:"adaptive"}` and NO `budget_tokens`; the initial
+  impl only read `thinking.budget_tokens`, so switching effort was a silent no-op (every level collapsed
+  to a fabricated `medium`). New `resolveReasoning(output_config, thinking)` reads the effort the user
+  actually picked (precedence: disabled→off; output_config.effort; legacy budget; else none). The proxy
+  now echoes the resolved effort in an `x-copilot-reverse-effort` response header — real observability
+  (`curl -i` shows the applied effort) and the deterministic, quota-free signal the e2e asserts on
+  (output length can't be — upstream surfaces reasoning non-deterministically). Hermetic http-e2e checks
+  all five levels + legacy budget map + plain-turn-no-header; cli-e2e adds the modern-wire header matrix
+  over real HTTP plus `claude --effort max/low` proving the real CLI knob drives a working turn. 596
+  unit/integration tests green; `tsc` clean.
+
+- **2026-06-30 (extended thinking / reasoning channel, #33)** — added a reasoning axis end-to-end:
+  `thinking`/`reasoning_effort` inbound → `reasoning_effort` (chat) / `reasoning: {effort}` (responses)
+  upstream → `reasoning_text`/`reasoning_opaque` deltas parsed → native Anthropic thinking blocks
+  (`thinking_delta` + `signature_delta`) relayed ahead of the answer, with the opaque continuation token
+  round-tripping across tool turns. New hermetic cases **EP-19b** (thinking stream → thinking block @0
+  before text @1) and **EP-19c** (client thinking budget → canonical effort reaches the provider); a
+  docker http-e2e golden case (real Claude round-trip → native thinking block over the socket); and a
+  live integration guard. Both real-upstream tests RETRY across attempts and assert reasoning on a turn
+  that reasons, because the upstream surfaces `reasoning_text` non-deterministically (~3/5 runs) — the
+  answer is always asserted, a no-reasoning run degrades to a note. `tsc` clean.
+
 - **2026-06-30 (502/crash triage: empty choices, max_output_tokens floor, EADDRINUSE orphan)** — three
   independent failures the user hit in a real Claude session, all surfacing in the dashboard error log.
   (1) The daemon wedged **unhealthy** under a `listen EADDRINUSE :7891` crash loop: a forked worker

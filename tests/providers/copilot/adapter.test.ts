@@ -98,6 +98,93 @@ describe("CopilotAdapter", () => {
     expect(body.stream_options).toEqual({ include_usage: true });
   });
 
+  // --- Reasoning passthrough (#33): the canonical reasoning.effort becomes a top-level
+  // reasoning_effort on the /chat body, and upstream reasoning_text/reasoning_opaque deltas are
+  // surfaced as canonical `thinking` chunks (parallel to text).
+  it("sends reasoning.effort as a top-level reasoning_effort on the /chat body", async () => {
+    let body: any;
+    const f = vi.fn(async (_u: string, init: RequestInit) => { body = JSON.parse(init.body as string); return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }); });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    await a.complete({ ...base, reasoning: { effort: "high" } });
+    expect(body.reasoning_effort).toBe("high");
+  });
+
+  it("omits reasoning_effort when no reasoning is requested", async () => {
+    let body: any;
+    const f = vi.fn(async (_u: string, init: RequestInit) => { body = JSON.parse(init.body as string); return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }); });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    await a.complete(base);
+    expect("reasoning_effort" in body).toBe(false);
+  });
+
+  it("surfaces streamed reasoning_text as canonical thinking chunks (before the answer text)", async () => {
+    const sse =
+      'data: {"choices":[{"delta":{"reasoning_text":"let me "}}]}\n\n' +
+      'data: {"choices":[{"delta":{"reasoning_text":"think"}}]}\n\n' +
+      'data: {"choices":[{"delta":{"content":"answer"}}]}\n\n' +
+      "data: [DONE]\n\n";
+    const f = vi.fn(async () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    const chunks: any[] = [];
+    for await (const c of a.stream({ ...base, stream: true })) chunks.push(c);
+    const thinking = chunks.filter((c) => c.kind === "thinking").map((c) => c.delta).join("");
+    const text = chunks.filter((c) => c.kind === "text").map((c) => c.delta).join("");
+    expect(thinking).toBe("let me think");
+    expect(text).toBe("answer");
+  });
+
+  it("carries reasoning_opaque on the thinking chunk that bears it", async () => {
+    const sse =
+      'data: {"choices":[{"delta":{"reasoning_text":"hmm","reasoning_opaque":"SIG123"}}]}\n\n' +
+      'data: {"choices":[{"delta":{"content":"ok"}}]}\n\n' +
+      "data: [DONE]\n\n";
+    const f = vi.fn(async () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    const chunks: any[] = [];
+    for await (const c of a.stream({ ...base, stream: true })) chunks.push(c);
+    const think = chunks.find((c) => c.kind === "thinking");
+    expect(think).toMatchObject({ delta: "hmm", opaque: "SIG123" });
+  });
+
+  it("echoes a prior assistant thinking block back upstream as reasoning_text + reasoning_opaque", async () => {
+    let body: any;
+    const f = vi.fn(async (_u: string, init: RequestInit) => { body = JSON.parse(init.body as string); return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }); });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    await a.complete({
+      model: "gpt-4o", stream: false, maxTokens: 10,
+      messages: [
+        { role: "user", content: [{ type: "text", text: "go" }] },
+        { role: "assistant", content: [{ type: "thinking", text: "earlier reasoning", opaque: "OPAQUE99" }, { type: "text", text: "answer" }] },
+        { role: "user", content: [{ type: "text", text: "continue" }] },
+      ],
+    });
+    const asst = body.messages.find((m: any) => m.role === "assistant");
+    expect(asst.reasoning_text).toBe("earlier reasoning");
+    expect(asst.reasoning_opaque).toBe("OPAQUE99");
+    expect(asst.content).toBe("answer");
+  });
+
+  it("with several thinking blocks, echoes the LAST opaque-bearing one (Copilot reasoning is singular)", async () => {
+    let body: any;
+    const f = vi.fn(async (_u: string, init: RequestInit) => { body = JSON.parse(init.body as string); return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }); });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    await a.complete({
+      model: "gpt-4o", stream: false, maxTokens: 10,
+      messages: [
+        // a redacted_thinking (empty text) precedes the real reasoning — must NOT echo the empty one
+        { role: "assistant", content: [
+          { type: "thinking", text: "", opaque: "REDACTED_FIRST" },
+          { type: "thinking", text: "real reasoning", opaque: "REAL_LAST" },
+          { type: "text", text: "answer" },
+        ] },
+        { role: "user", content: [{ type: "text", text: "continue" }] },
+      ],
+    });
+    const asst = body.messages.find((m: any) => m.role === "assistant" && m.content === "answer");
+    expect(asst.reasoning_text).toBe("real reasoning");
+    expect(asst.reasoning_opaque).toBe("REAL_LAST"); // the continuation token closest to the answer
+  });
+
   // --- Inline tool-call recovery: some models emit a tool call as TEXT XML instead of native
   // tool_calls. The adapter must recover it into structured tool chunks when the request has tools.
   // Tags are built via concatenation so no literal close-tag appears in this source file.

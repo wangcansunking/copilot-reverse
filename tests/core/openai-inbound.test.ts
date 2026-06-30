@@ -67,4 +67,17 @@ describe("openai inbound", () => {
       { type: "image", dataUrl: "data:image/png;base64,ZZZ" },
     ]);
   });
+
+  it("carries reasoning_effort through to canonical reasoning", () => {
+    const c = openaiRequestToCanonical({
+      model: "gpt-5.5", messages: [{ role: "user", content: "think hard" }],
+      reasoning_effort: "high",
+    } as any);
+    expect(c.reasoning).toEqual({ effort: "high" });
+  });
+
+  it("leaves reasoning undefined when no reasoning_effort is sent", () => {
+    const c = openaiRequestToCanonical({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] });
+    expect(c.reasoning).toBeUndefined();
+  });
 });

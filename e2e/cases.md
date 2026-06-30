@@ -28,6 +28,8 @@ provider so no live network/token is needed. Spec: [`copilot-reverse.e2e.test.ts
 | EP-17 | Anthropic image block | round-trips through the proxy as image content (vision) |
 | EP-18 | mixed text+tool stream | text@0, tool@1, `stop_reason=tool_use` |
 | EP-19 | non-stream tool_use response | maps to Anthropic `tool_use` content |
+| EP-19b | extended-thinking stream | thinking block @0 (`thinking_delta`+`signature_delta`) before text @1 |
+| EP-19c | client thinking budget | `thinking.budget_tokens` → canonical `reasoning.effort` reaches the provider |
 | EP-20 | OpenAI assistant tool_call + tool result | both reach the provider as canonical blocks |
 | EP-21 | failed request | error message persists in `request_log`, queryable via `/api/requests` |
 | EP-22 | control API | exposes status, doctor, requests endpoints |
@@ -97,6 +99,9 @@ not part of `npm test`. It writes a markdown report after each run. Checks:
 | model discovery | `/anthropic/v1/models` | picker gets dashed `claude-opus-4-8[1m]`, no dotted ids leak |
 | canonical opus | `/anthropic/v1/messages` | `claude-opus-4-8[1m]` resolves to Copilot opus + answers `OPUS_OK` |
 | setup default model | `claudeCopilotReverseEnv` | the default ANTHROPIC_MODEL is dashed `claude-opus-4-8[1m]` + answers `DEFAULT_OK` |
+| effort echoed (modern wire) | `/anthropic/v1/messages` | `output_config.effort` low/medium/high/xhigh/max each echoes in `x-copilot-reverse-effort` |
+| effort legacy budget | `/anthropic/v1/messages` | legacy `thinking.budget_tokens=16000` still maps to `high` |
+| `claude --effort max/low` | real CLI effort knob | the turn still answers `6*7`→`42` at both levels (high effort doesn't break a turn) |
 
 ## HTTP edge-case Docker e2e (hermetic — no real Copilot)
 

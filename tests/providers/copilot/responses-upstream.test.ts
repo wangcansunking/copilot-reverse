@@ -44,6 +44,21 @@ describe("canonicalToResponsesBody", () => {
     expect(body.max_output_tokens).toBeUndefined();
   });
 
+  it("sets reasoning.effort on the responses body when canonical reasoning is present", () => {
+    const body = canonicalToResponsesBody({
+      model: "gpt-5.5", stream: false, messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      reasoning: { effort: "high" },
+    });
+    expect(body.reasoning).toEqual({ effort: "high" });
+  });
+
+  it("omits reasoning when canonical has none", () => {
+    const body = canonicalToResponsesBody({
+      model: "gpt-5.5", stream: false, messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+    });
+    expect(body.reasoning).toBeUndefined();
+  });
+
   it("maps assistant tool_use to function_call and tool_result to function_call_output", () => {
     const body = canonicalToResponsesBody({
       model: "gpt-5.5", stream: false,

@@ -35,6 +35,17 @@ function toWireMessages(messages: CanonicalMessage[]) {
     }
     const msg: any = { role: m.role, content: msgContent };
     if (toolUses.length) msg.tool_calls = toolUses.map((t) => ({ id: t.id, type: "function", function: { name: t.name, arguments: JSON.stringify(t.input) } }));
+    // Echo a prior assistant turn's reasoning back upstream so the model keeps its chain-of-thought
+    // context across tool calls — Copilot reads back reasoning_text + the signed reasoning_opaque token.
+    // Copilot's wire shape is SINGULAR (one reasoning per message), so when a turn carried several
+    // thinking blocks we echo the LAST one bearing an opaque token — the reasoning closest to the answer,
+    // i.e. the continuation context the model actually wants (and never a redacted block's empty text).
+    const thinkingBlocks = m.content.filter((b): b is Extract<ContentBlock, { type: "thinking" }> => b.type === "thinking");
+    const thinking = [...thinkingBlocks].reverse().find((t) => t.opaque) ?? thinkingBlocks[0];
+    if (thinking) {
+      if (thinking.text) msg.reasoning_text = thinking.text;
+      if (thinking.opaque) msg.reasoning_opaque = thinking.opaque;
+    }
     out.push(msg);
   }
   return out;
@@ -44,6 +55,9 @@ function buildBody(req: CanonicalRequest) {
   const body: any = { model: req.model, messages: toWireMessages(req.messages), stream: req.stream, temperature: req.temperature, max_tokens: req.maxTokens };
   if (req.stream) body.stream_options = { include_usage: true }; // ask Copilot for usage in the final frame
   if (req.tools?.length) body.tools = req.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
+  // Extended thinking: Copilot /chat takes a top-level reasoning_effort enum. Only set it when asked,
+  // so a non-reasoning turn keeps the model's default behavior.
+  if (req.reasoning?.effort) body.reasoning_effort = req.reasoning.effort;
   return body;
 }
 function headers(token: string) {
@@ -87,6 +101,11 @@ export class CopilotAdapter implements ProviderAdapter {
     // 200 is a valid empty completion: report it as such (empty content, stop) instead of crashing.
     const choice = data.choices?.[0];
     const message = choice?.message ?? {};
+    // Non-stream reasoning: a reasoning_text (+ reasoning_opaque) on the message becomes a leading
+    // thinking block, mirroring Anthropic's ordering where thinking precedes the answer text.
+    if (message.reasoning_text || message.reasoning_opaque) {
+      content.push({ type: "thinking", text: message.reasoning_text ?? "", opaque: message.reasoning_opaque });
+    }
     // Recover inline-XML tool calls in non-stream replies too (same reason as the stream path).
     let xmlTool = false;
     if (message.content) {
@@ -180,6 +199,12 @@ export class CopilotAdapter implements ProviderAdapter {
         if (choice.finish_reason) finishReason = mapFinish(choice.finish_reason);
         const delta = choice.delta;
         if (!delta) continue;
+        // Extended thinking: Copilot streams reasoning as `reasoning_text` deltas (+ a `reasoning_opaque`
+        // continuation token) ahead of the answer `content`. Surface it as a canonical thinking chunk so
+        // the relay can render it as an Anthropic thinking block. Emit before content to preserve order.
+        if (delta.reasoning_text || delta.reasoning_opaque) {
+          yield { kind: "thinking", delta: delta.reasoning_text ?? "", opaque: delta.reasoning_opaque, done: false };
+        }
         if (delta.content) {
           if (extractor) { for (const ch of toChunks(extractor.feed(delta.content))) yield ch; }
           else yield { kind: "text", delta: delta.content, done: false };

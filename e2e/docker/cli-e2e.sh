@@ -118,6 +118,45 @@ check "setup default model is dashed canonical [1m]" '[ "$DEF" = "claude-opus-4-
 DEFOUT=$(ANTHROPIC_MODEL="$DEF" claude -p "Reply with exactly: DEFAULT_OK" --output-format json 2>/dev/null | jq -r '.result // empty')
 check "setup default model answers via Copilot" 'echo "$DEFOUT" | grep -q "DEFAULT_OK"' "claude ($DEF) replied: \`${DEFOUT}\`"
 
+# --- 10) reasoning EFFORT is honored end-to-end (#33) --------------------------------------------
+# Two halves of reality: (a) the proxy correctly reads the effort the user picks and reports it back,
+# and (b) the real `claude --effort` CLI knob drives a working turn at every level.
+#
+# (a) Assertable signal over real HTTP: a request carrying the EXACT modern Claude Code wire shape
+# (top-level output_config.effort + thinking:{type:adaptive}, NOT budget_tokens) must come back with
+# the x-copilot-reverse-effort response header echoing the resolved effort. This is the deterministic
+# proof that switching effort actually changes what the proxy forwards — output length can't be
+# asserted (the upstream surfaces reasoning non-deterministically), but the resolved effort can.
+note "effort: proxy reads + echoes the modern output_config.effort wire (real HTTP)"
+EFF_FAIL=0
+for LVL in low medium high xhigh max; do
+  HDR=$(curl -s -D - -o /dev/null -X POST "http://127.0.0.1:$PORT/anthropic/v1/messages" \
+    -H "content-type: application/json" \
+    -d "{\"model\":\"claude-opus-4-8[1m]\",\"max_tokens\":16,\"output_config\":{\"effort\":\"$LVL\"},\"thinking\":{\"type\":\"adaptive\"},\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
+    2>/dev/null | tr -d '\r' | grep -i "x-copilot-reverse-effort:" | awk '{print $2}')
+  echo "  effort=$LVL -> header=$HDR"
+  [ "$HDR" = "$LVL" ] || EFF_FAIL=1
+done
+check "every effort level is resolved + echoed in x-copilot-reverse-effort" '[ "$EFF_FAIL" = 0 ]' "low/medium/high/xhigh/max each round-trip through output_config.effort"
+
+# A legacy client that still sends thinking.budget_tokens must also map to a sane effort (back-compat).
+note "effort: legacy thinking.budget_tokens still maps (back-compat)"
+LEG=$(curl -s -D - -o /dev/null -X POST "http://127.0.0.1:$PORT/anthropic/v1/messages" \
+  -H "content-type: application/json" \
+  -d "{\"model\":\"claude-opus-4-8[1m]\",\"max_tokens\":16,\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":16000},\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
+  2>/dev/null | tr -d '\r' | grep -i "x-copilot-reverse-effort:" | awk '{print $2}')
+check "legacy budget_tokens=16000 maps to effort=high" '[ "$LEG" = "high" ]' "legacy thinking budget -> \`${LEG}\`"
+
+# (b) The real CLI knob: `claude --effort max` must still produce a correct answer (high effort must
+# not break a turn). We can't see its output length deterministically, so we assert the turn succeeds.
+note "claude --effort max -> still answers correctly (real CLI knob)"
+EFFMAX=$(claude --effort max -p "What is 6 times 7? Reply with just the number." --output-format json 2>/dev/null | jq -r '.result // empty')
+check "claude --effort max returns the right answer" 'echo "$EFFMAX" | grep -q "42"' "claude (--effort max) replied: \`${EFFMAX}\`"
+
+note "claude --effort low -> still answers correctly (real CLI knob)"
+EFFLOW=$(claude --effort low -p "What is 6 times 7? Reply with just the number." --output-format json 2>/dev/null | jq -r '.result // empty')
+check "claude --effort low returns the right answer" 'echo "$EFFLOW" | grep -q "42"' "claude (--effort low) replied: \`${EFFLOW}\`"
+
 # --- teardown -----------------------------------------------------------------------------------
 kill "$WPID" 2>/dev/null
 
