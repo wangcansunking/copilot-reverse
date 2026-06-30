@@ -89,6 +89,28 @@ describe("anthropic inbound", () => {
     expect(c.reasoning).toEqual({ effort: "high" }); // 16k budget -> high bucket
   });
 
+  it("reads effort from output_config.effort (the real Claude Code 2.1.x / Opus 4.7-4.8 wire)", () => {
+    // Captured live: modern clients send a top-level output_config.effort + thinking:{type:adaptive},
+    // no budget_tokens. The user's chosen effort must reach canonical, not a fabricated medium.
+    for (const eff of ["low", "high", "xhigh", "max"]) {
+      const c = anthropicRequestToCanonical({
+        model: "claude-opus-4-8", max_tokens: 1000,
+        output_config: { effort: eff }, thinking: { type: "adaptive" },
+        messages: [{ role: "user", content: "hi" }],
+      } as any);
+      expect(c.reasoning).toEqual({ effort: eff });
+    }
+  });
+
+  it("thinking:{type:disabled} turns reasoning off even when output_config.effort is present", () => {
+    const c = anthropicRequestToCanonical({
+      model: "claude-opus-4-8", max_tokens: 1000,
+      output_config: { effort: "high" }, thinking: { type: "disabled" },
+      messages: [{ role: "user", content: "hi" }],
+    } as any);
+    expect(c.reasoning).toBeUndefined();
+  });
+
   it("leaves reasoning undefined when thinking is disabled or absent", () => {
     const off = anthropicRequestToCanonical({
       model: "claude-opus-4-8", max_tokens: 100, messages: [{ role: "user", content: "hi" }],

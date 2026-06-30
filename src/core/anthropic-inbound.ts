@@ -1,6 +1,6 @@
 import type { CanonicalRequest, CanonicalResponse, CanonicalMessage, ContentBlock } from "./canonical.js";
 import { GATEWAY_TOOL_DEFS, isGatewayTool } from "./server-tools.js";
-import { reasoningFromThinking } from "./reasoning.js";
+import { resolveReasoning } from "./reasoning.js";
 
 interface AnthropicImageSource { type: "base64" | "url"; media_type?: string; data?: string; url?: string }
 interface AnthropicBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; source?: AnthropicImageSource; thinking?: string; signature?: string }
@@ -8,13 +8,16 @@ interface AnthropicMsg { role: "user" | "assistant"; content: string | Anthropic
 // Custom tools carry an input_schema. Server-side tools (web_search, web_fetch, bash, computer, …)
 // instead carry a dated `type` (e.g. "web_search_20250305") and a bare `name`, with no schema.
 interface AnthropicTool { type?: string; name: string; description?: string; input_schema?: Record<string, unknown> }
-// `thinking` gates extended reasoning: { type: "enabled"|"disabled", budget_tokens? }. We map the
-// token budget to the nearest canonical effort (see reasoningFromThinking).
+// `thinking` gates extended reasoning: { type: "enabled"|"disabled"|"adaptive", budget_tokens? }.
+// Legacy clients sent a budget; modern ones (Opus 4.7/4.8, Claude Code 2.1.x) send `adaptive` with the
+// effort in a separate top-level `output_config.effort`. See resolveReasoning for precedence.
 interface AnthropicThinking { type?: string; budget_tokens?: number }
+interface AnthropicOutputConfig { effort?: string }
 interface AnthropicRequest {
   model: string; max_tokens: number; stream?: boolean; temperature?: number;
   system?: string | AnthropicBlock[]; tools?: AnthropicTool[]; messages: AnthropicMsg[];
   thinking?: AnthropicThinking;
+  output_config?: AnthropicOutputConfig;
 }
 
 // The Anthropic `system` field may be a plain string or an array of text blocks (the Claude Code
@@ -62,7 +65,7 @@ export function anthropicRequestToCanonical(req: AnthropicRequest): CanonicalReq
     model: req.model, stream: Boolean(req.stream), temperature: req.temperature, maxTokens: req.max_tokens,
     tools: mapTools(req.tools),
     messages,
-    reasoning: reasoningFromThinking(req.thinking),
+    reasoning: resolveReasoning(req.output_config, req.thinking),
   };
 }
 
