@@ -158,3 +158,15 @@ asserts the orphaned worker exits and **releases the port** (raw-TCP probe flips
 rather than squatting it and starving the next worker's `listen` on the same port. A companion check
 asserts the daemon is still `ready` (never flipped to `unhealthy`) after the rapid `/api/restart`
 churn, covering the manual-restart kill/respawn race fixed in `restartManually()`.
+
+It also pins **profile isolation** (`COPILOT_REVERSE_PROFILE=dev`). The harness boots a SECOND
+supervisor under the `dev` profile alongside the prod stack and asserts it lands on the dev ports
+**7990/7991** — never prod's 7890/7891 — which proves the env var propagates through the in-process
+supervisor down to the forked worker (the worker's `WORKER_PORT` is derived from the profile, not the
+shell). It then reads the freshly-seeded `~/.copilot-reverse-dev` off disk and confirms the one-time
+seed-from-prod did exactly the right copy: the GitHub **token carried over** (so a dev instance starts
+signed-in, no re-login), the access **key carried but the LAN mode reset to localhost** (a dev box must
+not boot bound to `0.0.0.0`), while `clients.json` was **deliberately not copied** (it records a client
+pointed at the *prod* ports) and the prod **db was not copied** (dev gets its own). The prod stack on
+7890 stays `ready` throughout — the two coexist, which is the whole point.
+

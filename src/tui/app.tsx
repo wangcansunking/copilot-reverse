@@ -74,6 +74,9 @@ const fmtTokens = (n: number): string => (n >= 1000 ? `${(n / 1000).toFixed(1)}k
 export interface AppProps {
   registry: Registry;
   title: string;
+  // Active profile name (COPILOT_REVERSE_PROFILE). Omitted/"default" hides the marker; any other value
+  // (e.g. "dev") renders a chip in the header so an isolated instance is never mistaken for prod.
+  profile?: string;
   workerState?: WorkerState;
   initialModel?: string;
   statusSource?: () => Promise<StatusResponse>;
@@ -218,7 +221,7 @@ function ClientBadge({ name, status }: { name: string; status: { user: boolean; 
 }
 
 export function App({
-  registry, title, workerState = "starting", initialModel = "—",
+  registry, title, profile, workerState = "starting", initialModel = "—",
   statusSource, metricsSource, readStatus, modelLimits, onChat,
   loadModels, setup, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, networkInfo, setAccessMode, rotateKey, clientModels, startupStatus, githubStatus, changeBanner, onChangeSeen,
 }: AppProps) {
@@ -471,7 +474,12 @@ export function App({
   return (
     <Box flexDirection="column">
       <Box justifyContent="space-between" paddingX={1}>
-        <Text color={theme.accent} bold>✳ {title}</Text>
+        <Box>
+          <Text color={theme.accent} bold>✳ {title}</Text>
+          {profile && profile !== "default" && (
+            <Text color="yellow"> [{profile}]</Text>
+          )}
+        </Box>
         <Text color={theme.muted}>worker: <Text color={stateColor[state]}>{state}</Text></Text>
       </Box>
 
