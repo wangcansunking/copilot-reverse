@@ -43,6 +43,10 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
     const canon = anthropicRequestToCanonical(req.body);
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
+    // Echo the resolved reasoning effort back as a response header — real observability (a user can
+    // `curl -i` and see exactly what effort the proxy applied for this turn) and the assertable signal
+    // the black-box CLI e2e checks. Only set when reasoning is actually in play.
+    if (canon.reasoning?.effort) res.setHeader("x-copilot-reverse-effort", canon.reasoning.effort);
     const metric = (status: number, opts: { error?: string; tokensIn?: number; tokensOut?: number } = {}) => onMetric({ endpoint: "/anthropic/v1/messages", model: canon.model, status, latencyMs: Date.now() - start, tokensIn: opts.tokensIn, tokensOut: opts.tokensOut, error: opts.error });
     try {
       if (canon.stream) {

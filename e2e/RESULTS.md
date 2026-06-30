@@ -3,6 +3,19 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-30 (effort actually works — output_config.effort + observability header, #33)** — a live
+  capture of Claude Code 2.1.195's real wire showed modern clients send a TOP-LEVEL
+  `output_config: { effort }` with `thinking: {type:"adaptive"}` and NO `budget_tokens`; the initial
+  impl only read `thinking.budget_tokens`, so switching effort was a silent no-op (every level collapsed
+  to a fabricated `medium`). New `resolveReasoning(output_config, thinking)` reads the effort the user
+  actually picked (precedence: disabled→off; output_config.effort; legacy budget; else none). The proxy
+  now echoes the resolved effort in an `x-copilot-reverse-effort` response header — real observability
+  (`curl -i` shows the applied effort) and the deterministic, quota-free signal the e2e asserts on
+  (output length can't be — upstream surfaces reasoning non-deterministically). Hermetic http-e2e checks
+  all five levels + legacy budget map + plain-turn-no-header; cli-e2e adds the modern-wire header matrix
+  over real HTTP plus `claude --effort max/low` proving the real CLI knob drives a working turn. 596
+  unit/integration tests green; `tsc` clean.
+
 - **2026-06-30 (extended thinking / reasoning channel, #33)** — added a reasoning axis end-to-end:
   `thinking`/`reasoning_effort` inbound → `reasoning_effort` (chat) / `reasoning: {effort}` (responses)
   upstream → `reasoning_text`/`reasoning_opaque` deltas parsed → native Anthropic thinking blocks

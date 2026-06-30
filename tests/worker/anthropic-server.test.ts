@@ -345,6 +345,22 @@ describe("worker Anthropic endpoint — extended thinking (#33)", () => {
     expect(res.body.content[0]).toMatchObject({ type: "thinking", thinking: "let me reason" });
     expect(res.body.content[1]).toMatchObject({ type: "text", text: "the answer" });
   });
+
+  it("echoes the resolved effort in the x-copilot-reverse-effort response header (observability + e2e signal)", async () => {
+    // The header reflects the effort the proxy actually applied — what a `curl -i` (or the CLI e2e)
+    // can read back. Driven by the REAL wire shape: output_config.effort.
+    for (const eff of ["low", "high", "max", "xhigh"]) {
+      const res = await request(app(thinkingProvider)).post("/anthropic/v1/messages")
+        .send({ model: "claude-opus-4-8", max_tokens: 50, output_config: { effort: eff }, thinking: { type: "adaptive" }, messages: [{ role: "user", content: "hi" }] });
+      expect(res.headers["x-copilot-reverse-effort"]).toBe(eff);
+    }
+  });
+
+  it("omits the effort header when no reasoning is requested (plain turn unaffected)", async () => {
+    const res = await request(app(thinkingProvider)).post("/anthropic/v1/messages")
+      .send({ model: "claude-opus-4-8", max_tokens: 50, messages: [{ role: "user", content: "hi" }] });
+    expect(res.headers["x-copilot-reverse-effort"]).toBeUndefined();
+  });
 });
 
 describe("worker Anthropic endpoint — gateway tool loop (web_search/web_fetch)", () => {

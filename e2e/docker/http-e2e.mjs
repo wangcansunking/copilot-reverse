@@ -107,6 +107,19 @@ async function main() {
     const ct = await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }));
     check("count_tokens input_tokens>0", JSON.parse(ct.t).input_tokens > 0, ct.t);
 
+    // Reasoning effort (#33) is resolved and echoed in the x-copilot-reverse-effort response header
+    // BEFORE any upstream call, so a dummy token still proves the resolution. Drives the REAL modern
+    // Claude Code wire shape (top-level output_config.effort + thinking:{type:adaptive}, NOT
+    // budget_tokens) — the regression that made switching effort silently no-op. Legacy budget_tokens
+    // must still map too. The header is the deterministic, quota-free signal that effort took effect.
+    const effHeader = async (body) => (await fetch(wrkUrl("/anthropic/v1/messages"), { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })).headers.get("x-copilot-reverse-effort");
+    for (const eff of ["low", "high", "xhigh", "max"]) {
+      const got = await effHeader({ model: "gpt-4o", max_tokens: 16, output_config: { effort: eff }, thinking: { type: "adaptive" }, messages: [{ role: "user", content: "hi" }] });
+      check(`effort '${eff}' resolved + echoed (modern output_config wire)`, got === eff, `header=${got}`);
+    }
+    check("legacy thinking.budget_tokens=16000 maps to effort high", (await effHeader({ model: "gpt-4o", max_tokens: 16, thinking: { type: "enabled", budget_tokens: 16000 }, messages: [{ role: "user", content: "hi" }] })) === "high");
+    check("a plain turn sets NO effort header (reasoning off by default)", (await effHeader({ model: "gpt-4o", max_tokens: 16, messages: [{ role: "user", content: "hi" }] })) === null);
+
     log("\n[supervisor] control lifecycle");
     check("status workerState=ready", (await jget(supUrl("/api/status"))).j?.workerState === "ready");
     const dashHtml = await (await fetch(supUrl("/"))).text();
