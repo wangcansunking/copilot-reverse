@@ -1,7 +1,10 @@
 # copilot-reverse
 
+> ### One command. Native experience.
+> **一行命令，原生体验。**
+
 **Use the GitHub Copilot subscription you already pay for as a local Claude Code / Codex backend.**
-No new API keys. No per-token bills. One terminal app.
+No new API keys. No per-token bills. One terminal app — and Claude Code feels **exactly** like the real thing.
 
 ```
   ┌─────────────┐        ┌───────────────────┐        ┌─────────────┐
@@ -81,6 +84,39 @@ Prefer commands? Type `/` to see them all. The essentials:
 health, request volume, and (most useful) recent **errors with their real messages**:
 
 ![copilot-reverse dashboard](images/dashboard.png)
+
+---
+
+## Native experience — it really *is* Claude Code
+
+The whole point: through copilot-reverse, Claude Code (and Codex) behave like a direct connection to
+the real thing. We translate the full protocol both ways and pass through the features that matter — so
+you don't trade fidelity for a free backend.
+
+- **🧠 Extended thinking, rendered natively.** Ask a hard question and Claude's reasoning streams into
+  the same collapsible thinking panel you'd see on a direct API connection — a real
+  `thinking` block (with its signed continuation token) ahead of the answer, frame-for-frame the
+  Anthropic wire shape. The reasoning context is preserved across tool calls, just like native.
+- **🎚 Reasoning effort that actually works.** `/effort low|medium|high|xhigh|max`, the
+  `think` / `think harder` / `ultrathink` keywords, `CLAUDE_EFFORT` — the effort you pick is read from
+  the real `output_config.effort` wire and forwarded upstream, so dialing reasoning up or down genuinely
+  changes how hard the model thinks. (`curl -i` and you'll see the applied effort echoed back in an
+  `x-copilot-reverse-effort` header.)
+- **🪟 True 1M-context models.** 1M-window models show up in Claude Code's native picker with the right
+  badge, and copilot-reverse writes the correct context-window hint so the client sizes its context bar
+  and auto-compaction to the *real* window — no more "context 100%" at 15%.
+- **🛠 Tool use, vision, web search — both directions.** Function/tool calls translate faithfully each
+  way (even models that emit tool calls as inline XML are recovered), images round-trip, and
+  `web_search` runs server-side through the gateway and comes back as a grounded answer — no tool leaks
+  to the client.
+- **📊 Accurate usage.** Real prompt/completion token counts, with cached tokens split out, so Claude
+  Code's context bar and cost reflect what actually happened.
+- **🛡 It never freezes.** If a model degenerates (loops on one token, never stops), the proxy cuts the
+  stream cleanly as `max_tokens` instead of hanging your session — native Claude self-stops, and so does
+  this.
+
+> Stability and accuracy are the north star: using Claude through the proxy must feel **exactly** like
+> native Claude. Every feature above is covered by a live, real-Copilot end-to-end test.
 
 ---
 
@@ -180,8 +216,8 @@ of your config untouched.
 - **Your data stays local.** The app proxies between your editor and Copilot on `127.0.0.1`. Your
   GitHub token lives only in `~/.copilot-reverse/creds.json` on your own disk.
 - **It heals itself.** If the proxy crashes, the supervisor restarts it with backoff and records why.
-- **It never freezes.** If a model degenerates (loops on one token, never stops), the proxy cuts the
-  stream cleanly as `max_tokens` and tags it — `/report` then files a prefilled issue so it's easy to flag.
+- **A cut-short stream is flagged, not hidden.** When the runaway guard ends a degenerate stream early,
+  it's tagged in `/logs` and `/report` files a prefilled issue — so the rare bad turn is easy to surface.
 - **Tunable.** `~/.copilot-reverse` config covers ports, restart backoff, and the GitHub-token
   heartbeat interval; defaults are sensible, override only if needed.
 - **Unofficial endpoints.** This uses community-documented Copilot endpoints with *your own*
