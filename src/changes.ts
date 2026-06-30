@@ -2,6 +2,14 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.13.0",
+    "date": "2026-06-30",
+    "summary": "feat(reasoning): extended thinking + reasoning-effort passthrough. A `thinking`-enabled Anthropic request (or an OpenAI `reasoning_effort`) now drives the model's reasoning, and the chain-of-thought streams back as a native Anthropic thinking block (thinking_delta + signature_delta) ahead of the answer — so Claude Code renders its thinking panel through the proxy. The signed continuation token (reasoning_opaque) round-trips across tool-call turns to preserve reasoning context. Effort is also forwarded on the /responses path for gpt-5 models. Verified end-to-end against live Copilot.",
+    "summaries": [
+      "feat(reasoning): extended thinking + reasoning-effort passthrough. A `thinking`-enabled Anthropic request (or an OpenAI `reasoning_effort`) now drives the model's reasoning, and the chain-of-thought streams back as a native Anthropic thinking block (thinking_delta + signature_delta) ahead of the answer — so Claude Code renders its thinking panel through the proxy. The signed continuation token (reasoning_opaque) round-trips across tool-call turns to preserve reasoning context. Effort is also forwarded on the /responses path for gpt-5 models. Verified end-to-end against live Copilot."
+    ]
+  },
+  {
     "version": "0.12.0",
     "date": "2026-06-30",
     "summary": "feat(tui): LAN switch now shows paste-ready remote client config (Claude + Codex)",
@@ -83,14 +91,6 @@ export const APP_CHANGES: ChangeEntry[] = [
     "summary": "feat(tui): add a `/changes` command listing the 10 most recent releases (version, date, summary) with a link to the full CHANGELOG, and refocus the startup \"what's new\" banner on important messages — it now points to `/changes` instead of advertising a bug fix, and still self-suppresses after 3 launches.",
     "summaries": [
       "feat(tui): add a `/changes` command listing the 10 most recent releases (version, date, summary) with a link to the full CHANGELOG, and refocus the startup \"what's new\" banner on important messages — it now points to `/changes` instead of advertising a bug fix, and still self-suppresses after 3 launches."
-    ]
-  },
-  {
-    "version": "0.5.5",
-    "date": "2026-06-29",
-    "summary": "ci: gate PRs on a changeset. A pull request with no file in `.changes/` now fails the `changeset` check, so merges can't silently skip the release (the v0.5.3 freeze). Docs/test-only PRs opt out with a `no-changeset` label.",
-    "summaries": [
-      "ci: gate PRs on a changeset. A pull request with no file in `.changes/` now fails the `changeset` check, so merges can't silently skip the release (the v0.5.3 freeze). Docs/test-only PRs opt out with a `no-changeset` label."
     ]
   }
 ];
