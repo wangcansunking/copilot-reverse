@@ -6,6 +6,10 @@ coverage
 .playwright-mcp
 .claude
 
+# Generated test report (npm run test:report) — regenerated on demand, never committed.
+test-results.json
+test-report.html
+
 # Never commit credentials or e2e run artifacts (the real token/WebIQ key are mounted at runtime).
 creds.json
 webiq.json

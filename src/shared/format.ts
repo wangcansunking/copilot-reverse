@@ -24,3 +24,14 @@ export function formatModelList(ids: string[], limits?: Record<string, number>):
     return `- ${id}${w ? ` (${w})` : ""}`;
   }).join("\n");
 }
+
+// Flatten an arbitrary string to a single contained line for display in a bordered TUI card.
+// Upstream errors can be whole HTML pages (a Copilot 502 returns one) whose embedded newlines,
+// rendered inside one Ink <Text>, shatter the card border. Collapse every whitespace run — newlines,
+// CRs, tabs included — to a single space, trim, then truncate with an ellipsis so one nasty error
+// can't blow up the layout. `max` counts the ellipsis (output length is always <= max).
+export function oneLine(s: string | undefined, max = 200): string {
+  const flat = (s ?? "").replace(/\s+/g, " ").trim();
+  return flat.length > max ? flat.slice(0, max - 1) + "…" : flat;
+}
+

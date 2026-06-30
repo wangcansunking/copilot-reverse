@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
-import { loadingVerb } from "../shared/format.js";
+import { loadingVerb, oneLine } from "../shared/format.js";
 import { Repl, type CommandHint } from "./repl.js";
 import { SetupWizard, type SetupClient } from "./setup/wizard.js";
 import { ModelScreen } from "./screens/model.js";
@@ -9,11 +9,11 @@ import { WebIqKeyScreen } from "./screens/webiq-key.js";
 import { NetworkScreen, type NetworkInfo, type NetworkAction } from "./screens/network.js";
 import { summarizeStatus, githubLoginState, type StatusSummary, type GithubLoginState } from "./status-summary.js";
 import type { Scope, ApplyResult } from "./setup/apply.js";
-import type { ClientStatus } from "./setup/status.js";
+import type { ClientStatus, ScopeStatus } from "./setup/status.js";
 import { theme } from "./theme.js";
 import type { Registry } from "./slash/registry.js";
-import { aggregate, recentErrors, type Aggregate } from "./panels/metrics-agg.js";
-import type { WorkerState, StatusResponse, MetricSample } from "../shared/control-types.js";
+import { withCost, fmtTokens as k, fmtCost as usd, type Aggregate } from "./panels/metrics-agg.js";
+import type { WorkerState, StatusResponse, MetricsResponse } from "../shared/control-types.js";
 import type { WebSearchBackend } from "../shared/webiq-key.js";
 
 type Entry =
@@ -21,7 +21,7 @@ type Entry =
   | { type: "assistant"; text: string; streaming?: boolean; startedAt?: number }
   | { type: "system"; text: string }
   | { type: "card"; title: string; tone: "info" | "ok" | "error"; lines: string[] }
-  | { type: "metrics"; agg: Aggregate; errors: string[] }
+  | { type: "metrics"; agg: Aggregate; day: Aggregate; errors: string[] }
   | { type: "help"; commands: CommandHint[] };
 
 type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | { kind: "webiq-key" } | { kind: "network" } | null;
@@ -32,6 +32,16 @@ const stateColor: Record<WorkerState, string> = {
 
 const EMPTY_STATUS: ClientStatus = { claude: { user: false, project: false }, codex: { user: false, project: false } };
 const SPINNER = ["✶", "✸", "✹", "✺", "✹", "✷"];
+
+// The 2s status poll re-reads the config files and would call setStatus with a FRESH object every tick.
+// A new reference defeats React's bail-out, so the whole frame re-renders every 2s — and when scrollback
+// (e.g. a tall /metrics card) overflows the terminal, Ink repaints with a full clear, which reads as
+// flicker. Compare by value so a stable config produces zero re-renders: the poll only repaints on a real
+// change (a config file was edited), never on an idle tick.
+const sameScope = (a: ScopeStatus, b: ScopeStatus): boolean =>
+  a.user === b.user && a.project === b.project && a.userModel === b.userModel && a.projectModel === b.projectModel;
+export const sameStatus = (a: ClientStatus, b: ClientStatus): boolean =>
+  sameScope(a.claude, b.claude) && sameScope(a.codex, b.codex);
 
 // Startup overview card. GitHub shows a login STATE (no real token expiry exists). Web search shows
 // the resolved backend: "via WebIQ", "via Copilot (native)", or "unavailable — run /webiq".
@@ -66,7 +76,7 @@ export interface AppProps {
   workerState?: WorkerState;
   initialModel?: string;
   statusSource?: () => Promise<StatusResponse>;
-  metricsSource?: () => Promise<MetricSample[]>; // recent request samples for the styled /metrics card
+  metricsSource?: () => Promise<MetricsResponse>; // server-side lifetime + 24h rollups for /metrics
   readStatus?: () => ClientStatus;            // reads the real config files (per user/project scope)
   modelLimits?: Record<string, number>;       // model id -> context window, shown in the picker
   onChat?: (text: string, print: (line: string) => void, model?: string, abort?: AbortController) => Promise<void>;
@@ -102,12 +112,22 @@ export interface AppProps {
   githubStatus?: () => Promise<GithubLoginState>;
 }
 
+// Split card lines into physical rows: a single rendered <Text> with an embedded newline makes
+// Ink/Yoga mis-measure the box and the border bleeds (a Copilot 502's HTML body once did exactly
+// this). Exploding on newlines guarantees each row is its own <Text> — callers should still sanitize,
+// but the card alone can no longer be broken by multiline content. Exported for direct unit testing
+// (a TTY-less render harness can't reproduce the visual break, so we test the logic, not the pixels).
+export function cardRows(lines: string[]): string[] {
+  return lines.flatMap((l) => l.split(/\r?\n/));
+}
+
 function OutputCard({ title, lines, tone }: { title: string; lines: string[]; tone: "info" | "ok" | "error" }) {
   const border = tone === "error" ? theme.error : tone === "ok" ? theme.ready : theme.border;
+  const rows = cardRows(lines);
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={border} paddingX={1} marginBottom={1}>
       <Text color={theme.accent} bold>{title}</Text>
-      {lines.map((l, i) => {
+      {rows.map((l, i) => {
         const m = /^(OK|FAIL)\s+(.*)$/.exec(l);
         if (m) {
           const ok = m[1] === "OK";
@@ -126,21 +146,26 @@ function OutputCard({ title, lines, tone }: { title: string; lines: string[]; to
 
 // Styled /metrics: a colored summary row of chips, then an aligned per-model table. Numbers carry
 // the accent/state colors; labels are dimmed — so the eye lands on counts and cost, not boilerplate.
-function MetricsCard({ agg, errors }: { agg: Aggregate; errors: string[] }) {
-  const k = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(1)}k` : `${n}`);
-  const usd = (n: number) => `$${n < 1 ? n.toFixed(3) : n.toFixed(2)}`;
+// Shows lifetime totals AND a last-24h line; both are real SQL rollups over the whole request_log.
+function MetricsCard({ agg, day, errors }: { agg: Aggregate; day: Aggregate; errors: string[] }) {
   const top = [...agg.byModel].sort((a, b) => b.count - a.count);
   const w = Math.min(22, Math.max(8, ...top.map((r) => r.model.replace(/^claude-/, "").length)));
   const m = (s: string) => s.replace(/^claude-/, "").slice(0, w).padEnd(w);
+  // One labelled summary line (all-time / last 24h share this shape).
+  const summary = (label: string, a: Aggregate) => (
+    <Text>
+      <Text color={theme.muted}>{label.padEnd(9)}</Text>
+      <Text color={theme.ready} bold>{a.total}</Text><Text color={theme.muted}> reqs  </Text>
+      <Text color={a.errors ? theme.error : theme.muted} bold>{a.errors}</Text><Text color={theme.muted}> err  </Text>
+      <Text color={theme.assistant}>{k(a.tokensIn)}↑ {k(a.tokensOut)}↓</Text><Text color={theme.muted}>  est </Text>
+      <Text color={theme.accent} bold>{usd(a.costUsd)}</Text>
+    </Text>
+  );
   return (
     <Box flexDirection="column" borderStyle="round" borderColor={theme.accent} paddingX={1} marginBottom={1}>
       <Text color={theme.accent} bold>metrics</Text>
-      <Text>
-        <Text color={theme.ready} bold>{agg.total}</Text><Text color={theme.muted}> reqs  </Text>
-        <Text color={agg.errors ? theme.error : theme.muted} bold>{agg.errors}</Text><Text color={theme.muted}> err  </Text>
-        <Text color={theme.assistant}>{k(agg.tokensIn)}↑ {k(agg.tokensOut)}↓</Text><Text color={theme.muted}>  est </Text>
-        <Text color={theme.accent} bold>{usd(agg.costUsd)}</Text>
-      </Text>
+      {summary("all-time", agg)}
+      {summary("last 24h", day)}
       <Text color={theme.border}>{"─".repeat(w + 26)}</Text>
       {top.map((r) => (
         <Text key={r.model}>
@@ -151,9 +176,10 @@ function MetricsCard({ agg, errors }: { agg: Aggregate; errors: string[] }) {
           <Text color={theme.muted}> ~</Text><Text color={theme.accent}>{usd(r.costUsd)}</Text>
         </Text>
       ))}
+      {agg.total === 0 && <Text color={theme.muted}>no requests yet</Text>}
       {errors.length > 0 && <Text color={theme.error}>recent errors:</Text>}
       {errors.map((e, i) => <Text key={i} color={theme.muted}>  {e}</Text>)}
-      <Text color={theme.muted} dimColor>cost = list-price estimate (Copilot is flat-fee)</Text>
+      <Text color={theme.muted} dimColor>all-time totals · cost = list-price estimate (Copilot is flat-fee)</Text>
     </Box>
   );
 }
@@ -211,7 +237,13 @@ export function App({
   const abortRef = useRef<AbortController | null>(null); // current turn's interrupt handle
   const loginInFlight = useRef(false); // guards against starting a second device-login flow
   const add = (e: Entry) => setEntries((p) => [...p, e].slice(-100));
-  const refreshStatus = () => { if (readStatus) setStatus(readStatus()); if (webSearchBackend) setWebBackend(webSearchBackend()); };
+  // Re-read the real config files, but keep the previous object when nothing changed so the 2s poll
+  // doesn't force a full-frame repaint (see sameStatus). webBackend is a string and already bails on
+  // equality inside setState.
+  const refreshStatus = () => {
+    if (readStatus) { const next = readStatus(); setStatus((prev) => (sameStatus(prev, next) ? prev : next)); }
+    if (webSearchBackend) setWebBackend(webSearchBackend());
+  };
 
   // esc interrupts an in-flight assistant turn (the Repl doesn't use esc, so this is unambiguous).
   useInput((_input, key) => { if (key.escape) abortRef.current?.abort(); });
@@ -281,10 +313,11 @@ export function App({
     if (t === "/config" && info) { setScreen({ kind: "config" }); return; }
     if (t === "/network" && networkInfo) { setNet(networkInfo()); setScreen({ kind: "network" }); return; }
     if (t === "/metrics" && metricsSource) {
-      const reqs = await metricsSource();
-      const agg = aggregate(reqs);
-      const errs = recentErrors(reqs, 5).map((e) => `${e.status} ${e.model} — ${(e.error ?? "(no message)").slice(0, 80)}`);
-      add({ type: "metrics", agg, errors: errs });
+      const m = await metricsSource();
+      const agg = withCost(m.all);   // lifetime totals (real COUNT(*), not a 100-row cap)
+      const day = withCost(m.day);   // last 24h
+      const errs = m.recentErrors.slice(0, 5).map((e) => `${e.status} ${e.model} — ${oneLine(e.error, 80) || "(no message)"}`);
+      add({ type: "metrics", agg, day, errors: errs });
       return;
     }
     if (t === "/login" && login) {
@@ -422,7 +455,7 @@ export function App({
       <Box flexDirection="column" paddingX={1} marginTop={1}>
         {entries.map((e, i) => {
           if (e.type === "card") return <OutputCard key={i} title={e.title} lines={e.lines} tone={e.tone} />;
-          if (e.type === "metrics") return <MetricsCard key={i} agg={e.agg} errors={e.errors} />;
+          if (e.type === "metrics") return <MetricsCard key={i} agg={e.agg} day={e.day} errors={e.errors} />;
           if (e.type === "help") return <HelpCard key={i} commands={e.commands} />;
           const color = e.type === "user" ? theme.user : e.type === "assistant" ? theme.assistant : theme.muted;
           if (e.type === "assistant" && e.streaming) {

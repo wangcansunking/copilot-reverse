@@ -3,6 +3,60 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-06-30 (/metrics real totals, no 100-row cap)** — `/metrics` aggregated a 100-row `/api/requests`
+  fetch, so `total` was `min(rows, 100)` — "100 reqs" was a display ceiling, and errors/tokens/cost/
+  per-model were all bounded to a meaningless sliding window. Now rolled up in SQL over the WHOLE
+  `request_log`: new `aggregateRequests(db, sinceMs?)` + `recentErrorRows(db, limit)`, a new
+  `/api/metrics` endpoint serving `{all, day, recentErrors}`, and `withCost()` to add list-price cost in
+  the TUI. The card shows **all-time + last 24h**. `/logs` and `/report` also switched to the dedicated
+  SQL error query, so a failure that scrolled past the last-100-requests window still shows. The
+  assistant's own `metrics` / `recent_errors` SDK tools were moved onto the same `/api/metrics` rollup,
+  so the agent reports the same real totals the card does (not a capped `requests()` fetch). The browser
+  **dashboard** (`/` on :7890) had the bug on its own surface too — it derived totals from the capped
+  `/api/requests` fetch (stuck at "total 100") and its "Recent requests" panel was a flat dump of 30
+  identical 200s; it now renders the `/api/metrics` rollup (all-time + 24h totals + a per-model
+  breakdown), errors from the full-table SQL query. A consistency pass unified token/cost formatting
+  across every metrics surface (card, /metrics, /logs, dashboard, assistant tools) behind shared
+  `fmtTokens`/`fmtCost`, routed the assistant's `recent_errors` through `oneLine()`, and aligned the
+  empty-state wording. New units:
+  `db` aggregate/error-rows (4), `withCost` (2), shared `fmtTokens`/`fmtCost` (2), api `/api/metrics`
+  all-time+day (2), dashboard real totals + per-model + runaway-200 via `/api/metrics` (2); fixtures
+  updated to the server-shaped `MetricsResponse`. HTTP docker e2e gained 4 checks (insert >100 rows into
+  the supervisor's own DB, assert `/api/metrics` total>100, day≤all, a pre-100 failure surfaces, and the
+  dashboard HTML wires to `/api/metrics` not the capped `/api/requests`) — **30 passed** (was 26). Full
+  suite **489 passed** (62 files), build clean.
+
+- **2026-06-29 (/doctor self-check + dashboard parity)** — `/doctor` graduated from 2 checks
+  (github-auth, worker) to a real self-check: GitHub login, worker, resolved web-search backend
+  (copilot/webiq/unavailable), model discovery, and — on the on-demand TUI run (`?ping=1`) — a real
+  1-token connectivity ping per client-configured model. The check logic is a pure injected-probe
+  function (`buildDoctorChecks`) so it's fully unit-tested; the 2s dashboard poll uses the cheap
+  upstream-free path so it never burns quota. Two code-review fixes landed before merge: the light
+  github-auth check reuses the heartbeat's CACHED status (a fresh GitHub token exchange every 2s would
+  trip GitHub's rate limit — the heartbeat runs on 60s for exactly this reason; the live exchange is
+  reserved for the on-demand `?ping` run), and `pingViaProxy` got a 20s AbortController timeout so a
+  hung upstream fails fast instead of blocking `/doctor` for minutes. The dashboard was redesigned for
+  parity with the TUI: errors now count `status>=400 || error!=null` (shared isError — runaway-tagged
+  200s show, the old dashboard silently dropped them), plus new GitHub-login, web-search,
+  advertised-models (`[1m]` badges), and per-scope client-config panels via new `/api/clients` +
+  `/api/models`. New units: `doctor` (9, incl. live-vs-cached flag), `doctor-probes` (7, incl. timeout),
+  api (`/api/clients`, `/api/models`, `?ping` passthrough, models degrade-to-empty), dashboard parity.
+  HTTP docker e2e gained 6 checks (web-search + models named checks, light has no per-model ping,
+  `?ping` returns, clients/models endpoints) — **26 passed** (was 20). Full suite **477 passed**
+  (62 files), build clean.
+
+- **2026-06-29 (/logs card multiline fix)** — A Copilot 502 returns a whole HTML error page; its
+  ~400-char body (newlines + inline styles) was stored as the request's metric error and rendered by
+  `/logs` as one "line" inside a bordered Ink card, so the embedded newlines mis-measured the Yoga box
+  and the border bled across the screen. Fixed at three layers: a new `oneLine()` formatter collapses
+  any whitespace run (newlines/CR/tabs) to single spaces + truncates; `errorDetail` (adapter) applies
+  it at the source so the *stored* upstream error is already one line; `/logs` and both `/metrics`
+  paths re-flatten where they render; and `OutputCard` now explodes any multiline line into separate
+  rows (`cardRows`) as a final backstop. New units: `oneLine` (format), `cardRows` (app), an adapter
+  502-HTML test, two slash `/logs`+`/metrics` flatten tests. HTTP docker e2e gained a real check: drive
+  a failing request → read the real stored metric → render it through the real `dist` formatter → assert
+  no newline (**20 passed**, was 18). Full suite **454 passed** (60 files), build clean.
+
 - **2026-06-30 (LAN exempts loopback — only remote needs the key)** — Refined the LAN gate: a request
   is challenged for the key ONLY when it arrives from off-box. Requests over loopback
   (`127/8`, `::1`, `::ffff:127.x`) are always served unauthenticated, in both modes — so the user's own

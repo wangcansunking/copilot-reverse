@@ -17,6 +17,14 @@ describe("DaemonClient", () => {
     const f = vi.fn(async () => json({ checks: [{ name: "x", ok: true, detail: "d" }] }));
     expect((await new DaemonClient("http://x", f as unknown as typeof fetch).doctor())[0].ok).toBe(true);
   });
+  it("doctor light hits /api/doctor; ping adds ?ping=1", async () => {
+    const f = vi.fn(async () => json({ checks: [] }));
+    const c = new DaemonClient("http://x", f as unknown as typeof fetch);
+    await c.doctor();
+    await c.doctor(true);
+    expect(f.mock.calls[0][0]).toBe("http://x/api/doctor");
+    expect(f.mock.calls[1][0]).toBe("http://x/api/doctor?ping=1");
+  });
   it("posts stop and start to the right paths", async () => {
     const f = vi.fn(async () => json({ ok: true }));
     const c = new DaemonClient("http://x", f as unknown as typeof fetch);

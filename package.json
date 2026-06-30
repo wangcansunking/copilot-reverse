@@ -36,6 +36,7 @@
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
+    "test:report": "vitest run --reporter=json --outputFile=./test-results.json && node scripts/gen-test-report.mjs",
     "test:e2e": "vitest run e2e/copilot-reverse.e2e.test.ts tests/e2e",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "dev": "tsx src/cli/index.ts",

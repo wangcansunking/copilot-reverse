@@ -1,0 +1,4 @@
+---
+bump: minor
+---
+feat(doctor+dashboard): `/doctor` is now a real self-check and the web dashboard shows current data. `/doctor` reports GitHub login, worker liveness, the resolved web-search backend (copilot/webiq/unavailable), model discovery, and — on the on-demand TUI run — a per-configured-model connectivity ping (one real 1-token request per model the clients are actually set to use). The 2s dashboard poll uses the cheap upstream-free checks (`/api/doctor` without `?ping`), so it never burns quota. The dashboard is redesigned for parity with the TUI: it counts a runaway-tagged 200 as an error (shared `isError` rule, not just `status>=400`), and adds GitHub login, web-search backend, advertised models (with `[1m]` badges), and per-scope Claude/Codex client config panels via new `/api/clients` and `/api/models` endpoints.

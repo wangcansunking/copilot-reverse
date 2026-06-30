@@ -197,4 +197,15 @@ describe("CopilotAdapter", () => {
     await expect(a.complete(r55)).rejects.toThrow();
     expect(f).toHaveBeenCalledTimes(1); // no responses retry
   });
+
+  it("flattens a multi-line HTML 502 body to a single-line error message", async () => {
+    const html = '<!DOCTYPE html>\n<html>\n  <head><style>body { margin: 0 }</style></head>\n  <body>\n    <h1>502 Bad Gateway</h1>\n  </body>\n</html>';
+    const f = vi.fn(async () => new Response(html, { status: 502, headers: { "content-type": "text/html" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+    let msg = "";
+    try { for await (const _ of a.stream({ ...base, stream: true })) { /* drain */ } }
+    catch (e) { msg = e instanceof Error ? e.message : String(e); }
+    expect(msg).toMatch(/copilot stream failed: 502/);
+    expect(msg).not.toMatch(/\n/); // no embedded newlines — won't shatter the /logs card
+  });
 });

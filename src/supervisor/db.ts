@@ -1,5 +1,5 @@
 import Database from "better-sqlite3";
-import type { RestartRow, MetricSample } from "../shared/control-types.js";
+import type { RestartRow, MetricSample, MetricsWindow, ModelRollup } from "../shared/control-types.js";
 export type Db = Database.Database;
 
 export function openDb(file: string): Db {
@@ -36,5 +36,41 @@ export function recordRequest(db: Db, m: Omit<MetricSample, "ts"> & { ts: number
 }
 export function recentRequests(db: Db, limit: number): MetricSample[] {
   return (db.prepare(`SELECT ts, endpoint, model, status, latency_ms as latencyMs, tokens_in as tokensIn, tokens_out as tokensOut, error FROM request_log ORDER BY ts DESC LIMIT ?`).all(limit) as (MetricSample & { tokensIn: number | null; tokensOut: number | null; error: string | null })[])
+    .map(({ tokensIn, tokensOut, error, ...r }) => ({ ...r, ...(tokensIn != null ? { tokensIn } : {}), ...(tokensOut != null ? { tokensOut } : {}), ...(error != null ? { error } : {}) }));
+}
+
+// A request "failed" if it returned a 4xx/5xx OR carries an error message — a runaway stream finishes
+// 200 but tags an error. Shared by aggregate + recentErrors so the counts agree everywhere.
+const FAILED = `(status >= 400 OR error IS NOT NULL)`;
+
+// Roll up the WHOLE request_log in SQL — a real COUNT(*)/SUM, not min(rows, 100). Pass `sinceMs` to
+// window it (e.g. last 24h). This is what /metrics should show: the old path aggregated a capped
+// 100-row fetch, so "100 reqs" was a ceiling that told you nothing once you crossed it.
+export function aggregateRequests(db: Db, sinceMs?: number): MetricsWindow {
+  const where = sinceMs != null ? `WHERE ts >= @since` : ``;
+  const args = sinceMs != null ? { since: sinceMs } : {};
+  const byModel = db.prepare(`
+    SELECT model,
+           COUNT(*) AS count,
+           SUM(CASE WHEN ${FAILED} THEN 1 ELSE 0 END) AS errors,
+           CAST(ROUND(AVG(latency_ms)) AS INTEGER) AS avgMs,
+           COALESCE(SUM(tokens_in), 0) AS tokensIn,
+           COALESCE(SUM(tokens_out), 0) AS tokensOut
+    FROM request_log ${where}
+    GROUP BY model ORDER BY count DESC`).all(args) as ModelRollup[];
+  return {
+    total: byModel.reduce((n, r) => n + r.count, 0),
+    errors: byModel.reduce((n, r) => n + r.errors, 0),
+    tokensIn: byModel.reduce((n, r) => n + r.tokensIn, 0),
+    tokensOut: byModel.reduce((n, r) => n + r.tokensOut, 0),
+    byModel,
+  };
+}
+
+// The failed rows (4xx/5xx or tagged error) from the WHOLE table, newest-first, capped — the actual
+// "what failed and why" log. Distinct from recentRequests, which slices the last N of everything and
+// so can miss errors that scrolled past the window.
+export function recentErrorRows(db: Db, limit: number): MetricSample[] {
+  return (db.prepare(`SELECT ts, endpoint, model, status, latency_ms as latencyMs, tokens_in as tokensIn, tokens_out as tokensOut, error FROM request_log WHERE ${FAILED} ORDER BY ts DESC LIMIT ?`).all(limit) as (MetricSample & { tokensIn: number | null; tokensOut: number | null; error: string | null })[])
     .map(({ tokensIn, tokensOut, error, ...r }) => ({ ...r, ...(tokensIn != null ? { tokensIn } : {}), ...(tokensOut != null ? { tokensOut } : {}), ...(error != null ? { error } : {}) }));
 }

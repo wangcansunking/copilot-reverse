@@ -1,7 +1,20 @@
 import { describe, it, expect, vi } from "vitest";
 import { buildRegistry } from "../../src/tui/slash/commands.js";
+import { aggregate } from "../../src/tui/panels/metrics-agg.js";
+import type { MetricSample, MetricsResponse, MetricsWindow } from "../../src/shared/control-types.js";
 
 const endpoint = { host: "127.0.0.1", port: 7891, apiKey: "k" };
+
+// Build a server-shaped MetricsResponse from plain samples so tests stay expressed in samples. The
+// real aggregate() rolls them up into the lifetime window; day mirrors all-time here (tests don't
+// exercise the 24h cut), and recentErrors is the failed rows newest-first.
+function metricsOf(samples: MetricSample[]): MetricsResponse {
+  const a = aggregate(samples);
+  const win: MetricsWindow = { total: a.total, errors: a.errors, tokensIn: a.tokensIn, tokensOut: a.tokensOut,
+    byModel: a.byModel.map((r) => ({ model: r.model, count: r.count, errors: samples.filter((s) => s.model === r.model && (s.status >= 400 || s.error != null)).length, avgMs: r.avgMs, tokensIn: r.tokensIn, tokensOut: r.tokensOut })) };
+  const recentErrors = samples.filter((s) => s.status >= 400 || s.error != null).slice().sort((x, y) => y.ts - x.ts);
+  return { all: win, day: win, recentErrors };
+}
 
 function ctx() {
   return {
@@ -10,6 +23,7 @@ function ctx() {
       restart: vi.fn(async () => {}), stop: vi.fn(async () => {}), start: vi.fn(async () => {}),
       doctor: vi.fn(async () => [{ name: "github-auth", ok: true, detail: "ok" }]),
       requests: vi.fn(async () => []),
+      metrics: vi.fn(async () => metricsOf([])),
     },
     quit: vi.fn(),
   };
@@ -26,9 +40,11 @@ describe("slash commands", () => {
     await buildRegistry(c as any, endpoint).run("/restart");
     expect(c.client.restart).toHaveBeenCalled();
   });
-  it("/doctor lists checks", async () => {
-    const out = await buildRegistry(ctx() as any, endpoint).run("/doctor");
+  it("/doctor lists checks and requests the per-model ping", async () => {
+    const c = ctx();
+    const out = await buildRegistry(c as any, endpoint).run("/doctor");
     expect(out.join("\n")).toMatch(/github-auth.*ok/i);
+    expect(c.client.doctor).toHaveBeenCalledWith(true); // /doctor is the on-demand self-check → ping
   });
   it("/help lists commands", async () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/help");
@@ -53,11 +69,31 @@ describe("slash commands", () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/metrics");
     expect(out.join("\n")).toMatch(/no requests yet/i);
   });
+  it("/logs flattens a multi-line error so each entry stays on one line", async () => {
+    const c = ctx();
+    c.client.metrics = vi.fn(async () => metricsOf([
+      { ts: 1700000000000, endpoint: "/anthropic/v1/messages", model: "claude-opus-4-8", status: 502, latencyMs: 10,
+        error: "copilot stream failed: 502 — <!DOCTYPE html>\n<html>\n  <body>502</body>\n</html>\nGitHub login expired — run /login" },
+    ]));
+    const out = await buildRegistry(c as any, endpoint).run("/logs");
+    // Each rendered entry must be exactly one physical line — no entry may smuggle in a newline.
+    for (const line of out) expect(line).not.toMatch(/\n/);
+    expect(out.join("")).toMatch(/502/);
+  });
+  it("/metrics flattens multi-line errors in its recent-errors tail", async () => {
+    const c = ctx();
+    c.client.metrics = vi.fn(async () => metricsOf([
+      { ts: 1700000000000, endpoint: "/anthropic/v1/messages", model: "claude-opus-4-8", status: 502, latencyMs: 10,
+        error: "boom\n<html>\n  <body>x</body>\n</html>" },
+    ]));
+    const out = await buildRegistry(c as any, endpoint).run("/metrics");
+    for (const line of out) expect(line).not.toMatch(/\n/);
+  });
   it("/metrics reports token totals and an estimated cost", async () => {
     const c = ctx();
-    c.client.requests = vi.fn(async () => [
+    c.client.metrics = vi.fn(async () => metricsOf([
       { ts: 2, endpoint: "/anthropic/v1/messages", model: "claude-opus-4-8", status: 200, latencyMs: 30, tokensIn: 1000, tokensOut: 500 },
-    ]);
+    ]));
     const out = (await buildRegistry(c as any, endpoint).run("/metrics")).join("\n");
     expect(out).toMatch(/tokens: 1\.0k↑ 500↓/);
     expect(out).toMatch(/est\. cost: \$/);

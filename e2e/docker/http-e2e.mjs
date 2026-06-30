@@ -109,9 +109,65 @@ async function main() {
 
     log("\n[supervisor] control lifecycle");
     check("status workerState=ready", (await jget(supUrl("/api/status"))).j?.workerState === "ready");
+    const dashHtml = await (await fetch(supUrl("/"))).text();
     check("dashboard HTML at /", (await fetch(supUrl("/"))).headers.get("content-type")?.includes("html"));
+    // The dashboard must pull real totals from the SQL rollup (/api/metrics), NOT the capped
+    // /api/requests fetch that made it stick at "total 100" and render a flat dump of identical 200s.
+    check("dashboard wires to /api/metrics (not capped /api/requests)", dashHtml.includes("/api/metrics") && /renderMetrics|byModel/.test(dashHtml), dashHtml.includes("/api/requests") ? "still references /api/requests for totals" : "");
     check("doctor checks[]", Array.isArray((await jget(supUrl("/api/doctor"))).j?.checks));
     check("requests[]", Array.isArray((await jget(supUrl("/api/requests"))).j?.requests));
+
+    // Richer /doctor self-check + the dashboard's new data endpoints. Light /doctor (no ?ping) must be
+    // upstream-free and carry the web-search + models checks (named), so it's safe for the 2s poll. The
+    // dashboard now also pulls /api/clients (per-scope config) and /api/models (advertised, proxied).
+    log("\n[doctor+dashboard] richer self-check + parity data endpoints");
+    const doc = (await jget(supUrl("/api/doctor"))).j?.checks ?? [];
+    const named = (n) => doc.find((c) => c.name === n);
+    check("doctor has web-search check", !!named("web-search"), JSON.stringify(doc.map((c) => c.name)));
+    check("doctor has models check", !!named("models"));
+    check("doctor light has NO per-model ping checks", !doc.some((c) => String(c.name).startsWith("model:")));
+    const docPing = (await jget(supUrl("/api/doctor?ping=1"))).j?.checks ?? [];
+    // No client is configured in-container, so ping mode reports the informational note (not a crash).
+    check("doctor ?ping returns checks", Array.isArray(docPing) && docPing.length >= doc.length);
+    const clients = (await jget(supUrl("/api/clients"))).j;
+    check("/api/clients has claude+codex", clients && "claude" in clients && "codex" in clients, JSON.stringify(clients));
+    const mods = (await jget(supUrl("/api/models"))).j?.models;
+    check("/api/models advertises models", Array.isArray(mods) && mods.length > 0, JSON.stringify((mods || []).slice(0, 2)));
+
+    // /logs hardening: a real upstream failure (the dummy token 401s at Copilot) stores a metric
+    // error, which /logs renders one-per-line inside a bordered card. A multi-line body (a 502 returns
+    // an HTML page) once shattered that border. Drive a real failing request, read the REAL stored
+    // metric back from the supervisor, then run it through the REAL TUI formatter (dist oneLine) the
+    // /logs command uses — the rendered line must contain no newline, whatever the upstream sent.
+    log("\n[/logs] stored request error renders as a single contained line");
+    await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "gpt-4o", max_tokens: 8, messages: [{ role: "user", content: "hi" }] }));
+    await sleep(400);
+    const { oneLine } = await import("../../dist/shared/format.js");
+    const logged = (await jget(supUrl("/api/requests"))).j?.requests ?? [];
+    const failed = logged.find((r) => r.status >= 400 || r.error != null);
+    check("a failing request was logged", !!failed, JSON.stringify(logged[0] ?? {}).slice(0, 120));
+    if (failed) {
+      const rendered = `${new Date(failed.ts).toISOString()} ${failed.status} ${failed.endpoint} ${failed.model} — ${oneLine(failed.error, 160) || "(no message)"}`;
+      check("/logs line has no embedded newline", !/\r?\n/.test(rendered), JSON.stringify(rendered).slice(0, 160));
+    }
+
+    // /api/metrics must roll up the WHOLE request_log in SQL, not a 100-row fetch. Insert >100 rows
+    // straight into the supervisor's own DB (same file, WAL so a 2nd connection sees committed writes),
+    // then assert the reported total exceeds 100 and the 24h window is bounded — the old /metrics capped
+    // at 100 and "100 reqs" was a meaningless ceiling once you crossed it.
+    log("\n[/metrics] real lifetime rollup over the whole request_log (not a 100-row cap)");
+    const { openDb, recordRequest } = await import("../../dist/supervisor/db.js");
+    const { dbPath } = await import("../../dist/shared/paths.js");
+    const seedDb = openDb(dbPath());
+    const baseTotal = (await jget(supUrl("/api/metrics"))).j?.all?.total ?? 0;
+    const now = Date.now();
+    for (let i = 0; i < 150; i++) recordRequest(seedDb, { ts: now - i * 1000, endpoint: "/anthropic/v1/messages", model: "gpt-4o", status: 200, latencyMs: 10, tokensIn: 2, tokensOut: 1 });
+    recordRequest(seedDb, { ts: now - 3 * 24 * 60 * 60 * 1000, endpoint: "/anthropic/v1/messages", model: "gpt-4o", status: 502, latencyMs: 5, error: "old failure 3 days ago" });
+    seedDb.close();
+    const met = (await jget(supUrl("/api/metrics"))).j;
+    check("/api/metrics counts >100 rows (no display cap)", met?.all?.total >= baseTotal + 151, `total=${met?.all?.total} base=${baseTotal}`);
+    check("/api/metrics day window <= all-time", met?.day?.total <= met?.all?.total && met?.day?.total >= 150, `day=${met?.day?.total} all=${met?.all?.total}`);
+    check("/api/metrics surfaces the old (pre-100) failure in recentErrors", (met?.recentErrors ?? []).some((e) => e.error === "old failure 3 days ago"), JSON.stringify((met?.recentErrors ?? []).map((e) => e.error)).slice(0, 160));
     await jpost(supUrl("/api/restart"), "{}"); await sleep(1500);
     check("worker ready after restart", (await jget(supUrl("/api/status"))).j?.workerState === "ready");
 
