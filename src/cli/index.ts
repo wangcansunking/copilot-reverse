@@ -28,6 +28,8 @@ import { claudeCopilotReverseEnv } from "../tui/setup/clients.js";
 import { dataDir } from "../shared/paths.js";
 import { defaultConfig } from "../shared/config.js";
 import { APP_VERSION } from "../version.js";
+import { APP_CHANGES } from "../changes.js";
+import { buildChangeBannerLines } from "../tui/whats-new.js";
 import { appendCrashLog } from "../shared/crash-log.js";
 
 const delay = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -209,12 +211,14 @@ async function launchTui(): Promise<void> {
 
   const persistedModel = readChatModel(dataDir());
 
-  // "What's new" banner: IMPORTANT messages only (new capabilities, things worth noticing) — NOT
-  // bug fixes. Keyed by version so each release re-announces, shown ~3 launches then quiet. The full
-  // list lives behind /changes; this is just a nudge.
+  // "What's new" banner: surface the real headlines from recent releases (newest first), not a
+  // generic pointer — a bundled release has several changes, so we flatten across releases and show
+  // the top few, each tagged with its version. Keyed by the current version so each release
+  // re-announces, shown ~3 launches then quiet. The full list lives behind /changes.
   const CHANGE_ID = `v${APP_VERSION}`;
-  const changeBanner = shouldShowChange(dataDir(), CHANGE_ID)
-    ? { lines: ["• type /changes to see what's new across recent releases"] }
+  const bannerLines = buildChangeBannerLines(APP_CHANGES);
+  const changeBanner = bannerLines.length && shouldShowChange(dataDir(), CHANGE_ID)
+    ? { lines: bannerLines }
     : undefined;
 
   // Startup overview. The token was already validated above (re-auth happens before we get here), so
