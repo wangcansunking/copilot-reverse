@@ -6,6 +6,7 @@ import { SetupWizard, type SetupClient } from "./setup/wizard.js";
 import { ModelScreen } from "./screens/model.js";
 import { ConfigScreen, type ConfigInfo } from "./screens/config.js";
 import { WebIqKeyScreen } from "./screens/webiq-key.js";
+import { NetworkScreen, type NetworkInfo, type NetworkAction } from "./screens/network.js";
 import { summarizeStatus, githubLoginState, type StatusSummary, type GithubLoginState } from "./status-summary.js";
 import type { Scope, ApplyResult } from "./setup/apply.js";
 import type { ClientStatus } from "./setup/status.js";
@@ -23,7 +24,7 @@ type Entry =
   | { type: "metrics"; agg: Aggregate; errors: string[] }
   | { type: "help"; commands: CommandHint[] };
 
-type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | { kind: "webiq-key" } | null;
+type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | { kind: "webiq-key" } | { kind: "network" } | null;
 
 const stateColor: Record<WorkerState, string> = {
   ready: theme.ready, starting: theme.starting, crashed: theme.crashed, unhealthy: theme.unhealthy,
@@ -84,6 +85,13 @@ export interface AppProps {
   enableWebiq?: (key: string) => void;
   disableWebiq?: () => void;
   webSearchBackend?: () => WebSearchBackend;
+  // Network access mode control. networkInfo reads the LIVE posture (mode + key + LAN URL) for the
+  // /network panel and HUD. setAccessMode flips localhost↔lan (restarting the worker to re-bind the
+  // socket) and returns the resulting info; rotateKey mints a fresh key. All optional so a host that
+  // doesn't wire them simply hides the surface.
+  networkInfo?: () => NetworkInfo;
+  setAccessMode?: (mode: "localhost" | "lan") => Promise<NetworkInfo>;
+  rotateKey?: () => Promise<NetworkInfo>;
   // One-time status overview shown as the first card on startup.
   startupStatus?: StatusSummary;
   // "What's new" banner shown a few launches then suppressed; the cli decides via prefs and passes
@@ -181,7 +189,7 @@ function ClientBadge({ name, status }: { name: string; status: { user: boolean; 
 export function App({
   registry, title, workerState = "starting", initialModel = "—",
   statusSource, metricsSource, readStatus, modelLimits, onChat,
-  loadModels, setup, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, startupStatus, githubStatus, changeBanner, onChangeSeen,
+  loadModels, setup, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, networkInfo, setAccessMode, rotateKey, startupStatus, githubStatus, changeBanner, onChangeSeen,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
   const [entries, setEntries] = useState<Entry[]>(() => [
@@ -193,6 +201,8 @@ export function App({
   const [state, setState] = useState<WorkerState>(workerState);
   const [status, setStatus] = useState<ClientStatus>(() => readStatus?.() ?? EMPTY_STATUS);
   const [webBackend, setWebBackend] = useState<WebSearchBackend>(() => webSearchBackend?.() ?? "unavailable");
+  // Network access posture (mode + key + LAN URL), read live; refreshed after a /network change.
+  const [net, setNet] = useState<NetworkInfo | undefined>(() => networkInfo?.());
   // GitHub login state, kept fresh by the supervisor heartbeat surfaced through the 2s status poll.
   const [github, setGithub] = useState<GithubLoginState | undefined>(startupStatus?.github);
   const [model, setModel] = useState(initialModel);
@@ -269,6 +279,7 @@ export function App({
       return;
     }
     if (t === "/config" && info) { setScreen({ kind: "config" }); return; }
+    if (t === "/network" && networkInfo) { setNet(networkInfo()); setScreen({ kind: "network" }); return; }
     if (t === "/metrics" && metricsSource) {
       const reqs = await metricsSource();
       const agg = aggregate(reqs);
@@ -353,8 +364,10 @@ export function App({
         info={info}
         model={model}
         clients={{ claude: configured(status.claude), codex: configured(status.codex) }}
+        accessMode={net?.mode}
         onAction={(a) => {
           if (a === "model") setScreen({ kind: "model" });
+          else if (a === "network" && networkInfo) { setNet(networkInfo()); setScreen({ kind: "network" }); }
           else if (a === "setup-claude") setScreen({ kind: "setup", client: "claude" });
           else if (a === "setup-codex") setScreen({ kind: "setup", client: "codex" });
           else setScreen(null);
@@ -368,6 +381,33 @@ export function App({
         onCancel={() => { setScreen(null); add({ type: "system", text: "webiq cancelled" }); }}
       />
     );
+  } else if (screen?.kind === "network" && net) {
+    const onNet = async (a: NetworkAction) => {
+      if (a === "back") { setScreen(null); return; }
+      try {
+        if (a === "lan" && setAccessMode) {
+          const r = await setAccessMode("lan"); setNet(r); setScreen(null);
+          add({ type: "card", title: "/network", tone: "ok", lines: [
+            "✓ LAN mode — the proxy is now reachable from other machines (worker restarting to re-bind)",
+            r.lanUrl ? `Claude    ${r.lanUrl}/anthropic` : "",
+            r.lanUrl ? `Codex     ${r.lanUrl}/openai` : "",
+            r.key ? `key       ${r.key}` : "",
+            "remote machines must send the key as Authorization: Bearer <key> or x-api-key — without it → 401",
+            "this machine keeps working over 127.0.0.1 with no key",
+          ].filter(Boolean) });
+        } else if (a === "localhost" && setAccessMode) {
+          const r = await setAccessMode("localhost"); setNet(r); setScreen(null);
+          add({ type: "card", title: "/network", tone: "ok", lines: ["✓ localhost mode — loopback only, private to this machine (worker restarting to re-bind)"] });
+        } else if (a === "rotate" && rotateKey) {
+          const r = await rotateKey(); setNet(r);
+          add({ type: "card", title: "/network", tone: "ok", lines: [`✓ access key ${net.key ? "rotated" : "generated"}`, r.key ? `key  ${r.key}` : ""].filter(Boolean) });
+        }
+      } catch (e) {
+        setScreen(null);
+        add({ type: "card", title: "/network", tone: "error", lines: [`network change failed: ${e instanceof Error ? e.message : String(e)}`] });
+      }
+    };
+    body = <NetworkScreen info={net} onAction={onNet} />;
   } else {
     body = <Repl onSubmit={handle} commands={cmds} />;
   }
@@ -409,6 +449,7 @@ export function App({
         <Box>
           {github && <><Text color={theme.muted}>github </Text><Text color={github === "connected" ? theme.ready : theme.error}>{github === "connected" ? "✓" : "✗ /login"}</Text></>}
           <Text color={theme.muted}>{github ? "  ·  " : ""}daemon </Text><Text color={stateColor[state]}>{state}</Text>
+          {net && <><Text color={theme.muted}>  ·  net </Text><Text color={net.mode === "lan" ? theme.accent : theme.muted}>{net.mode === "lan" ? "⚠ LAN" : "localhost"}</Text></>}
         </Box>
         <Box>
           <Text color={theme.muted}>web </Text><Text color={webBackend === "unavailable" ? theme.muted : theme.ready}>{webBackend === "webiq" ? "✓ webiq" : webBackend === "copilot" ? "✓ copilot" : "✗ /webiq"}</Text>

@@ -301,3 +301,50 @@ describe("TUI: model picker", () => {
     expect(f).toMatch(/1M|128K/);
   });
 });
+
+describe("TUI: /network access mode", () => {
+  const localhostInfo = { mode: "localhost" as const, key: null, lanUrl: null };
+  const lanInfo = { mode: "lan" as const, key: "SECRETKEY", lanUrl: "http://192.168.1.5:7891" };
+
+  it("HUD shows the localhost posture by default and ⚠ LAN when exposed", () => {
+    const a = render(<App registry={reg()} title="m" networkInfo={() => localhostInfo} />);
+    expect(a.lastFrame() ?? "").toMatch(/net .*localhost/);
+    const b = render(<App registry={reg()} title="m" networkInfo={() => lanInfo} />);
+    expect(b.lastFrame() ?? "").toMatch(/net .*LAN/);
+  });
+
+  it("/network opens the panel and switching to LAN reveals the key + URL and restarts the worker", async () => {
+    let mode: "localhost" | "lan" = "localhost";
+    const info = () => (mode === "lan" ? lanInfo : localhostInfo);
+    const setAccessMode = vi.fn(async (m: "localhost" | "lan") => { mode = m; return info(); });
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" networkInfo={info} setAccessMode={setAccessMode} rotateKey={async () => info()} />);
+    await tick();
+    stdin.write("/network");
+    await tick();
+    stdin.write("\r");            // open the panel
+    await tick(60);
+    expect(lastFrame() ?? "").toMatch(/network access/);
+    stdin.write("\r");           // first item = "switch to LAN"
+    await tick(80);
+    const f = lastFrame() ?? "";
+    expect(setAccessMode).toHaveBeenCalledWith("lan");
+    expect(f).toMatch(/LAN mode/);
+    expect(f).toContain("SECRETKEY");        // key revealed so it can be copied to other machines
+    expect(f).toContain("192.168.1.5:7891"); // LAN URL shown
+    expect(f).toContain("/anthropic");       // protocol path spelled out (Claude Code can't connect without it)
+    expect(f).toContain("/openai");          // and for Codex
+  });
+
+  it("from LAN, the first action switches back to localhost (private)", async () => {
+    let mode: "localhost" | "lan" = "lan";
+    const info = () => (mode === "lan" ? lanInfo : localhostInfo);
+    const setAccessMode = vi.fn(async (m: "localhost" | "lan") => { mode = m; return info(); });
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" networkInfo={info} setAccessMode={setAccessMode} rotateKey={async () => info()} />);
+    await tick();
+    stdin.write("/network"); await tick(); stdin.write("\r"); await tick(60);
+    stdin.write("\r");          // first item = "switch to localhost"
+    await tick(80);
+    expect(setAccessMode).toHaveBeenCalledWith("localhost");
+    expect(lastFrame() ?? "").toMatch(/localhost mode/);
+  });
+});

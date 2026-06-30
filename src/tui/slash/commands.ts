@@ -65,6 +65,7 @@ export function buildRegistry(ctx: SlashContext, endpoint: Endpoint, opts: Regis
   // only so the command is recognized and not reported as unknown.
   reg.add({ name: "/webiq", describe: "use Microsoft Web IQ for web search (/webiq clean to revert)", run: async () => ["opening webiq…"] });
   reg.add({ name: "/config", describe: "view & change configuration", run: async () => ["opening config panel…"] });
+  reg.add({ name: "/network", describe: "view & change network access mode (localhost / LAN)", run: async () => ["opening network panel…"] });
   reg.add({ name: "/dashboard", describe: "open the web dashboard in your browser", run: async () => {
     if (!opts.dashboardUrl) return ["dashboard URL not available"];
     openUrl(opts.dashboardUrl);

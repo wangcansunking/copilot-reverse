@@ -123,4 +123,33 @@ describe("WorkerMonitor lifecycle", () => {
     expect(crashes.length).toBe(0);
     expect(startingAfterStop).toBeLessThan(states.length); // no trailing starting
   });
+
+  it("hands the worker the bind host from the provider, re-read at each spawn (access-mode aware)", async () => {
+    const { h, messages } = hooks();
+    process.env.FAKE_MODE = "ready";
+    let host = "127.0.0.1"; // start in 'localhost' posture
+    const m = new WorkerMonitor(cfg(), fixture, h, () => host);
+    m.start();
+    await waitFor(() => messages.some((x) => x.type === "ready"));
+    const first = messages.find((x) => x.type === "ready") as { bindHost?: string };
+    expect(first.bindHost).toBe("127.0.0.1");
+    // Flip to 'lan' posture and manually restart — the provider is re-read, so the respawn binds wide.
+    host = "0.0.0.0";
+    m.restartManually();
+    await waitFor(() => messages.filter((x) => x.type === "ready").length >= 2);
+    const second = messages.filter((x) => x.type === "ready").at(-1) as { bindHost?: string };
+    expect(second.bindHost).toBe("0.0.0.0");
+    m.stop();
+  });
+
+  it("falls back to config.bindHost when no provider is given (unchanged default)", async () => {
+    const { h, messages } = hooks();
+    process.env.FAKE_MODE = "ready";
+    const m = new WorkerMonitor(cfg(), fixture, h); // no provider
+    m.start();
+    await waitFor(() => messages.some((x) => x.type === "ready"));
+    const ready = messages.find((x) => x.type === "ready") as { bindHost?: string };
+    expect(ready.bindHost).toBe("127.0.0.1");
+    m.stop();
+  });
 });
