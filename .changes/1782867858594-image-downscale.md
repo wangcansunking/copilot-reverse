@@ -1,0 +1,4 @@
+---
+bump: minor
+---
+Downscale oversized images before they reach Copilot, fixing `model_max_prompt_tokens_exceeded` (a 502 relayed to the client) when a large screenshot is pasted. Copilot's `/chat` has no vision tiler for Claude models — it bills an inline `data:...;base64,...` URL as plain text at ~char/4, so a single full-resolution image (~9MB base64 ≈ 2.3M tokens) overflows the model's prompt limit. The worker now takes over the job the real Anthropic backend does for us: decode → downscale to a 1568px long edge → re-encode as JPEG, collapsing the payload ~6x before send. This runs on every image path (`/anthropic/v1/messages`, `/openai/chat/completions`, `/openai/responses`) and in `count_tokens`, so Claude Code's context sizing and the actual request agree. `count_tokens` also now counts image bytes at all (it previously ignored images, under-reporting by millions and letting the client ship an oversized prompt straight into the 502).

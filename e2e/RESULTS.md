@@ -3,6 +3,22 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-07-01 (image downscale — fixes `model_max_prompt_tokens_exceeded` 502 on pasted screenshots)**
+  — a large image (full-res screenshot) pasted into Claude Code came through as a multi-MB base64 data
+  URL that Copilot's `/chat` bills as PLAIN TEXT (~char/4, it has no vision tiler for Claude models), so
+  one ~9MB image ≈ 2.3M tokens overflowed the model's prompt limit and the upstream 400 relayed as a
+  502. We now take over the job the real Anthropic backend does for us: a new `core/image-resize.ts`
+  decodes → downscales to a 1568px long edge → re-encodes JPEG (jimp), collapsing a high-entropy image
+  ~6x (measured: 2.88M→486K tokens on a 1800×1200 noise PNG). Wired into all image paths
+  (`/anthropic/v1/messages`, `/openai/chat/completions`, `/openai/responses`) AND `count_tokens`, so
+  Claude Code's context sizing matches the request actually sent. `estimateTokens` now counts image
+  bytes at all (it previously ignored images, under-reporting by millions). New unit suite
+  `tests/core/image-resize.test.ts` (7 cases: downscale, byte-collapse, small-image passthrough,
+  non-image/undecodable passthrough, in-place rewrite) + a hermetic http-e2e check proving a large
+  image's `count_tokens` lands far below its raw base64 size. 604 unit/integration tests green; docker
+  http-e2e ALL PASSED (59); `tsc` clean.
+
+
 - **2026-06-30 (effort actually works — output_config.effort + observability header, #33)** — a live
   capture of Claude Code 2.1.195's real wire showed modern clients send a TOP-LEVEL
   `output_config: { effort }` with `thinking: {type:"adaptive"}` and NO `budget_tokens`; the initial

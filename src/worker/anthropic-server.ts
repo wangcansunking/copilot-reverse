@@ -4,6 +4,7 @@ import type { Router } from "./router.js";
 import type { MetricSink } from "./server.js";
 import { anthropicRequestToCanonical, canonicalToAnthropicResponse } from "../core/anthropic-inbound.js";
 import { estimateTokens } from "../core/tokens.js";
+import { shrinkImagesInPlace } from "../core/image-resize.js";
 import { errorHint } from "./errors.js";
 import { CopilotAuthError } from "../providers/copilot/token.js";
 import { isGatewayTool, type GatewayToolRunner } from "../core/server-tools.js";
@@ -34,13 +35,23 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
   });
 
   // Anthropic clients (Claude Code) call this to size the prompt and decide when to auto-compact.
-  app.post("/anthropic/v1/messages/count_tokens", (req, res) => {
-    res.json({ input_tokens: estimateTokens(anthropicRequestToCanonical(req.body)) });
+  // Downscale images first so the estimate reflects the payload we'll ACTUALLY send upstream — an
+  // oversized screenshot is billed by Copilot as ~char/4 of its base64, so counting the raw bytes
+  // here (without the shrink) would over-report and trigger needless compaction, while the send path
+  // shrinks anyway. Shrinking in both places keeps count_tokens and the real request in agreement.
+  app.post("/anthropic/v1/messages/count_tokens", async (req, res) => {
+    const canon = anthropicRequestToCanonical(req.body);
+    await shrinkImagesInPlace(canon.messages);
+    res.json({ input_tokens: estimateTokens(canon) });
   });
 
   app.post("/anthropic/v1/messages", async (req, res) => {
     const start = Date.now();
     const canon = anthropicRequestToCanonical(req.body);
+    // Take over the job the real Anthropic backend does before us: downscale oversized images so the
+    // base64 payload can't blow past Copilot's prompt-token limit (it has no vision tiler on /chat and
+    // bills the data URL as plain text). Runs before count/send so both see the reduced payload.
+    await shrinkImagesInPlace(canon.messages);
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
     // Echo the resolved reasoning effort back as a response header — real observability (a user can

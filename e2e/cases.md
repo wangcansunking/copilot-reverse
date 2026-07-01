@@ -123,6 +123,12 @@ supervisor's own SQLite DB and asserts `/api/metrics` rolls up the WHOLE `reques
 24h window ≤ all-time, and a pre-100 failure still surfaces in `recentErrors`) — proving `/metrics` is
 no longer capped at the last 100 requests. Real round-trips run only when a real token is mounted.
 
+It also asserts the **image downscale** (fixes `model_max_prompt_tokens_exceeded`): a large
+high-entropy PNG (1800×1200 noise, so it can't run-length compress — a realistic screenshot) is posted
+to `count_tokens`, and the reported estimate must land far below the raw base64 byte count, proving the
+worker decoded → downscaled → re-encoded the image before it would ever reach Copilot. Quota-free (no
+upstream call), so it runs on the dummy token.
+
 This black-box path caught two bugs nothing else did: a Codex tool-translation `400` (a `custom`/
 `tool_search` tool forwarded nameless → Copilot rejects → "stream closed before response.completed"),
 and empty terminal Responses events (`output_*.done` carried no text → Codex rendered nothing).
