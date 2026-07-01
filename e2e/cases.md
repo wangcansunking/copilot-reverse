@@ -2,7 +2,9 @@
 
 End-to-end scenarios that wire the **real** worker + supervisor + TUI modules together the way
 the daemon does (worker metric sink → supervisor SQLite → control API), using a fake Copilot
-provider so no live network/token is needed. Spec: [`copilot-reverse.e2e.test.ts`](./copilot-reverse.e2e.test.ts).
+provider so no live network/token is needed. Specs: the per-topic `e2e/*.e2e.test.ts` files
+(`proxy`, `model-vision`, `tools`, `multiturn`, `responses`, `control-setup`), sharing the
+fixtures in [`helpers.ts`](./helpers.ts).
 
 **Policy: every code update must keep all e2e cases green.** Run with `npm run test:e2e`
 (`npm test` also runs them — the suite is included in the default vitest run).
@@ -41,7 +43,7 @@ provider so no live network/token is needed. Spec: [`copilot-reverse.e2e.test.ts
 ### Codex `/responses` (EP-27 … EP-38)
 
 The OpenAI Responses API end-to-end through a booted worker (Codex speaks only this). Hermetic — fake
-provider, no network. Spec: same `copilot-reverse.e2e.test.ts`, `describe("E2E: Codex /responses")`.
+provider, no network. Spec: `responses.e2e.test.ts`, `describe("E2E: Codex /responses")`.
 
 | ID | Scenario | Expected result |
 |----|----------|-----------------|
@@ -64,7 +66,7 @@ The Anthropic/OpenAI wire is **stateless** — the client (Claude Code on `--res
 REPL) replays the entire prior conversation in `messages` on every turn. So a follow-up turn only
 "remembers" the first if the proxy faithfully forwards that replayed history. These capture what
 reached the provider on turn 2 and assert the turn-1 exchange survived translation. Hermetic — fake
-provider. Spec: `copilot-reverse.e2e.test.ts`, `describe("E2E: multi-turn continuity")`.
+provider. Spec: `multiturn.e2e.test.ts`, `describe("E2E: multi-turn continuity")`.
 
 | ID | Scenario | Expected result |
 |----|----------|-----------------|
