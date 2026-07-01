@@ -348,7 +348,8 @@ and update this file (paste the summary).
 - **Command:** `npm run test:e2e`
 - **Outcome:** ✅ 30 passed / 0 failed (4 files)
 
-The main suite (`copilot-reverse.e2e.test.ts`) covers EP-01 … EP-26 — see [`cases.md`](./cases.md)
+The e2e specs under `e2e/*.e2e.test.ts` (proxy, model-vision, tools, multiturn, responses,
+control-setup) cover EP-01 … EP-41 — see [`cases.md`](./cases.md)
 for the catalog. Plus the pre-existing smoke specs under `tests/e2e/` (m1-smoke ×2, m1a-smoke,
 anthropic-mixed-stream).
 

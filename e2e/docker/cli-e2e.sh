@@ -118,6 +118,27 @@ check "setup default model is dashed canonical [1m]" '[ "$DEF" = "claude-opus-4-
 DEFOUT=$(ANTHROPIC_MODEL="$DEF" claude -p "Reply with exactly: DEFAULT_OK" --output-format json 2>/dev/null | jq -r '.result // empty')
 check "setup default model answers via Copilot" 'echo "$DEFOUT" | grep -q "DEFAULT_OK"' "claude ($DEF) replied: \`${DEFOUT}\`"
 
+# --- 9b) MULTI-TURN: a resumed session remembers turn 1 (real conversation state through the proxy) --
+# The truest "does a multi-turn conversation survive the proxy" check: turn 1 states a codeword, turn 2
+# RESUMES that session (claude replays the full turn-1 exchange in `messages`) and must recall it. This
+# exercises exactly what an interactive REPL does — the wire is identical — without a flaky PTY. If the
+# proxy dropped prior turns in translation, turn 2 could not answer. The hermetic EP-39/40/41 gate locks
+# the same history round-trip deterministically; this proves it end-to-end against live Copilot.
+note "multi-turn: claude -p turn1 (set codeword) -> --resume turn2 (recall it)"
+SID=$(claude -p "Remember this codeword for later: HORIZON. Just acknowledge with OK." \
+  --output-format json 2>/tmp/mt1.err | jq -r '.session_id // empty')
+echo "  captured session_id: ${SID:-<none>}"
+if [ -n "$SID" ]; then
+  MT2=$(claude -p --resume "$SID" "What was the codeword I gave you? Reply with just the word." \
+    --output-format json 2>/tmp/mt2.err | jq -r '.result // empty')
+  echo "  turn 2 recall: $MT2"
+  check "resumed session recalls turn-1 codeword through the proxy" 'echo "$MT2" | grep -q "HORIZON"' "claude (--resume) recalled: \`${MT2}\`"
+else
+  # No session_id in the JSON envelope (older/newer CLI shape) — degrade gracefully, never hard-fail.
+  note "multi-turn: SKIPPED (no session_id in claude -p JSON output)"
+  record "resumed session recalls turn-1 codeword" "SKIP" "no session_id in claude -p JSON envelope"
+fi
+
 # --- 10) reasoning EFFORT is honored end-to-end (#33) --------------------------------------------
 # Two halves of reality: (a) the proxy correctly reads the effort the user picks and reports it back,
 # and (b) the real `claude --effort` CLI knob drives a working turn at every level.

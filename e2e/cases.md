@@ -2,7 +2,9 @@
 
 End-to-end scenarios that wire the **real** worker + supervisor + TUI modules together the way
 the daemon does (worker metric sink → supervisor SQLite → control API), using a fake Copilot
-provider so no live network/token is needed. Spec: [`copilot-reverse.e2e.test.ts`](./copilot-reverse.e2e.test.ts).
+provider so no live network/token is needed. Specs: the per-topic `e2e/*.e2e.test.ts` files
+(`proxy`, `model-vision`, `tools`, `multiturn`, `responses`, `control-setup`), sharing the
+fixtures in [`helpers.ts`](./helpers.ts).
 
 **Policy: every code update must keep all e2e cases green.** Run with `npm run test:e2e`
 (`npm test` also runs them — the suite is included in the default vitest run).
@@ -41,7 +43,7 @@ provider so no live network/token is needed. Spec: [`copilot-reverse.e2e.test.ts
 ### Codex `/responses` (EP-27 … EP-38)
 
 The OpenAI Responses API end-to-end through a booted worker (Codex speaks only this). Hermetic — fake
-provider, no network. Spec: same `copilot-reverse.e2e.test.ts`, `describe("E2E: Codex /responses")`.
+provider, no network. Spec: `responses.e2e.test.ts`, `describe("E2E: Codex /responses")`.
 
 | ID | Scenario | Expected result |
 |----|----------|-----------------|
@@ -58,6 +60,20 @@ provider, no network. Spec: same `copilot-reverse.e2e.test.ts`, `describe("E2E: 
 | EP-37 | a `/responses` request | recorded in the supervisor `request_log` with `endpoint:"/openai/responses"` |
 | EP-38 | `gpt-4o[1m]` model | the `[1m]` suffix is stripped before forwarding |
 
+### Multi-turn continuity (EP-39 … EP-41)
+
+The Anthropic/OpenAI wire is **stateless** — the client (Claude Code on `--resume`, or an interactive
+REPL) replays the entire prior conversation in `messages` on every turn. So a follow-up turn only
+"remembers" the first if the proxy faithfully forwards that replayed history. These capture what
+reached the provider on turn 2 and assert the turn-1 exchange survived translation. Hermetic — fake
+provider. Spec: `multiturn.e2e.test.ts`, `describe("E2E: multi-turn continuity")`.
+
+| ID | Scenario | Expected result |
+|----|----------|-----------------|
+| EP-39 | Anthropic turn 2 body `[user, assistant, user]` (what `--resume` replays) | both the turn-1 user fact AND the assistant reply reach the provider — 2 user + 1 assistant messages, content intact |
+| EP-40 | OpenAI chat turn 2 with prior history | same history round-trip on `/openai/chat/completions` |
+| EP-41 | streaming turn 2 with prior history | prior turns reach the provider on the streamed path too (interactive-REPL wire is identical) |
+
 ## What each case protects (regressions it would catch)
 
 - **EP-01/EP-02** — core proxy translation (OpenAI/Anthropic ⇄ Copilot canonical), streaming framing.
@@ -69,6 +85,7 @@ provider, no network. Spec: same `copilot-reverse.e2e.test.ts`, `describe("E2E: 
 - **EP-15/EP-16** — model resolution (fuzzy match + 1M `[1m]` suffix).
 - **EP-17** — vision passthrough (images not dropped).
 - **EP-18/EP-19/EP-20** — tool-call translation in both directions.
+- **EP-39/EP-40/EP-41** — multi-turn continuity: a resumed/interactive conversation's prior turns are replayed by the client and must survive translation, or every follow-up ("what did I just say?") silently loses context.
 - **EP-24/EP-25/EP-26** — the full setup→status→reset lifecycle for both clients.
 
 ## Live integration tests (opt-in, real Copilot)
@@ -99,6 +116,7 @@ not part of `npm test`. It writes a markdown report after each run. Checks:
 | model discovery | `/anthropic/v1/models` | picker gets dashed `claude-opus-4-8[1m]`, no dotted ids leak |
 | canonical opus | `/anthropic/v1/messages` | `claude-opus-4-8[1m]` resolves to Copilot opus + answers `OPUS_OK` |
 | setup default model | `claudeCopilotReverseEnv` | the default ANTHROPIC_MODEL is dashed `claude-opus-4-8[1m]` + answers `DEFAULT_OK` |
+| multi-turn `--resume` | `-p` turn 1 → `-p --resume <session_id>` turn 2 | turn 2 recalls the turn-1 codeword (`HORIZON`) — real conversation memory survives the proxy; `SKIP`s if the CLI omits `session_id` |
 | effort echoed (modern wire) | `/anthropic/v1/messages` | `output_config.effort` low/medium/high/xhigh/max each echoes in `x-copilot-reverse-effort` |
 | effort legacy budget | `/anthropic/v1/messages` | legacy `thinking.budget_tokens=16000` still maps to `high` |
 | `claude --effort max/low` | real CLI effort knob | the turn still answers `6*7`→`42` at both levels (high effort doesn't break a turn) |
