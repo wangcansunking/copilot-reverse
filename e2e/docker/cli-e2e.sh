@@ -223,6 +223,105 @@ echo "  claude (image turn) result: ${IMG_TEXT:-<err: $IMG_ERR>}"
 check "claude image turn never hits the Responses API" '! echo "$IMG_RESP" | grep -qi "does not support Responses API"' "no \`does not support Responses API\` leaked for a Claude+image turn"
 check "claude sees the image and names the colour (red)" 'echo "$IMG_TEXT" | grep -qi "red"' "claude (Claude id + real 64x64 image) replied: \`${IMG_TEXT:-<err: $IMG_ERR>}\`"
 
+# --- 12) REAL codex tool-use loop (function_call <-> function_call_output through the proxy) -------
+# The coverage bar names "a tool-call that must translate both ways" as a must-cover edge, yet every
+# other codex/claude check is a plain-text turn. This drives a REAL agentic loop: codex must issue a
+# shell tool_call, get its output back, and continue — the richest /openai/responses translation path
+# (responses-inbound.ts function_call/function_call_output <-> canonical tool_use/tool_result). A
+# regression here strands EVERY real Codex task with "stream closed before response.completed" while all
+# hermetic checks stay green — the class already caught once (nameless tool -> Copilot 400).
+# ORACLE = the FILESYSTEM: codex can only create the file by really running the tool through the proxy,
+# so asserting the file exists + has the exact token is immune to codex's JSONL event-shape drifting.
+note "codex tool loop -> writes a file via a real shell tool_call (fs oracle)"
+rm -f /tmp/codex_proof.txt
+CODEX_TOOL_OUT=$(cd /tmp && codex exec --skip-git-repo-check -s workspace-write \
+  "Create a file named codex_proof.txt in the current directory whose contents are exactly CODEX_TOOL_OK, then reply DONE." 2>/tmp/codex-tool.err)
+CODEX_PROOF=$(cat /tmp/codex_proof.txt 2>/dev/null)
+echo "  codex_proof.txt contents: ${CODEX_PROOF:-<not created>}"
+check "codex completes a real tool loop (file written through the proxy)" 'echo "$CODEX_PROOF" | grep -q "CODEX_TOOL_OK"' "codex wrote: \`${CODEX_PROOF:-<none>}\` (function_call -> shell -> function_call_output round-tripped)"
+
+# --- 13) REAL claude vision: OCR round-trip + downscale keeps the image LEGIBLE -------------------
+# Image downscale (PR #44) is otherwise only proven at the http count_tokens layer (token MATH on a
+# noise image) — which structurally cannot prove Copilot READ the pixels, and the documented 1x1-PNG
+# trap means a synthetic fixture can mask a real "Could not process image". This drives the real CLI
+# the way a user attaching a screenshot does: claude reads an on-disk PNG via its Read tool and must
+# report the text baked into it. Two fixtures, deterministically rendered in-container with Jimp:
+#   - small legible token  -> exercises the byte short-circuit (image-resize.ts:101, no re-encode)
+#   - large >1.5MB token   -> forces the decode + quality-ladder re-encode (image-resize.ts:107) and
+#                             proves the shrink kept the letters LEGIBLE (not a smear) — the whole point
+#                             of the 502 fix. (Distinct from case 11's colour-naming curl POST: this is
+#                             the real Read-tool path + OCR + the re-encode ladder.)
+vision_case() { # vision_case <png-path> <expected-token>
+  local png="$1" tok="$2"
+  local out
+  out=$(claude -p "Read the image file at ${png} and reply with ONLY the exact text shown in the image, nothing else." \
+    --allowedTools Read --permission-mode acceptEdits --output-format json 2>/tmp/vision.err | jq -r '.result // empty' 2>/dev/null)
+  echo "  claude vision (${png##*/}) read: ${out:-<none>}"
+  # tolerant + case-insensitive (the model may add whitespace); a hit proves it truly saw the pixels.
+  if echo "$out" | grep -qi "$tok"; then
+    check "claude vision OCR reads '${tok}' from ${png##*/}" 'true' "claude read the baked-in token through the Read-tool -> image -> Copilot vision path"
+  else
+    check "claude vision OCR reads '${tok}' from ${png##*/}" 'false' "expected \`${tok}\`, got \`${out:-<none>}\` (vision may be unentitled / Read blocked)"
+  fi
+}
+# Render both fixtures with the bundled Jimp font (>=64x64 so neither trips the 1x1 rejection).
+note "vision: render deterministic OCR fixtures (Jimp) then read them via the real claude CLI"
+if node --input-type=module -e '
+import { Jimp, loadFont } from "jimp";
+import { SANS_64_BLACK, SANS_128_BLACK } from "jimp/fonts";
+// small: 512x200 white canvas, clean token -> ~5KB PNG, stays under the 1.5MB byte gate (no re-encode).
+{ const img = new Jimp({ width: 512, height: 200, color: 0xffffffff });
+  const f = await loadFont(SANS_64_BLACK); img.print({ font: f, x: 40, y: 60, text: "VISION7" });
+  await img.write("/tmp/vision_small.png"); }
+// large: 2000x1400 high-entropy bg (PNG cant compress under 1.5MB) + big bold token that stays legible
+// even after the max downscale -> forces encodeUnderBudget to actually decode + re-encode.
+{ const W=2000,H=1400; const img = new Jimp({ width: W, height: H, color: 0xffffffff });
+  for (let y=0;y<H;y+=2) for (let x=0;x<W;x+=2){ const v=(x*131+y*197)%256; img.setPixelColor((((v<<24)|(v<<16)|(v<<8)|0xff)>>>0), x, y); }
+  const f = await loadFont(SANS_128_BLACK); img.print({ font: f, x: 120, y: 600, text: "BIGTEXT9" });
+  await img.write("/tmp/vision_large.png"); }
+' 2>/tmp/vision-gen.err; then
+  vision_case /tmp/vision_small.png "VISION7"
+  vision_case /tmp/vision_large.png "BIGTEXT9"
+else
+  note "vision: SKIPPED (fixture render failed)"
+  record "claude vision OCR round-trip" "SKIP" "Jimp fixture render failed: $(head -1 /tmp/vision-gen.err 2>/dev/null)"
+fi
+
+# --- 14) unknown / typo'd model degrades gracefully (bounded is_error, never a hang or 502-mask) ---
+# router.ts:26 forwards an unmatched id VERBATIM (modelMap is empty, fuzzy < 0.6 threshold on a nonsense
+# id), so Copilot 404s it. This is the ONE model-resolution branch with zero real-Copilot coverage
+# (http-e2e cant reach it — its dummy token 401s before model validation). The north-star is "never
+# freeze/mask a degenerate turn": a user typo must surface a bounded is_error and RETURN, not hang to
+# the turn timeout. The bounded wall-clock (timeout) IS the assertion that it didn't freeze.
+note "unknown model id -> bounded is_error, returns (no hang)"
+BAD_JSON=$(timeout 90 env ANTHROPIC_MODEL="not-a-real-model-xyz" claude -p "Reply with exactly: NOPE" --output-format json 2>/tmp/badmodel.err)
+BAD_RC=$?
+BAD_ISERR=$(echo "$BAD_JSON" | jq -r '.is_error // empty' 2>/dev/null)
+echo "  unknown-model rc=$BAD_RC is_error=$BAD_ISERR"
+# rc 124 = the timeout fired = it HUNG (the failure we guard against). Any other rc means it returned.
+check "unknown model returns (did not hang to timeout)" '[ "$BAD_RC" != "124" ]' "claude returned rc=$BAD_RC within 90s (no freeze)"
+check "unknown model surfaces a bounded error, not a masked hang" '[ "$BAD_ISERR" = "true" ] || echo "$BAD_JSON" | grep -qiE "error|not.?found|404"' "is_error=${BAD_ISERR}; a typo'd id degrades to a visible error"
+
+# --- 15) native web_search hosted-tool passthrough via REAL codex (gpt-5 Responses) ---------------
+# HOSTED_TOOL_TYPES (responses-inbound.ts:75) -> {type} passthrough is the ONLY production path for
+# grounded Codex search; proven today only against the fake spy (EP-34) + as a unit. Drive it for real.
+# SKIP (never fail) if the mounted token lacks native web_search entitlement (gpt-5-only) or the config
+# knob shape drifted — keeps no-secret / forked / unentitled CI green.
+note "codex native web_search -> grounded answer (SKIP if unentitled)"
+CODEX_WEB=$(cd /tmp && codex exec --skip-git-repo-check -s read-only \
+  -c model="gpt-5" -c features.web_search=true \
+  "Use web search to find the latest stable Rust release version and reply with just the version number." 2>/tmp/codex-web.err)
+CODEX_WEB_LINE=$(echo "$CODEX_WEB" | tail -1)
+echo "  codex web result: $CODEX_WEB_LINE"
+if echo "$CODEX_WEB" | grep -Eq "1\.[0-9]+"; then
+  check "codex native web_search returns a grounded answer" 'true' "codex (gpt-5 + web_search) replied: \`${CODEX_WEB_LINE}\`"
+elif { echo "$CODEX_WEB"; cat /tmp/codex-web.err; } | grep -qiE "web_search|not.?support|unsupport|entitl|unknown|invalid|403"; then
+  note "codex web_search -> SKIPPED (not entitled / knob drifted)"
+  record "codex native web_search (hosted-tool passthrough)" "SKIP" "gpt-5 web_search unentitled or config knob drifted: \`${CODEX_WEB_LINE}\`"
+else
+  check "codex native web_search returns a grounded answer" 'false' "expected a 1.x version, got \`${CODEX_WEB_LINE}\`"
+fi
+
 # --- teardown -----------------------------------------------------------------------------------
 kill "$WPID" 2>/dev/null
 
