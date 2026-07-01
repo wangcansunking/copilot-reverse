@@ -11,17 +11,21 @@ and update this file (paste the summary).
   `tool_result`**, which was being flattened into the tool result's text string — invisible to token
   counting and untouched by resize. We now take over the job the real Anthropic backend does for us: a
   new `core/image-resize.ts` decodes → downscales to a 1568px long edge → re-encodes JPEG (jimp),
-  collapsing a high-entropy image ~6x (measured: 2.88M→486K tokens on a 1800×1200 noise PNG). Images
-  returned inside a `tool_result` are now preserved structurally end-to-end (Anthropic + OpenAI inbound
-  → resize + count → forwarded inline on the Copilot `tool` message, which Copilot accepts — probed
-  live). Wired into all image paths (`/anthropic/v1/messages`, `/openai/chat/completions`,
+  collapsing a high-entropy image ~6x (measured: 2.88M→486K tokens on a 1800×1200 noise PNG). The gate
+  and target are BYTES, not pixels (base64 length is what Copilot bills): images under a ~1.5MB
+  per-image budget are forwarded byte-identical without decoding, and an over-budget image is
+  downscaled AND stepped down a JPEG quality/resolution ladder until it actually fits — closing the gap
+  where a high-detail photo already within the pixel cap (a "normal-looking" read image) still 502'd.
+  Images returned inside a `tool_result` are now preserved structurally end-to-end (Anthropic + OpenAI
+  inbound → resize + count → forwarded inline on the Copilot `tool` message, which Copilot accepts —
+  probed live). Wired into all image paths (`/anthropic/v1/messages`, `/openai/chat/completions`,
   `/openai/responses`) AND `count_tokens`, so Claude Code's context sizing matches the request actually
   sent. `estimateTokens` now counts image bytes at all — top-level AND inside tool results (it
   previously ignored images, under-reporting by millions). New unit suite
-  `tests/core/image-resize.test.ts` (8 cases incl. tool_result path) + anthropic-inbound/adapter/tokens
-  coverage + two hermetic http-e2e checks (a large image, and one nested in a tool_result, both proving
-  `count_tokens` lands far below raw base64). 609 unit/integration tests green; docker http-e2e ALL
-  PASSED (60); `tsc` clean.
+  `tests/core/image-resize.test.ts` (10 cases incl. the tool_result path and the within-edge-but-heavy
+  byte-gate case) + anthropic-inbound/adapter/tokens coverage + three hermetic http-e2e checks (a large
+  image, one nested in a tool_result, and a within-edge heavy image, all proving `count_tokens` lands
+  far below raw base64). 611 unit/integration tests green; docker http-e2e ALL PASSED (61); `tsc` clean.
 
 
 - **2026-06-30 (effort actually works — output_config.effort + observability header, #33)** — a live

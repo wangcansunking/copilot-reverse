@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Jimp, JimpMime } from "jimp";
 import { randomFillSync } from "node:crypto";
-import { shrinkDataUrl, shrinkImagesInPlace, MAX_IMAGE_EDGE } from "../../src/core/image-resize.js";
+import { shrinkDataUrl, shrinkImagesInPlace, MAX_IMAGE_EDGE, MAX_IMAGE_BYTES } from "../../src/core/image-resize.js";
 import type { CanonicalMessage } from "../../src/core/canonical.js";
 
 // Build a real PNG data URL of the given dimensions (solid color, so it encodes tiny — we pad the
@@ -28,8 +28,8 @@ function edgeOf(dataUrl: string): Promise<{ w: number; h: number }> {
 }
 
 describe("shrinkDataUrl", () => {
-  it("downscales an image whose long edge exceeds the cap", async () => {
-    const big = await pngDataUrl(4000, 2000);
+  it("downscales an over-budget image whose long edge exceeds the cap", async () => {
+    const big = await noisePngDataUrl(4000, 2000); // over budget → decoded + downscaled
     const out = await shrinkDataUrl(big);
     const { w, h } = await edgeOf(out);
     expect(Math.max(w, h)).toBeLessThanOrEqual(MAX_IMAGE_EDGE);
@@ -37,12 +37,10 @@ describe("shrinkDataUrl", () => {
     expect(w / h).toBeCloseTo(2, 1);
   });
 
-  it("leaves a small image's pixels alone (long edge already under the cap)", async () => {
+  it("leaves a small image's pixels alone (well under the byte budget)", async () => {
     const small = await pngDataUrl(100, 80);
     const out = await shrinkDataUrl(small);
-    const { w, h } = await edgeOf(out);
-    expect(w).toBe(100);
-    expect(h).toBe(80);
+    expect(out).toBe(small); // byte-identical passthrough
   });
 
   // The whole point: a realistic oversized image's byte payload must collapse. A noise PNG at 2.3M+
@@ -52,6 +50,27 @@ describe("shrinkDataUrl", () => {
     const out = await shrinkDataUrl(big);
     expect(out.startsWith("data:image/jpeg;base64,")).toBe(true);
     expect(out.length).toBeLessThan(big.length / 2); // at least halved; in practice ~6x smaller
+  });
+
+  // The byte-gate gap: an image whose LONG EDGE is already within MAX_IMAGE_EDGE but whose BYTES are
+  // huge (a high-detail photo, the exact "I read a normal-looking image and still got a 502" case). A
+  // pixel-only gate would pass it through untouched. It MUST be re-encoded down under the byte budget.
+  it("shrinks a within-edge image whose bytes exceed the budget (photo case)", async () => {
+    // 1568x1400 noise: long edge == the cap, so a size gate wouldn't touch it, yet it's ~2.9M tokens.
+    const heavy = await noisePngDataUrl(MAX_IMAGE_EDGE, 1400);
+    expect(heavy.length).toBeGreaterThan(MAX_IMAGE_BYTES); // precondition: it really is over budget
+    const out = await shrinkDataUrl(heavy);
+    expect(out.startsWith("data:image/jpeg;base64,")).toBe(true);
+    expect(out.length).toBeLessThanOrEqual(MAX_IMAGE_BYTES); // converged into the byte budget
+  });
+
+  // Cheap byte-gate: an image comfortably under the byte budget is returned byte-identical WITHOUT a
+  // re-encode — even if it's a PNG. Proves we don't decode/re-encode every small image every request.
+  it("passes a within-budget image through untouched (no re-encode)", async () => {
+    const small = await noisePngDataUrl(200, 200); // tiny, well under budget
+    expect(small.length).toBeLessThan(MAX_IMAGE_BYTES);
+    const out = await shrinkDataUrl(small);
+    expect(out).toBe(small); // byte-identical, still a PNG — never decoded
   });
 
   it("returns the input unchanged when it isn't a base64 image data URL", async () => {
@@ -66,15 +85,14 @@ describe("shrinkDataUrl", () => {
 });
 
 describe("shrinkImagesInPlace", () => {
-  it("rewrites oversized image blocks across messages and leaves text untouched", async () => {
-    const big = await pngDataUrl(3000, 3000);
+  it("rewrites over-budget image blocks across messages and leaves text untouched", async () => {
+    const big = await noisePngDataUrl(3000, 3000);
     const messages: CanonicalMessage[] = [
       { role: "user", content: [{ type: "text", text: "look" }, { type: "image", dataUrl: big }] },
     ];
     await shrinkImagesInPlace(messages);
     const img = messages[0].content.find((b) => b.type === "image") as { dataUrl: string };
-    const { w, h } = await edgeOf(img.dataUrl);
-    expect(Math.max(w, h)).toBeLessThanOrEqual(MAX_IMAGE_EDGE);
+    expect(img.dataUrl.length).toBeLessThanOrEqual(MAX_IMAGE_BYTES);
     expect(messages[0].content[0]).toEqual({ type: "text", text: "look" });
   });
 

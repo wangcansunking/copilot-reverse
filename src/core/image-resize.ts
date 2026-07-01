@@ -2,19 +2,32 @@ import { Jimp, JimpMime } from "jimp";
 import type { CanonicalMessage } from "./canonical.js";
 
 // Why this exists: we sit where the real Anthropic backend used to, and that backend silently
-// downscales oversized images before the model ever sees them (long edge ≤ ~1568px). Copilot's
-// /chat has NO such tiler for Claude models — it treats the inline `data:...;base64,...` URL as
-// PLAIN TEXT and bills it at ~char/4. A single full-resolution screenshot (~9MB base64) is then
-// ~2.3M tokens, blowing straight past the model's prompt limit ("model_max_prompt_tokens_exceeded").
-// So we take over the backend's job: decode → downscale → re-encode, shrinking the payload by ~50x
-// before it goes upstream. This mirrors Claude Code's own reliance on backend-side image transforms.
+// downscales oversized images before the model ever sees them. Copilot's /chat has NO such tiler for
+// Claude models — it treats the inline `data:...;base64,...` URL as PLAIN TEXT and bills it at
+// ~char/4. A single full-resolution screenshot (~9MB base64) is then ~2.3M tokens, blowing straight
+// past the model's prompt limit ("model_max_prompt_tokens_exceeded"). So we take over the backend's
+// job: decode → downscale → re-encode, shrinking the payload before it goes upstream.
+//
+// The gate + target are BYTES, not pixels. base64 length is what Copilot bills (char/4), so a photo
+// whose long edge is already ≤ the pixel cap but whose BYTES are huge (a high-detail image a pixel
+// gate would wave through) still blows the budget. We (a) short-circuit on base64 length so most
+// images are never decoded, and (b) when over budget, downscale AND step JPEG quality/resolution
+// DOWN until the encoded result actually fits the byte budget.
 
-// Anthropic's long-edge cap (~1568px is its documented "no benefit beyond" size). Matching it keeps
-// visual fidelity identical to a direct-to-Anthropic call while collapsing the byte count.
+// Per-image base64 byte budget. Copilot bills base64 as ~char/4, so this cap ≈ MAX_IMAGE_BYTES/4
+// tokens (~375k) — clean for a detailed screenshot yet far below the 936k prompt limit, leaving room
+// for conversation text and multiple images. Images already under this are forwarded untouched.
+export const MAX_IMAGE_BYTES = 1_500_000;
+// Anthropic's long-edge cap (~1568px is its documented "no benefit beyond" size). The first downscale
+// target; if the re-encode still overflows the byte budget we shrink further from here.
 export const MAX_IMAGE_EDGE = 1568;
-// JPEG quality for re-encode. 72 is visually clean for screenshots/photos and roughly an order of
-// magnitude smaller than the source PNG — the payload reduction, not pixel-perfection, is the point.
-const JPEG_QUALITY = 72;
+// JPEG quality ladder for the re-encode: try higher quality first, stepping down only as needed to
+// reach the byte budget. Below the last rung we shrink the pixel dimensions instead.
+const QUALITY_LADDER = [72, 55, 40, 28];
+// When even the lowest quality overflows, scale the long edge down by this factor and retry the
+// ladder — bounded so a pathological image still converges instead of looping forever.
+const EDGE_STEP = 0.7;
+const MIN_EDGE = 320;
 
 // A base64 image data URL looks like `data:image/png;base64,<b64>`. Return the raw bytes, or null for
 // anything we shouldn't touch (remote URLs, non-base64, or a malformed/undecodable payload).
@@ -29,20 +42,43 @@ function decodeBase64Image(dataUrl: string): Buffer | null {
   }
 }
 
-// Downscale one image data URL so its long edge is ≤ MAX_IMAGE_EDGE, re-encoding as JPEG to shed the
-// bulk of the bytes. Non-images, remote URLs, undecodable payloads, and already-small images are
-// returned UNCHANGED (byte-identical) so the caller can blindly map over every image without special
-// cases. Never throws: on any decode/encode failure we fall back to the original — a slightly-too-big
-// image reaching the token pre-check is far better than a crashed request.
+// The decoded-image type, taken straight from Jimp.fromBuffer's return so it matches jimp's own
+// instance shape exactly (annotating it as InstanceType<typeof Jimp> drifts from what jimp infers).
+type JimpImage = Awaited<ReturnType<typeof Jimp.fromBuffer>>;
+
+// Re-encode an image down until its base64 fits MAX_IMAGE_BYTES: walk the quality ladder, and if the
+// lowest quality still overflows, shrink the long edge and try again. Returns the smallest data URL
+// found (guaranteed to terminate via the MIN_EDGE floor). Encoding is measured on the actual base64
+// length, since that's the exact quantity Copilot bills.
+async function encodeUnderBudget(img: JimpImage): Promise<string> {
+  let best: string | undefined;
+  let edge = Math.min(MAX_IMAGE_EDGE, Math.max(img.width, img.height));
+  for (;;) {
+    if (Math.max(img.width, img.height) > edge) img.scaleToFit({ w: edge, h: edge });
+    for (const quality of QUALITY_LADDER) {
+      const buf = await img.getBuffer(JimpMime.jpeg, { quality });
+      const url = `data:image/jpeg;base64,${buf.toString("base64")}`;
+      if (!best || url.length < best.length) best = url;
+      if (url.length <= MAX_IMAGE_BYTES) return url;
+    }
+    const nextEdge = Math.floor(edge * EDGE_STEP);
+    if (nextEdge < MIN_EDGE) return best!; // give up shrinking further — return the smallest we got
+    edge = nextEdge;
+  }
+}
+
+// Shrink one image data URL so its base64 fits the byte budget, re-encoding as JPEG. Cheap path first:
+// non-images, remote URLs, undecodable payloads, and images already under budget are returned UNCHANGED
+// (byte-identical) WITHOUT decoding, so the caller can blindly map over every image and small images
+// cost nothing. Never throws: on any decode/encode failure we fall back to the original — a
+// slightly-too-big image reaching the token pre-check is far better than a crashed request.
 export async function shrinkDataUrl(dataUrl: string): Promise<string> {
+  if (dataUrl.length <= MAX_IMAGE_BYTES) return dataUrl;        // byte short-circuit — no decode
   const bytes = decodeBase64Image(dataUrl);
   if (!bytes) return dataUrl;
   try {
     const img = await Jimp.fromBuffer(bytes);
-    if (Math.max(img.width, img.height) <= MAX_IMAGE_EDGE) return dataUrl; // already within budget
-    img.scaleToFit({ w: MAX_IMAGE_EDGE, h: MAX_IMAGE_EDGE });
-    const out = await img.getBuffer(JimpMime.jpeg, { quality: JPEG_QUALITY });
-    return `data:image/jpeg;base64,${out.toString("base64")}`;
+    return await encodeUnderBudget(img);
   } catch {
     return dataUrl;
   }

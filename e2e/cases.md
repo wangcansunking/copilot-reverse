@@ -128,8 +128,10 @@ high-entropy PNG (1800×1200 noise, so it can't run-length compress — a realis
 to `count_tokens`, and the reported estimate must land far below the raw base64 byte count, proving the
 worker decoded → downscaled → re-encoded the image before it would ever reach Copilot. A second check
 nests the SAME image inside a `tool_result` (the real generate-readme-cover-images 502 — a Bash tool
-that emitted a screenshot) and asserts it's downscaled there too. Quota-free (no upstream call), so
-both run on the dummy token.
+that emitted a screenshot) and asserts it's downscaled there too. A third builds a 1568×1400 image
+whose long edge is already within the pixel cap but whose bytes are huge, asserting it's STILL shrunk —
+proving the gate is on bytes, not dimensions. Quota-free (no upstream call), so all run on the dummy
+token.
 
 This black-box path caught two bugs nothing else did: a Codex tool-translation `400` (a `custom`/
 `tool_search` tool forwarded nameless → Copilot rejects → "stream closed before response.completed"),
