@@ -2,6 +2,17 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.14.1",
+    "date": "2026-07-01",
+    "summary": "fix(worker): only route to Copilot's Responses API when a model advertises it, and only send `reasoning_effort` to models that support it.",
+    "summaries": [
+      "fix(worker): only route to Copilot's Responses API when a model advertises it, and only send `reasoning_effort` to models that support it.",
+      "Two related upstream-routing bugs, both surfaced by the real-CLI e2e:",
+      "1. **Responses mis-routing.** A `/chat` 400 whose body matched the responses-only hint regex (`does not support …`, `invalid_request_body`) tripped the safety net into retrying on `/responses` — which is gpt-5-class only. For a Claude *or* gpt-4o turn that retry then 400'd (\"model X does not support / is not supported via Responses API\"), masking the real `/chat` error. The `/responses` route (primary and both 400 safety nets) is now gated on the live endpoint map positively listing `/responses` for the model, so only gpt-5.x / mai-code ever go there; every other model surfaces its true `/chat` failure.",
+      "2. **`reasoning_effort` sent to models that reject it.** `claude -p` defaults to gpt-4o and sends `effort=high`, but gpt-4o doesn't advertise `reasoning_effort` → every turn 400'd (`invalid_reasoning_effort`) — previously hidden behind bug 1. The adapter now gates the `/chat` `reasoning_effort` field on the model's advertised capability (from `/models`), defaulting to \"send\" only until discovery resolves so a supported model's reasoning turn is never silently dropped."
+    ]
+  },
+  {
     "version": "0.14.0",
     "date": "2026-07-01",
     "summary": "Downscale oversized images before they reach Copilot, fixing `model_max_prompt_tokens_exceeded` (a 502 relayed to the client) when a large image is in play. Copilot's `/chat` has no vision tiler for Claude models — it bills an inline `data:...;base64,...` URL as plain text at ~char/4, so a single full-resolution image (~9MB base64 ≈ 2.3M tokens) overflows the model's prompt limit. The worker now takes over the job the real Anthropic backend does for us: decode → downscale → re-encode as JPEG, collapsing the payload before send.",
@@ -87,14 +98,6 @@ export const APP_CHANGES: ChangeEntry[] = [
     "summary": "Map Copilot model ids to the canonical ids Claude Code's native /model picker recognises, so models show friendly names and the 1M-context badge instead of bare ids. Outbound, `/anthropic/v1/models` dashes claude ids (`claude-opus-4.8` → `claude-opus-4-8[1m]`) and tags opus 4.6/4.7/4.8 + sonnet 4.6 as 1M; setup's default ANTHROPIC_MODEL is dashed the same way so the picker matches it; inbound, requests resolve back to the real Copilot model. GPT/o3 pass through unchanged.",
     "summaries": [
       "Map Copilot model ids to the canonical ids Claude Code's native /model picker recognises, so models show friendly names and the 1M-context badge instead of bare ids. Outbound, `/anthropic/v1/models` dashes claude ids (`claude-opus-4.8` → `claude-opus-4-8[1m]`) and tags opus 4.6/4.7/4.8 + sonnet 4.6 as 1M; setup's default ANTHROPIC_MODEL is dashed the same way so the picker matches it; inbound, requests resolve back to the real Copilot model. GPT/o3 pass through unchanged."
-    ]
-  },
-  {
-    "version": "0.7.0",
-    "date": "2026-06-29",
-    "summary": "feat(tui): `/metrics` now reports token usage (in/out) and an estimated cost per model and overall — the worker records prompt/completion tokens for every request (persisted in SQLite), and cost is a list-price estimate (Copilot is flat-fee). User messages also get a highlighted bar in the transcript so they stand out from muted system notes and assistant output.",
-    "summaries": [
-      "feat(tui): `/metrics` now reports token usage (in/out) and an estimated cost per model and overall — the worker records prompt/completion tokens for every request (persisted in SQLite), and cost is a list-price estimate (Copilot is flat-fee). User messages also get a highlighted bar in the transcript so they stand out from muted system notes and assistant output."
     ]
   }
 ];
