@@ -21,11 +21,14 @@ and update this file (paste the summary).
   probed live). Wired into all image paths (`/anthropic/v1/messages`, `/openai/chat/completions`,
   `/openai/responses`) AND `count_tokens`, so Claude Code's context sizing matches the request actually
   sent. `estimateTokens` now counts image bytes at all — top-level AND inside tool results (it
-  previously ignored images, under-reporting by millions). New unit suite
-  `tests/core/image-resize.test.ts` (10 cases incl. the tool_result path and the within-edge-but-heavy
-  byte-gate case) + anthropic-inbound/adapter/tokens coverage + three hermetic http-e2e checks (a large
-  image, one nested in a tool_result, and a within-edge heavy image, all proving `count_tokens` lands
-  far below raw base64). 611 unit/integration tests green; docker http-e2e ALL PASSED (61); `tsc` clean.
+  previously ignored images, under-reporting by millions). A persistent oversized image (re-sent every
+  turn, hit by both count_tokens and messages) is decoded once and cached by content — ~4.3s cold →
+  ~45ms warm — so it's not re-encoded every turn; text-only requests cost ~0.04ms. New unit suite
+  `tests/core/image-resize.test.ts` (11 cases incl. the tool_result path, the within-edge-but-heavy
+  byte-gate case, and the content cache) + anthropic-inbound/adapter/tokens coverage + three hermetic
+  http-e2e checks (a large image, one nested in a tool_result, and a within-edge heavy image, all
+  proving `count_tokens` lands far below raw base64). 612 unit/integration tests green; docker http-e2e
+  ALL PASSED (61); `tsc` clean.
 
 
 - **2026-06-30 (effort actually works — output_config.effort + observability header, #33)** — a live

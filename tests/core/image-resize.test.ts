@@ -78,6 +78,22 @@ describe("shrinkDataUrl", () => {
     expect(await shrinkDataUrl(url)).toBe(url);
   });
 
+  // A big image persists in history and is re-sent every turn — and Claude Code hits BOTH count_tokens
+  // and messages each cycle. Without a cache, that's a ~2s decode+re-encode per turn per endpoint. The
+  // result is cached by content, so the same image is shrunk ONCE and every later turn is a fast hit
+  // returning the identical output. Assert: same output, and the second call is dramatically faster.
+  it("caches by content — the same oversized image is only re-encoded once", async () => {
+    const heavy = await noisePngDataUrl(MAX_IMAGE_EDGE, 1400);
+    const t0 = performance.now();
+    const first = await shrinkDataUrl(heavy);
+    const firstMs = performance.now() - t0;
+    const t1 = performance.now();
+    const second = await shrinkDataUrl(heavy);
+    const secondMs = performance.now() - t1;
+    expect(second).toBe(first);                         // identical result
+    expect(secondMs).toBeLessThan(firstMs / 5);         // cache hit is far cheaper than a re-encode
+  });
+
   it("returns the input unchanged when the payload can't be decoded", async () => {
     const garbage = "data:image/png;base64,not-real-image-bytes";
     expect(await shrinkDataUrl(garbage)).toBe(garbage);

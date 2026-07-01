@@ -1,4 +1,5 @@
 import { Jimp, JimpMime } from "jimp";
+import { createHash } from "node:crypto";
 import type { CanonicalMessage } from "./canonical.js";
 
 // Why this exists: we sit where the real Anthropic backend used to, and that backend silently
@@ -72,13 +73,42 @@ async function encodeUnderBudget(img: JimpImage): Promise<string> {
 // (byte-identical) WITHOUT decoding, so the caller can blindly map over every image and small images
 // cost nothing. Never throws: on any decode/encode failure we fall back to the original — a
 // slightly-too-big image reaching the token pre-check is far better than a crashed request.
+// Content-addressed cache of shrink results. A big image persists in conversation history and is
+// re-sent every turn — and Claude Code hits BOTH count_tokens and messages each cycle — so without
+// this the same image would be decoded + re-encoded (~2s) several times per turn. Keyed by a hash of
+// the input data URL (not the multi-MB string itself), bounded by a simple insertion-order LRU so a
+// long session can't grow it without limit. Only over-budget images (the ones we actually re-encode)
+// are cached; small images hit the byte short-circuit and never reach here.
+const CACHE_MAX = 64;
+const shrinkCache = new Map<string, string>();
+function cacheKey(dataUrl: string): string {
+  return createHash("sha1").update(dataUrl).digest("base64");
+}
+function cacheGet(key: string): string | undefined {
+  const hit = shrinkCache.get(key);
+  if (hit !== undefined) { shrinkCache.delete(key); shrinkCache.set(key, hit); } // refresh recency
+  return hit;
+}
+function cacheSet(key: string, value: string): void {
+  shrinkCache.set(key, value);
+  if (shrinkCache.size > CACHE_MAX) {
+    const oldest = shrinkCache.keys().next().value;
+    if (oldest !== undefined) shrinkCache.delete(oldest); // evict oldest (insertion order)
+  }
+}
+
 export async function shrinkDataUrl(dataUrl: string): Promise<string> {
   if (dataUrl.length <= MAX_IMAGE_BYTES) return dataUrl;        // byte short-circuit — no decode
+  const key = cacheKey(dataUrl);
+  const cached = cacheGet(key);
+  if (cached !== undefined) return cached;                      // already shrunk this exact image
   const bytes = decodeBase64Image(dataUrl);
   if (!bytes) return dataUrl;
   try {
     const img = await Jimp.fromBuffer(bytes);
-    return await encodeUnderBudget(img);
+    const out = await encodeUnderBudget(img);
+    cacheSet(key, out);
+    return out;
   } catch {
     return dataUrl;
   }
