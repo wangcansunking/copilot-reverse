@@ -83,7 +83,7 @@ Prefer commands? Type `/` to see them all. The essentials:
 `/dashboard` opens a self-refreshing web view of everything happening through the proxy — worker
 health, request volume, and (most useful) recent **errors with their real messages**:
 
-![copilot-reverse dashboard](images/dashboard.png)
+![copilot-reverse dashboard](images/dashboard.webp)
 
 ---
 
