@@ -103,7 +103,7 @@ not part of `npm test`. It writes a markdown report after each run. Checks:
 | effort legacy budget | `/anthropic/v1/messages` | legacy `thinking.budget_tokens=16000` still maps to `high` |
 | `claude --effort max/low` | real CLI effort knob | the turn still answers `6*7`→`42` at both levels (high effort doesn't break a turn) |
 | large Claude history | `/anthropic/v1/messages` | a ~400-line pasted-history turn answers `BIGHIST_OK` and NEVER emits `does not support Responses API` (safety-net must not mis-route a big Claude turn to /responses) |
-| Claude + image | `/anthropic/v1/messages` | a Claude id + an image block (pasted history + screenshot) surfaces a REAL /chat outcome — an answer, or a genuine error like `Could not process image` — and NEVER the misleading `does not support Responses API` (before the fix, the image's `invalid_request_body` 400 tripped the safety net into /responses) |
+| Claude + image | `/anthropic/v1/messages` | a Claude id + a REAL 64x64 image block (pasted history + screenshot) round-trips: Copilot Claude SEES the image and names its colour (`red`), and the turn NEVER emits the misleading `does not support Responses API` (before the fix, an image turn that 400'd on /chat with an `invalid_request_body` body was mis-retried on /responses) |
 
 ## HTTP edge-case Docker e2e (hermetic — no real Copilot)
 

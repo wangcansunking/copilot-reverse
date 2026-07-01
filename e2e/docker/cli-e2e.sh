@@ -178,27 +178,29 @@ check "large history turn answers via Copilot" 'echo "$BH_TEXT" | grep -q "BIGHI
 check "large history turn never hits the Responses API" '! { echo "$BH_JSON"; cat /tmp/bighist.err; } | grep -qi "does not support Responses API"' "no \`does not support Responses API\` leaked for a Claude turn"
 
 # (b) the exact edge you hit: pasted history + a screenshot. Feed a real image the way Claude Code does
-# — an Anthropic image block over /anthropic/v1/messages — via curl (the CLI can't attach a file in -p),
-# but the model IS a Claude id. The POINT of this case is the regression guard: whatever Copilot decides
-# about the image, a Claude turn must surface the REAL /chat outcome, NEVER the misleading Responses-API
-# 400. (Observed reality: Copilot may answer, or may reject a tiny/odd image with a real
-# `invalid_request_body: Could not process image` 400 — and BEFORE the fix that `invalid_request_body`
-# body tripped the safety net into /responses, masking the real reason with "does not support Responses
-# API". So we assert the turn does NOT leak the Responses-API string, and DOES surface a real outcome.)
-note "claude+image (pasted history + screenshot) -> real outcome, never a Responses-API error"
-PNG_B64="iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-IMG_RESP=$(curl -s -X POST "http://127.0.0.1:$PORT/anthropic/v1/messages" \
-  -H "content-type: application/json" \
-  -d "{\"model\":\"claude-opus-4-8[1m]\",\"max_tokens\":64,\"messages\":[{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"This is a screenshot pasted after a long history. Reply with exactly the token: IMG_OK\"},{\"type\":\"image\",\"source\":{\"type\":\"base64\",\"media_type\":\"image/png\",\"data\":\"$PNG_B64\"}}]}]}" \
-  2>/dev/null)
+# — an Anthropic image block over /anthropic/v1/messages (the CLI can't attach a file in -p). Use a REAL
+# 64x64 PNG (a solid red square), NOT a degenerate 1x1 that Copilot rejects as "Could not process image"
+# — a proper image round-trips: Copilot Claude sees it and names the colour. This is the mainstream
+# happy path (image turns work) AND the regression guard (a Claude turn NEVER emits the misleading
+# "does not support Responses API"; before the fix, an image turn that 400'd on /chat with an
+# `invalid_request_body` body was mis-retried on /responses, masking the real reason).
+note "claude+image (pasted history + screenshot) -> Claude sees the image, never a Responses-API error"
+# Build a valid 64x64 red PNG at runtime (deterministic bytes, no fixtures) and post it as a base64 image.
+IMG_RESP=$(node -e '
+const zlib=require("zlib");const W=64,H=64;
+function chunk(t,d){const l=Buffer.alloc(4);l.writeUInt32BE(d.length);const ty=Buffer.from(t);const cb=Buffer.concat([ty,d]);
+  let c=~0;for(const b of cb){c^=b;for(let i=0;i<8;i++)c=(c>>>1)^(0xEDB88320&-(c&1));}c=~c>>>0;const cr=Buffer.alloc(4);cr.writeUInt32BE(c>>>0);return Buffer.concat([l,ty,d,cr]);}
+const sig=Buffer.from([137,80,78,71,13,10,26,10]);const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(W,0);ihdr.writeUInt32BE(H,4);ihdr[8]=8;ihdr[9]=2;
+const raw=Buffer.alloc(H*(1+W*3));for(let y=0;y<H;y++){const o=y*(1+W*3);raw[o]=0;for(let x=0;x<W;x++){const p=o+1+x*3;raw[p]=200;raw[p+1]=30;raw[p+2]=30;}}
+const png=Buffer.concat([sig,chunk("IHDR",ihdr),chunk("IDAT",zlib.deflateSync(raw)),chunk("IEND",Buffer.alloc(0))]);
+const body=JSON.stringify({model:"claude-opus-4-8[1m]",max_tokens:64,messages:[{role:"user",content:[{type:"text",text:"A screenshot pasted after a long history. What colour is this square? Reply with one word."},{type:"image",source:{type:"base64",media_type:"image/png",data:png.toString("base64")}}]}]});
+fetch("http://127.0.0.1:'"$PORT"'/anthropic/v1/messages",{method:"POST",headers:{"content-type":"application/json"},body}).then(r=>r.text()).then(t=>process.stdout.write(t)).catch(e=>process.stdout.write(JSON.stringify({error:{message:String(e)}})));
+' 2>/dev/null)
 IMG_TEXT=$(echo "$IMG_RESP" | jq -r '[.content[]?|select(.type=="text")|.text]|join("")' 2>/dev/null)
 IMG_ERR=$(echo "$IMG_RESP" | jq -r '.error.message // empty' 2>/dev/null)
 echo "  claude (image turn) result: ${IMG_TEXT:-<err: $IMG_ERR>}"
-# The regression guard (the whole reason this case exists): a Claude turn NEVER leaks the Responses-API error.
 check "claude image turn never hits the Responses API" '! echo "$IMG_RESP" | grep -qi "does not support Responses API"' "no \`does not support Responses API\` leaked for a Claude+image turn"
-# And it surfaces a REAL outcome — either an answer, or a genuine /chat error (e.g. `Could not process
-# image`) — but crucially NOT a bogus Responses hop. Pass if the model answered OR a real /chat error came back.
-check "claude image turn surfaces a real /chat outcome (answer or genuine error)" '{ echo "$IMG_TEXT" | grep -q "IMG_OK"; } || { echo "$IMG_ERR" | grep -qi "completion failed"; }' "claude+image → answer=\`${IMG_TEXT}\` err=\`${IMG_ERR}\`"
+check "claude sees the image and names the colour (red)" 'echo "$IMG_TEXT" | grep -qi "red"' "claude (Claude id + real 64x64 image) replied: \`${IMG_TEXT:-<err: $IMG_ERR>}\`"
 
 # --- teardown -----------------------------------------------------------------------------------
 kill "$WPID" 2>/dev/null
