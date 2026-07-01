@@ -41,7 +41,15 @@ function textOf(content: ContentBlock[]): string {
 function messageToItems(m: CanonicalMessage): ResponsesInputItem[] {
   const items: ResponsesInputItem[] = [];
   const toolResults = m.content.filter((b): b is Extract<ContentBlock, { type: "tool_result" }> => b.type === "tool_result");
-  for (const tr of toolResults) items.push({ type: "function_call_output", call_id: tr.toolUseId, output: tr.content });
+  // The Responses `function_call_output.output` is a plain string — it has no place for an image part.
+  // A tool that returned image(s) (Bash screenshot / MCP image) would otherwise force the base64 into
+  // that string and blow the token budget on this path. Since the image can't be delivered here, note
+  // its omission in the output text instead of shipping raw base64. (This path is gpt-5/Codex; the
+  // image round-trip lives on /chat, which Claude uses.)
+  for (const tr of toolResults) {
+    const note = tr.images?.length ? `${tr.content ? "\n" : ""}[${tr.images.length} image(s) omitted — not supported on this endpoint]` : "";
+    items.push({ type: "function_call_output", call_id: tr.toolUseId, output: tr.content + note });
+  }
   if (toolResults.length) return items; // a tool message carries only results
 
   const toolUses = m.content.filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use");

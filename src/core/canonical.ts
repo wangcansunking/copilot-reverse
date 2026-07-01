@@ -1,7 +1,17 @@
 export interface TextBlock { type: "text"; text: string }
 export interface ImageBlock { type: "image"; dataUrl: string } // full data URI, e.g. data:image/png;base64,...
 export interface ToolUseBlock { type: "tool_use"; id: string; name: string; input: unknown }
-export interface ToolResultBlock { type: "tool_result"; toolUseId: string; content: string }
+export interface ToolResultBlock {
+  type: "tool_result";
+  toolUseId: string;
+  content: string;
+  // Images returned BY the tool (e.g. a Bash command that emits a screenshot, or an MCP tool that
+  // returns an image). Anthropic/OpenAI both allow images inside a tool result, and Copilot accepts
+  // them on a `tool` role message (probed). Kept as a separate field (not folded into `content`) so
+  // the six existing string-only consumers of `content` stay untouched, while resize + token
+  // estimation + the adapter opt into images. Each entry is a full data URI (data:image/...;base64,).
+  images?: string[];
+}
 // Extended-thinking / reasoning output. `text` is the human-readable chain of thought; `opaque` is the
 // upstream's signed/encrypted continuation token (Copilot's `reasoning_opaque`) that must be echoed back
 // on the next turn to preserve the model's reasoning context across tool calls. Either may be empty.

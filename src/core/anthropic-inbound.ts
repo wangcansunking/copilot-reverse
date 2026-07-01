@@ -29,20 +29,41 @@ function systemText(system: string | AnthropicBlock[] | undefined): string {
   return system.filter((b) => b.type === "text" && b.text != null).map((b) => b.text).join("");
 }
 
+// Normalize an Anthropic image source (base64 `media_type`+`data`, or a `url`) to a full data URL.
+function imageSourceToDataUrl(source: AnthropicImageSource): string {
+  return source.type === "url" && source.url
+    ? source.url
+    : `data:${source.media_type ?? "image/png"};base64,${source.data ?? ""}`;
+}
+
+// A tool_result's `content` may itself be a string, or an array of blocks that can include images
+// (Anthropic + MCP tools can return a screenshot). Split it into the text (joined) and the images
+// (as data URLs), so an image returned BY a tool is preserved as a real image the resize + token
+// paths can see — instead of being JSON.stringify'd into the text and billed as raw base64.
+function splitToolResultContent(content: unknown): { text: string; images: string[] } {
+  if (typeof content === "string") return { text: content, images: [] };
+  if (!Array.isArray(content)) return { text: content == null ? "" : JSON.stringify(content), images: [] };
+  const texts: string[] = [];
+  const images: string[] = [];
+  for (const part of content as AnthropicBlock[]) {
+    if (part?.type === "text" && part.text != null) texts.push(part.text);
+    else if (part?.type === "image" && part.source) images.push(imageSourceToDataUrl(part.source));
+    else if (part != null) texts.push(JSON.stringify(part)); // preserve any other structured part as text
+  }
+  return { text: texts.join(""), images };
+}
+
 function blocksToCanonical(content: string | AnthropicBlock[]): ContentBlock[] {
   if (typeof content === "string") return content ? [{ type: "text", text: content }] : [];
   const out: ContentBlock[] = [];
   for (const b of content) {
     if (b.type === "text" && b.text != null) out.push({ type: "text", text: b.text });
-    else if (b.type === "image" && b.source) {
-      // Anthropic image: base64 (media_type + data) or a url source. Normalize to a data URL.
-      const dataUrl = b.source.type === "url" && b.source.url
-        ? b.source.url
-        : `data:${b.source.media_type ?? "image/png"};base64,${b.source.data ?? ""}`;
-      out.push({ type: "image", dataUrl });
-    }
+    else if (b.type === "image" && b.source) out.push({ type: "image", dataUrl: imageSourceToDataUrl(b.source) });
     else if (b.type === "tool_use") out.push({ type: "tool_use", id: b.id!, name: b.name!, input: b.input });
-    else if (b.type === "tool_result") out.push({ type: "tool_result", toolUseId: b.tool_use_id!, content: typeof b.content === "string" ? b.content : JSON.stringify(b.content) });
+    else if (b.type === "tool_result") {
+      const { text, images } = splitToolResultContent(b.content);
+      out.push({ type: "tool_result", toolUseId: b.tool_use_id!, content: text, ...(images.length ? { images } : {}) });
+    }
     // A prior assistant thinking block round-trips so the opaque continuation token (signature) can be
     // echoed upstream, preserving the model's reasoning context across tool-call turns. redacted_thinking
     // (encrypted-only, no text) is carried the same way via its data field.

@@ -22,7 +22,15 @@ function toWireMessages(messages: CanonicalMessage[]) {
     // into one user message; emitting only the first (the old bug) left later tool_use ids without
     // a matching tool_result -> Claude/Copilot 400 "tool_use ids ... without tool_result blocks".
     if (toolResults.length) {
-      for (const tr of toolResults) out.push({ role: "tool", tool_call_id: tr.toolUseId, content: tr.content });
+      for (const tr of toolResults) {
+        // A tool that returned image(s) (a Bash screenshot, an MCP image tool) sends them inline on the
+        // tool message as an OpenAI multipart array — Copilot accepts images on a `tool` role message
+        // (probed). Text-only results stay a plain string, exactly as before.
+        const content = tr.images?.length
+          ? [...(tr.content ? [{ type: "text", text: tr.content }] : []), ...tr.images.map((url) => ({ type: "image_url", image_url: { url } }))]
+          : tr.content;
+        out.push({ role: "tool", tool_call_id: tr.toolUseId, content });
+      }
       continue;
     }
     const text = m.content.filter((b) => b.type === "text").map((b) => (b as any).text).join("");

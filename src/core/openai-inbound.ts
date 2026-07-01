@@ -31,7 +31,10 @@ function msgToCanonical(m: OpenAIMsg): CanonicalMessage {
   const role = (["system", "user", "assistant", "tool"].includes(m.role) ? m.role : "user") as CanonicalMessage["role"];
   const content: ContentBlock[] = [];
   if (m.role === "tool" && m.tool_call_id) {
-    content.push({ type: "tool_result", toolUseId: m.tool_call_id, content: textOf(m.content) });
+    // A tool message may carry image parts (a tool that returned a screenshot). Preserve them as
+    // images[] so resize + token counting see them, instead of dropping them via textOf.
+    const imgs = imagesOf(m.content).map((b) => (b as Extract<ContentBlock, { type: "image" }>).dataUrl);
+    content.push({ type: "tool_result", toolUseId: m.tool_call_id, content: textOf(m.content), ...(imgs.length ? { images: imgs } : {}) });
   } else {
     const text = textOf(m.content);
     if (text) content.push({ type: "text", text });

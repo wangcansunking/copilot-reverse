@@ -20,7 +20,7 @@ export function estimateTokens(req: CanonicalRequest): number {
       if (b.type === "text") chars += b.text.length;
       else if (b.type === "image") chars += b.dataUrl.length;
       else if (b.type === "tool_use") chars += b.name.length + JSON.stringify(b.input ?? {}).length;
-      else if (b.type === "tool_result") chars += b.content.length;
+      else if (b.type === "tool_result") { chars += b.content.length; for (const img of b.images ?? []) chars += img.length; }
     }
   }
   for (const t of req.tools ?? []) {

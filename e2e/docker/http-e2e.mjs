@@ -127,6 +127,24 @@ async function main() {
       const imgCt = await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), body);
       const imgTokens = JSON.parse(imgCt.t).input_tokens;
       check("oversized image is downscaled before counting (tokens << raw base64)", imgTokens > 0 && imgTokens < rawTokens / 2, `shrunk=${imgTokens} raw=${rawTokens}`);
+
+      // The REAL generate-readme-cover-images 502: the oversized image came back INSIDE a tool_result
+      // (a Bash command that emitted a screenshot), which was being flattened to a text string and so
+      // bypassed both the resize and honest token counting. Same noise image, now nested in a
+      // tool_result — its count_tokens must ALSO land far below the raw base64 size.
+      const trBody = JSON.stringify({
+        model: "claude-opus-4-8[1m]",
+        messages: [
+          { role: "assistant", content: [{ type: "tool_use", id: "tu1", name: "shot", input: {} }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: [
+            { type: "text", text: "screenshot:" },
+            { type: "image", source: { type: "base64", media_type: "image/png", data: b64 } },
+          ] }] },
+        ],
+      });
+      const trCt = await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), trBody);
+      const trTokens = JSON.parse(trCt.t).input_tokens;
+      check("oversized image INSIDE a tool_result is also downscaled (readme-cover 502 path)", trTokens > 0 && trTokens < rawTokens / 2, `shrunk=${trTokens} raw=${rawTokens}`);
     }
 
     // Reasoning effort (#33) is resolved and echoed in the x-copilot-reverse-effort response header

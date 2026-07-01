@@ -84,4 +84,16 @@ describe("shrinkImagesInPlace", () => {
     await shrinkImagesInPlace(messages);
     expect(JSON.stringify(messages)).toBe(before);
   });
+
+  it("shrinks images returned inside a tool_result (the readme-cover 502 path)", async () => {
+    const big = await noisePngDataUrl(1800, 1200);
+    const messages: CanonicalMessage[] = [
+      { role: "tool", content: [{ type: "tool_result", toolUseId: "t1", content: "screenshot:", images: [big] }] },
+    ];
+    await shrinkImagesInPlace(messages);
+    const tr = messages[0].content[0] as { images: string[]; content: string };
+    expect(tr.content).toBe("screenshot:");        // text untouched
+    expect(tr.images[0].startsWith("data:image/jpeg;base64,")).toBe(true);
+    expect(tr.images[0].length).toBeLessThan(big.length / 2);
+  });
 });

@@ -36,4 +36,16 @@ describe("estimateTokens", () => {
     // ~char/4 of the data URL — proves it scales with payload size, not a flat constant.
     expect(est).toBeGreaterThan(9000);
   });
+
+  // An image returned INSIDE a tool_result (a Bash screenshot) must count too — this was the real
+  // readme-cover 502, where the tool image was invisible to count_tokens and blew the limit unseen.
+  it("counts images inside a tool_result", () => {
+    const base = req("hi");
+    const withToolImg: CanonicalRequest = {
+      ...base,
+      messages: [{ role: "tool", content: [{ type: "tool_result", toolUseId: "t1", content: "shot", images: [`data:image/png;base64,${"A".repeat(40000)}`] }] }],
+    };
+    const est = estimateTokens(withToolImg);
+    expect(est).toBeGreaterThan(9000);
+  });
 });

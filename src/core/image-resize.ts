@@ -49,14 +49,19 @@ export async function shrinkDataUrl(dataUrl: string): Promise<string> {
 }
 
 // Rewrite every image block across a canonical message list in place, shrinking oversized images.
-// Runs the images concurrently (decode/encode is CPU-bound but each is independent). Mutates the
-// blocks so downstream token estimation and wire translation both see the reduced payload.
+// Covers BOTH top-level image blocks AND images returned inside a tool_result (a Bash/MCP tool that
+// emits a screenshot) — the latter was the real generate-readme-cover-images 502. Runs the images
+// concurrently (decode/encode is CPU-bound but each is independent). Mutates the blocks so downstream
+// token estimation and wire translation both see the reduced payload.
 export async function shrinkImagesInPlace(messages: CanonicalMessage[]): Promise<void> {
   const jobs: Promise<void>[] = [];
   for (const m of messages) {
     for (const b of m.content) {
       if (b.type === "image") {
         jobs.push(shrinkDataUrl(b.dataUrl).then((next) => { b.dataUrl = next; }));
+      } else if (b.type === "tool_result" && b.images) {
+        const imgs = b.images;
+        imgs.forEach((url, i) => jobs.push(shrinkDataUrl(url).then((next) => { imgs[i] = next; })));
       }
     }
   }
