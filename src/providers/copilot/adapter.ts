@@ -13,6 +13,14 @@ type EndpointsFor = (model: string) => string[];
 // once. Matches agent-maestro's safety net for models that drop /chat/completions from their endpoints.
 const RESPONSES_HINT_RE = /unsupported_api_for_model|invalid_request_body|does not support|use the responses|model_not_supported/i;
 
+// Copilot's Responses API is gpt-5-class only; it rejects EVERY Claude id with "model claude-… does not
+// support Responses API". So a Claude model must never be routed to /responses — not by the endpoint map
+// and not by the /chat 400 safety net (whose broad hint regex would otherwise misfire on a big Claude
+// turn and mask the real /chat error behind a confusing Responses-API 400). Guard both paths on this.
+function isClaudeModel(model: string): boolean {
+  return /^claude-/i.test(model);
+}
+
 // Canonical messages -> OpenAI wire messages (Copilot is OpenAI-shaped).
 function toWireMessages(messages: CanonicalMessage[]) {
   const out: any[] = [];
@@ -87,6 +95,7 @@ export class CopilotAdapter implements ProviderAdapter {
   constructor(private tokenStore: TokenSource, private fetchFn: typeof fetch = fetch, private endpointsFor?: EndpointsFor) {}
 
   private usesResponses(model: string): boolean {
+    if (isClaudeModel(model)) return false; // Claude can never speak /responses (gpt-5-class only)
     const eps = this.endpointsFor?.(model);
     return !!eps && eps.length > 0 && !eps.includes("/chat/completions");
   }
@@ -97,8 +106,9 @@ export class CopilotAdapter implements ProviderAdapter {
     const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: false })) });
     if (!res.ok) {
       const detail = await errorDetail(res);
-      // Safety net: a responses-only model rejected on /chat — retry once on /responses.
-      if (res.status === 400 && RESPONSES_HINT_RE.test(detail)) return this.completeResponses(req);
+      // Safety net: a responses-only model rejected on /chat — retry once on /responses. Never for a
+      // Claude model: it can't speak /responses, so a matching 400 is a real /chat error to surface.
+      if (res.status === 400 && !isClaudeModel(req.model) && RESPONSES_HINT_RE.test(detail)) return this.completeResponses(req);
       throw new Error(`copilot completion failed: ${res.status}${detail}`);
     }
     const data = (await res.json()) as any;
@@ -151,7 +161,7 @@ export class CopilotAdapter implements ProviderAdapter {
     const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: true })) });
     if (!res.ok || !res.body) {
       const detail = await errorDetail(res);
-      if (res.status === 400 && RESPONSES_HINT_RE.test(detail)) { yield* this.streamResponsesReq(req); return; }
+      if (res.status === 400 && !isClaudeModel(req.model) && RESPONSES_HINT_RE.test(detail)) { yield* this.streamResponsesReq(req); return; }
       throw new Error(`copilot stream failed: ${res.status}${detail}`);
     }
     const reader = res.body.getReader();

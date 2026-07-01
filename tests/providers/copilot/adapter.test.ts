@@ -320,6 +320,37 @@ describe("CopilotAdapter", () => {
     expect(f).toHaveBeenCalledTimes(1); // no responses retry
   });
 
+  // A Claude model can NEVER speak /responses — Copilot's Responses API is gpt-5-class only and rejects
+  // every Claude id with "model claude-opus-4.8 does not support Responses API". So the /chat 400 safety
+  // net must NOT fire for a Claude model even when the 400 body happens to match RESPONSES_HINT_RE
+  // (e.g. a big/tool-heavy turn whose validation error says "does not support …"). Regression: the net
+  // misfired on a large Claude+image turn, retried /responses, and surfaced the confusing Responses-API
+  // 400 that masked the real /chat error.
+  const claudeReq: CanonicalRequest = { model: "claude-opus-4.8", stream: false, messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] };
+  it("never retries a Claude model on /responses (surfaces the real /chat error)", async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ error: { message: "invalid_request_body: does not support this content" } }), { status: 400 }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+    await expect(a.complete(claudeReq)).rejects.toThrow(/copilot completion failed: 400/); // the real /chat error, not a Responses 400
+    expect(f).toHaveBeenCalledTimes(1); // no /responses retry
+    expect(f.mock.calls.every((c) => c[0] !== "https://api.githubcopilot.com/responses")).toBe(true);
+  });
+  it("never retries a Claude model on /responses in stream() either", async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ error: { message: "model does not support ..." } }), { status: 400 }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+    let msg = "";
+    try { for await (const _ of a.stream({ ...claudeReq, stream: true })) { /* drain */ } }
+    catch (e) { msg = e instanceof Error ? e.message : String(e); }
+    expect(msg).toMatch(/copilot stream failed: 400/); // the real /chat error, not a Responses 400
+    expect(f).toHaveBeenCalledTimes(1); // no /responses retry
+  });
+  it("never routes a Claude model to /responses even if endpoints omit /chat/completions", async () => {
+    // Defensive: if discovery ever advertises /responses-only for a Claude id, still use /chat.
+    const f = vi.fn(async () => new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => ["/responses"]);
+    await a.complete(claudeReq);
+    expect((f.mock.calls[0][0] as string)).toBe("https://api.githubcopilot.com/chat/completions");
+  });
+
   it("flattens a multi-line HTML 502 body to a single-line error message", async () => {
     const html = '<!DOCTYPE html>\n<html>\n  <head><style>body { margin: 0 }</style></head>\n  <body>\n    <h1>502 Bad Gateway</h1>\n  </body>\n</html>';
     const f = vi.fn(async () => new Response(html, { status: 502, headers: { "content-type": "text/html" } }));
