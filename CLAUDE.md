@@ -33,7 +33,15 @@ Requires Node >=20.
 - Run the app locally: `npm run dev` (tsx on `src/`, no build needed)
 - Tests: `npm test` (vitest, includes e2e) · `npm run test:e2e` (e2e only)
 - **Every change must keep the full e2e suite green.** After a change, re-run and update [`e2e/RESULTS.md`](e2e/RESULTS.md). Case catalog: [`e2e/cases.md`](e2e/cases.md).
-- **Prefer adding a docker e2e case for every change.** The HTTP edge matrix (`e2e/docker/http-e2e.mjs`) drives the real worker+supervisor over HTTP — add an assertion there when a change touches request/response, metrics, or supervision so regressions are caught hermetically. Skip only when nothing observable changed (pure docs/refactor).
+- **Prefer adding a docker e2e case for every change.** Two harnesses, two jobs:
+  - **HTTP edge matrix** (`e2e/docker/http-e2e.mjs`) — hermetic, runs on a dummy token, drives the real worker+supervisor over HTTP. Add an assertion here when a change touches request/response, metrics, or supervision so regressions are caught with no quota spent. This is the always-on PR gate.
+  - **Real CLI matrix** (`e2e/docker/cli-e2e.sh`) — the actual `claude` + `codex` CLIs against the daemon, making real Copilot calls. **This is the fidelity layer — favor growing it, and write cases the way a real user would actually drive the tool, not synthetic curl.** It has already caught bugs unit tests and curl could not (a Codex tool-translation 400, empty terminal Responses events).
+- **When you add a CLI case, model both halves of reality: the reasonable need _and_ the edge case the user hits on the way.** Concretely, prefer cases that exercise:
+  - **Real client behavior** — drive `claude -p` / `codex exec` with genuine prompts and the flags users actually pass (`--output-format json`, `--allowedTools`, `ANTHROPIC_MODEL=…`), not hand-rolled HTTP. If a user would do it through the CLI, test it through the CLI.
+  - **The mainstream happy paths** — a plain chat round-trip, a model from the picker, tool use, web search, the `[1m]`/canonical-id resolution — the things that must never silently break.
+  - **The edges a real user trips on** — multi-line / newline-framed replies, constrained answers, a model id that needs suffix-stripping, a tool-call that must translate both ways, a switched/aliased model, an empty or terminal stream event. Each of these maps to a past or plausible user-visible failure.
+  - **Graceful degradation** — when an optional input is absent (e.g. no WebIQ key), the case should `SKIP` with a recorded reason, never hard-fail. Keep CI green for forks/no-secret runs.
+- Skip a docker case only when nothing observable changed (pure docs/refactor).
 
 ## Architecture (3 processes, one terminal app)
 
