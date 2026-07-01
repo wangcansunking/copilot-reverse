@@ -8,18 +8,21 @@ import { oneLine } from "../../shared/format.js";
 const CHAT_URL = "https://api.githubcopilot.com/chat/completions";
 interface TokenSource { get(): Promise<string> }
 type EndpointsFor = (model: string) => string[];
+// Whether a model advertises reasoning_effort support (from /models capabilities). Sending
+// reasoning_effort to a model without it (e.g. gpt-4o) is a hard 400 — gate on this.
+type SupportsReasoning = (model: string) => boolean;
 
 // A /chat 400 whose body names one of these means "this model is responses-only" — retry on /responses
 // once. Matches agent-maestro's safety net for models that drop /chat/completions from their endpoints.
 const RESPONSES_HINT_RE = /unsupported_api_for_model|invalid_request_body|does not support|use the responses|model_not_supported/i;
 
-// Copilot's Responses API is gpt-5-class only; it rejects EVERY Claude id with "model claude-… does not
-// support Responses API". So a Claude model must never be routed to /responses — not by the endpoint map
-// and not by the /chat 400 safety net (whose broad hint regex would otherwise misfire on a big Claude
-// turn and mask the real /chat error behind a confusing Responses-API 400). Guard both paths on this.
-function isClaudeModel(model: string): boolean {
-  return /^claude-/i.test(model);
-}
+// Copilot's Responses API is gpt-5-class only: probing /models shows ONLY gpt-5.x / mai-code ids carry
+// /responses in supported_endpoints — every claude, gpt-4o, gemini id is /chat-only (gpt-4o isn't even
+// in the endpoint map). So a request must reach /responses ONLY when we can positively confirm the model
+// advertises it. Guarding on this (instead of "is it Claude?") also fixes the gpt-4o case: a gpt-4o /chat
+// 400 (e.g. a rate-limit body containing "unsupported_api_for_model") used to trip the broad hint regex
+// into a /responses retry, which then 400'd "gpt-4o is not supported via Responses API" — masking the
+// real error. A model that can't speak /responses now surfaces its true /chat failure instead.
 
 // Canonical messages -> OpenAI wire messages (Copilot is OpenAI-shaped).
 function toWireMessages(messages: CanonicalMessage[]) {
@@ -67,13 +70,15 @@ function toWireMessages(messages: CanonicalMessage[]) {
   return out;
 }
 
-function buildBody(req: CanonicalRequest) {
+function buildBody(req: CanonicalRequest, supportsReasoning = true) {
   const body: any = { model: req.model, messages: toWireMessages(req.messages), stream: req.stream, temperature: req.temperature, max_tokens: req.maxTokens };
   if (req.stream) body.stream_options = { include_usage: true }; // ask Copilot for usage in the final frame
   if (req.tools?.length) body.tools = req.tools.map((t) => ({ type: "function", function: { name: t.name, description: t.description, parameters: t.parameters } }));
-  // Extended thinking: Copilot /chat takes a top-level reasoning_effort enum. Only set it when asked,
-  // so a non-reasoning turn keeps the model's default behavior.
-  if (req.reasoning?.effort) body.reasoning_effort = req.reasoning.effort;
+  // Extended thinking: Copilot /chat takes a top-level reasoning_effort enum. Only set it when asked AND
+  // the model advertises reasoning_effort — sending it to a model without support (e.g. gpt-4o) is a hard
+  // 400 (`invalid_reasoning_effort`). When support is unknown (discovery not yet resolved) we default to
+  // true and let a real 400 surface rather than silently dropping a reasoning turn the model does support.
+  if (req.reasoning?.effort && supportsReasoning) body.reasoning_effort = req.reasoning.effort;
   return body;
 }
 function headers(token: string) {
@@ -92,23 +97,37 @@ export class CopilotAdapter implements ProviderAdapter {
   readonly name = "copilot";
   // endpointsFor(model) -> the model's supported_endpoints (e.g. ["/responses"]). When known and it
   // omits /chat/completions, route to /responses; unknown ([]) keeps the chat path (with a 400 net).
-  constructor(private tokenStore: TokenSource, private fetchFn: typeof fetch = fetch, private endpointsFor?: EndpointsFor) {}
+  // supportsReasoningFn(model) -> whether the model advertises reasoning_effort (gates the /chat field).
+  constructor(private tokenStore: TokenSource, private fetchFn: typeof fetch = fetch, private endpointsFor?: EndpointsFor, private supportsReasoningFn?: SupportsReasoning) {}
 
+  // reasoning_effort is safe to send only when the model advertises it. Unknown (no discovery / no fn) →
+  // true, so we don't silently drop a reasoning turn before discovery resolves; a real 400 would surface.
+  private supportsReasoning(model: string): boolean {
+    return this.supportsReasoningFn ? this.supportsReasoningFn(model) : true;
+  }
+
+  // True only when the live endpoint map positively lists /responses for this model (gpt-5.x / mai-code).
+  // The single gate for EVERY /responses route — the primary path and both /chat 400 safety nets — so a
+  // model we can't confirm as responses-capable (claude, gpt-4o, gemini, or anything before discovery
+  // resolves) never gets sent there. Unknown model (no entry) → false → stays on /chat.
+  private canUseResponses(model: string): boolean {
+    return !!this.endpointsFor?.(model)?.includes("/responses");
+  }
   private usesResponses(model: string): boolean {
-    if (isClaudeModel(model)) return false; // Claude can never speak /responses (gpt-5-class only)
     const eps = this.endpointsFor?.(model);
-    return !!eps && eps.length > 0 && !eps.includes("/chat/completions");
+    // Route to /responses only for a model that advertises it AND has dropped /chat/completions.
+    return !!eps && eps.includes("/responses") && !eps.includes("/chat/completions");
   }
 
   async complete(req: CanonicalRequest): Promise<CanonicalResponse> {
     if (this.usesResponses(req.model)) return this.completeResponses(req);
     const token = await this.tokenStore.get();
-    const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: false })) });
+    const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: false }, this.supportsReasoning(req.model))) });
     if (!res.ok) {
       const detail = await errorDetail(res);
-      // Safety net: a responses-only model rejected on /chat — retry once on /responses. Never for a
-      // Claude model: it can't speak /responses, so a matching 400 is a real /chat error to surface.
-      if (res.status === 400 && !isClaudeModel(req.model) && RESPONSES_HINT_RE.test(detail)) return this.completeResponses(req);
+      // Safety net: a responses-capable model rejected on /chat — retry once on /responses. ONLY when
+      // the model actually advertises /responses; otherwise a matching 400 is a real /chat error to surface.
+      if (res.status === 400 && this.canUseResponses(req.model) && RESPONSES_HINT_RE.test(detail)) return this.completeResponses(req);
       throw new Error(`copilot completion failed: ${res.status}${detail}`);
     }
     const data = (await res.json()) as any;
@@ -158,10 +177,10 @@ export class CopilotAdapter implements ProviderAdapter {
   async *stream(req: CanonicalRequest): AsyncIterable<CanonicalChunk> {
     if (this.usesResponses(req.model)) { yield* this.streamResponsesReq(req); return; }
     const token = await this.tokenStore.get();
-    const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: true })) });
+    const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: true }, this.supportsReasoning(req.model))) });
     if (!res.ok || !res.body) {
       const detail = await errorDetail(res);
-      if (res.status === 400 && !isClaudeModel(req.model) && RESPONSES_HINT_RE.test(detail)) { yield* this.streamResponsesReq(req); return; }
+      if (res.status === 400 && this.canUseResponses(req.model) && RESPONSES_HINT_RE.test(detail)) { yield* this.streamResponsesReq(req); return; }
       throw new Error(`copilot stream failed: ${res.status}${detail}`);
     }
     const reader = res.body.getReader();

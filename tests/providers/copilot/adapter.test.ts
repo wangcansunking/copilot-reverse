@@ -138,6 +138,31 @@ describe("CopilotAdapter", () => {
     expect("reasoning_effort" in body).toBe(false);
   });
 
+  // Sending reasoning_effort to a model that doesn't advertise it (e.g. gpt-4o) is a hard 400
+  // (`invalid_reasoning_effort`). The adapter gates the field on the supportsReasoning fn (from /models
+  // capabilities). Regression #45: claude -p defaults to gpt-4o and sends effort=high → every turn 400'd.
+  it("omits reasoning_effort for a model that does not advertise it (gpt-4o)", async () => {
+    let body: any;
+    const f = vi.fn(async (_u: string, init: RequestInit) => { body = JSON.parse(init.body as string); return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }); });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => [], (m) => m !== "gpt-4o");
+    await a.complete({ ...base, reasoning: { effort: "high" } }); // base is gpt-4o
+    expect("reasoning_effort" in body).toBe(false);
+  });
+  it("still sends reasoning_effort for a model that DOES advertise it", async () => {
+    let body: any;
+    const f = vi.fn(async (_u: string, init: RequestInit) => { body = JSON.parse(init.body as string); return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }); });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => ["/v1/messages", "/chat/completions"], (m) => m === "claude-opus-4.8");
+    await a.complete({ model: "claude-opus-4.8", stream: false, messages: base.messages, reasoning: { effort: "high" } });
+    expect(body.reasoning_effort).toBe("high");
+  });
+  it("defaults to sending reasoning_effort when support is unknown (no fn / pre-discovery)", async () => {
+    let body: any;
+    const f = vi.fn(async (_u: string, init: RequestInit) => { body = JSON.parse(init.body as string); return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }); });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch); // no supportsReasoning fn
+    await a.complete({ ...base, reasoning: { effort: "high" } });
+    expect(body.reasoning_effort).toBe("high"); // don't silently drop a reasoning turn before discovery
+  });
+
   it("surfaces streamed reasoning_text as canonical thinking chunks (before the answer text)", async () => {
     const sse =
       'data: {"choices":[{"delta":{"reasoning_text":"let me "}}]}\n\n' +
@@ -303,8 +328,8 @@ describe("CopilotAdapter", () => {
       }
       return new Response(responsesObj("recovered"), { status: 200, headers: { "content-type": "application/json" } });
     });
-    // endpointsFor unknown (returns []) so it tries chat first, then the 400 safety net retries responses.
-    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+    // r55 (gpt-5.5) advertises /responses AND /chat, so the 400 safety net may retry on /responses.
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => ["/responses", "/chat/completions"]);
     const r = await a.complete(r55);
     expect(f.mock.calls.map((c) => c[0])).toEqual([
       "https://api.githubcopilot.com/chat/completions",
@@ -315,38 +340,51 @@ describe("CopilotAdapter", () => {
 
   it("does NOT retry on an unrelated chat 400 (surfaces the error)", async () => {
     const f = vi.fn(async () => new Response(JSON.stringify({ error: { message: "bad request: oversized" } }), { status: 400 }));
-    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => ["/responses", "/chat/completions"]);
     await expect(a.complete(r55)).rejects.toThrow();
-    expect(f).toHaveBeenCalledTimes(1); // no responses retry
+    expect(f).toHaveBeenCalledTimes(1); // no responses retry (hint regex didn't match)
   });
 
-  // A Claude model can NEVER speak /responses — Copilot's Responses API is gpt-5-class only and rejects
-  // every Claude id with "model claude-opus-4.8 does not support Responses API". So the /chat 400 safety
-  // net must NOT fire for a Claude model even when the 400 body happens to match RESPONSES_HINT_RE
-  // (e.g. a big/tool-heavy turn whose validation error says "does not support …"). Regression: the net
-  // misfired on a large Claude+image turn, retried /responses, and surfaced the confusing Responses-API
-  // 400 that masked the real /chat error.
+  // The /responses safety net must fire ONLY for a model that positively advertises /responses (gpt-5.x /
+  // mai-code). Probing /models shows every claude, gpt-4o and gemini id is /chat-only — gpt-4o isn't even
+  // in the endpoint map. So a /chat 400 whose body happens to match RESPONSES_HINT_RE (a rate-limit body,
+  // a big-turn validation error saying "does not support …") must NOT trigger a /responses retry for
+  // those models: /responses would reject them ("model X does not support/is not supported via Responses
+  // API") and MASK the real /chat error. Regression: a large Claude+image turn AND a default gpt-4o turn
+  // both misfired this way.
   const claudeReq: CanonicalRequest = { model: "claude-opus-4.8", stream: false, messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] };
+  const gpt4oReq: CanonicalRequest = { model: "gpt-4o", stream: false, messages: [{ role: "user", content: [{ type: "text", text: "hi" }] }] };
+  // Real Copilot endpoint shapes: claude carries /v1/messages+/chat, gpt-4o has no entry (undefined).
+  const claudeEps = () => ["/v1/messages", "/chat/completions"];
+  const gpt4oEps = () => undefined as unknown as string[];
   it("never retries a Claude model on /responses (surfaces the real /chat error)", async () => {
     const f = vi.fn(async () => new Response(JSON.stringify({ error: { message: "invalid_request_body: does not support this content" } }), { status: 400 }));
-    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, claudeEps);
     await expect(a.complete(claudeReq)).rejects.toThrow(/copilot completion failed: 400/); // the real /chat error, not a Responses 400
     expect(f).toHaveBeenCalledTimes(1); // no /responses retry
     expect(f.mock.calls.every((c) => c[0] !== "https://api.githubcopilot.com/responses")).toBe(true);
   });
   it("never retries a Claude model on /responses in stream() either", async () => {
     const f = vi.fn(async () => new Response(JSON.stringify({ error: { message: "model does not support ..." } }), { status: 400 }));
-    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, claudeEps);
     let msg = "";
     try { for await (const _ of a.stream({ ...claudeReq, stream: true })) { /* drain */ } }
     catch (e) { msg = e instanceof Error ? e.message : String(e); }
     expect(msg).toMatch(/copilot stream failed: 400/); // the real /chat error, not a Responses 400
     expect(f).toHaveBeenCalledTimes(1); // no /responses retry
   });
-  it("never routes a Claude model to /responses even if endpoints omit /chat/completions", async () => {
-    // Defensive: if discovery ever advertises /responses-only for a Claude id, still use /chat.
+  it("never retries gpt-4o on /responses — surfaces its real /chat 400 (regression #45)", async () => {
+    // gpt-4o /chat rate-limited/rejected with a body matching the hint regex must NOT hop to /responses
+    // ("gpt-4o is not supported via Responses API"); the true error surfaces instead.
+    const f = vi.fn(async () => new Response(JSON.stringify({ error: { code: "unsupported_api_for_model", message: "rate limited" } }), { status: 400 }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, gpt4oEps);
+    await expect(a.complete(gpt4oReq)).rejects.toThrow(/copilot completion failed: 400/);
+    expect(f).toHaveBeenCalledTimes(1);
+    expect(f.mock.calls.every((c) => c[0] !== "https://api.githubcopilot.com/responses")).toBe(true);
+  });
+  it("routes a Claude model to /chat (real endpoints carry /chat/completions)", async () => {
     const f = vi.fn(async () => new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } }));
-    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => ["/responses"]);
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, claudeEps);
     await a.complete(claudeReq);
     expect((f.mock.calls[0][0] as string)).toBe("https://api.githubcopilot.com/chat/completions");
   });
