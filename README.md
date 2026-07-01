@@ -1,17 +1,17 @@
-# copilot-reverse
+<p align="center">
+  <img src="images/hero.png" alt="copilot-reverse — One command. Native experience." width="100%">
+</p>
 
-> ### One command. Native experience.
-> **一行命令，原生体验。**
+<h1 align="center">copilot-reverse</h1>
+
+<p align="center"><b>One command. Native experience.</b> · <b>一行命令，原生体验。</b></p>
 
 **Use the GitHub Copilot subscription you already pay for as a local Claude Code / Codex backend.**
 No new API keys. No per-token bills. One terminal app — and Claude Code feels **exactly** like the real thing.
 
-```
-  ┌─────────────┐        ┌───────────────────┐        ┌─────────────┐
-  │ Claude Code │ ─────▶ │  copilot-reverse  │ ─────▶ │   Copilot   │
-  │   / Codex   │  local │  (your machine)   │  proxy │  (your sub) │
-  └─────────────┘        └───────────────────┘        └─────────────┘
-```
+<p align="center">
+  <img src="images/architecture.png" alt="Claude Code / Codex → copilot-reverse (TUI · Supervisor · Worker) → GitHub Copilot" width="90%">
+</p>
 
 > **Disclaimer:** The GitHub Copilot integration uses community-documented,
 > unofficial endpoints, for use with your own Copilot subscription only. It may
