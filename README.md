@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="images/hero.png" alt="copilot-reverse — One command. Native experience." width="100%">
+  <img src="images/hero.webp" alt="copilot-reverse — One command. Native experience." width="100%">
 </p>
 
 <h1 align="center">copilot-reverse</h1>
@@ -10,7 +10,7 @@
 No new API keys. No per-token bills. One terminal app — and Claude Code feels **exactly** like the real thing.
 
 <p align="center">
-  <img src="images/architecture.png" alt="Claude Code / Codex → copilot-reverse (TUI · Supervisor · Worker) → GitHub Copilot" width="90%">
+  <img src="images/architecture.webp" alt="Claude Code / Codex → copilot-reverse (TUI · Supervisor · Worker) → GitHub Copilot" width="90%">
 </p>
 
 > **Disclaimer:** The GitHub Copilot integration uses community-documented,
