@@ -12,7 +12,7 @@ const HEADERS = (token: string) => ({
 const DEFAULT_TIMEOUT_MS = 8000;
 
 // A stalled Copilot endpoint must never hang the model picker forever — abort after timeoutMs.
-async function getModels(token: string, fetchFn: typeof fetch, timeoutMs: number): Promise<{ id?: string; supported_endpoints?: string[]; capabilities?: { limits?: { max_prompt_tokens?: number; max_context_window_tokens?: number } } }[] | null> {
+async function getModels(token: string, fetchFn: typeof fetch, timeoutMs: number): Promise<{ id?: string; supported_endpoints?: string[]; capabilities?: { limits?: { max_prompt_tokens?: number; max_context_window_tokens?: number }; supports?: { reasoning_effort?: string[] } } }[] | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -42,6 +42,21 @@ export async function fetchModelEndpoints(token: string, fetchFn: typeof fetch =
   const out: Record<string, string[]> = {};
   for (const m of data) {
     if (m.id && Array.isArray(m.supported_endpoints) && m.supported_endpoints.length) out[m.id] = m.supported_endpoints;
+  }
+  return out;
+}
+
+// Set of model ids whose capabilities advertise a reasoning_effort enum. The adapter consults this
+// before adding `reasoning_effort` to a /chat body: sending it to a model that doesn't support it (e.g.
+// gpt-4o) is a hard 400 (`invalid_reasoning_effort`). Returns an empty set on failure/timeout, so the
+// adapter omits reasoning_effort until discovery resolves — safe (a turn just runs without reasoning)
+// rather than a 400. Only ids with a non-empty reasoning_effort array are included.
+export async function fetchModelReasoningSupport(token: string, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Set<string>> {
+  const data = await getModels(token, fetchFn, timeoutMs);
+  const out = new Set<string>();
+  if (!data) return out;
+  for (const m of data) {
+    if (m.id && Array.isArray(m.capabilities?.supports?.reasoning_effort) && m.capabilities.supports.reasoning_effort.length) out.add(m.id);
   }
   return out;
 }

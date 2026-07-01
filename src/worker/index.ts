@@ -2,7 +2,7 @@ import { createWorkerApp } from "./server.js";
 import { Router } from "./router.js";
 import { CopilotAdapter } from "../providers/copilot/adapter.js";
 import { CopilotTokenStore } from "../providers/copilot/token.js";
-import { fetchCopilotModels, fetchModelEndpoints } from "../providers/copilot/models.js";
+import { fetchCopilotModels, fetchModelEndpoints, fetchModelReasoningSupport } from "../providers/copilot/models.js";
 import { readGhToken } from "../shared/creds.js";
 import { readWebIqKey, readWebSearchMode, resolveWebSearchBackend } from "../shared/webiq-key.js";
 import { readAccessMode, readAccessKey } from "../shared/network.js";
@@ -28,13 +28,19 @@ const tokenStore = new CopilotTokenStore(gh);
 // ids). The adapter reads through this map so responses-only models (e.g. gpt-5.5) route to /responses
 // as soon as discovery resolves; until then the map is empty and the /chat 400 safety net covers it.
 let modelEndpoints: Record<string, string[]> = {};
-const router = new Router([new CopilotAdapter(tokenStore, fetch, (m) => modelEndpoints[m] ?? [])], cfg.modelMap);
-// Load the live model list so the router can fuzzy-match near-miss ids (e.g. dated Anthropic ids),
-// and the endpoint map so the adapter can route per model. One token fetch feeds both.
+// Set of model ids that advertise reasoning_effort. The adapter gates the /chat reasoning_effort field
+// on this: sending it to a model without support (e.g. gpt-4o) is a hard 400. Empty until discovery
+// resolves — the adapter then defaults to "supported" so a reasoning turn isn't silently dropped.
+let reasoningModels = new Set<string>();
+const router = new Router([new CopilotAdapter(tokenStore, fetch, (m) => modelEndpoints[m] ?? [], (m) => reasoningModels.size === 0 || reasoningModels.has(m))], cfg.modelMap);
+// Load the live model list so the router can fuzzy-match near-miss ids (e.g. dated Anthropic ids), the
+// endpoint map so the adapter can route per model, and the reasoning-support set so it only sends
+// reasoning_effort where accepted. One token fetch feeds all three.
 void tokenStore.get().then(async (t) => {
-  const [ids, endpoints] = await Promise.all([fetchCopilotModels(t), fetchModelEndpoints(t)]);
+  const [ids, endpoints, reasoning] = await Promise.all([fetchCopilotModels(t), fetchModelEndpoints(t), fetchModelReasoningSupport(t)]);
   router.setAvailableModels(ids);
   modelEndpoints = endpoints;
+  reasoningModels = reasoning;
 }).catch(() => {});
 // Gateway-run web_search / web_fetch. The backend is resolved per call (lazy → /webiq toggles need no
 // restart): currently WebIQ when a key is set, else unavailable (Copilot borrow is disabled — see
