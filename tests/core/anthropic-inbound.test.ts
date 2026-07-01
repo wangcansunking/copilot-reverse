@@ -21,6 +21,36 @@ describe("anthropic inbound", () => {
     expect(c.messages[3].content[0]).toEqual({ type: "tool_result", toolUseId: "tu1", content: "12:00" });
   });
 
+  it("extracts an image inside a tool_result into the block's images[] (not swallowed into text)", () => {
+    // The generate-readme-cover-images 502: a Bash tool returned a screenshot as an image block inside
+    // the tool_result. It was being JSON.stringify'd into the content string, so it never became an
+    // image the resize/token paths could see. It must land in images[] as a data URL, with only the
+    // text in content.
+    const c = anthropicRequestToCanonical({
+      model: "claude-opus-4-8", max_tokens: 100,
+      messages: [
+        { role: "assistant", content: [{ type: "tool_use", id: "tu1", name: "shot", input: {} }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: [
+          { type: "text", text: "screenshot:" },
+          { type: "image", source: { type: "base64", media_type: "image/png", data: "AAAA" } },
+        ] }] as any },
+      ],
+    });
+    const tr = c.messages[1].content[0] as { type: string; toolUseId: string; content: string; images?: string[] };
+    expect(tr.type).toBe("tool_result");
+    expect(tr.content).toBe("screenshot:");
+    expect(tr.images).toEqual(["data:image/png;base64,AAAA"]);
+  });
+
+  it("leaves a text-only tool_result with no images field", () => {
+    const c = anthropicRequestToCanonical({
+      model: "claude-opus-4-8", max_tokens: 100,
+      messages: [{ role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: "plain" }] }],
+    });
+    const tr = c.messages[0].content[0] as { images?: string[] };
+    expect(tr.images).toBeUndefined();
+  });
+
   it("builds anthropic response with tool_use block", () => {
     const r: CanonicalResponse = {
       id: "r1", model: "claude-opus-4-8",

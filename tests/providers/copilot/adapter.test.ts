@@ -68,6 +68,27 @@ describe("CopilotAdapter", () => {
     expect(toolMsgs.map((m: any) => m.content)).toEqual(["ra", "rb"]);
   });
 
+  it("sends a tool_result's images inline as a multipart tool message (Copilot accepts tool-msg images)", async () => {
+    let body: any;
+    const f = vi.fn(async (_url: string, init: RequestInit) => {
+      body = JSON.parse(init.body as string);
+      return new Response(JSON.stringify({ id: "c1", choices: [{ message: { content: "ok" }, finish_reason: "stop" }], usage: {} }), { status: 200, headers: { "content-type": "application/json" } });
+    });
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch);
+    await a.complete({
+      model: "gpt-4o", stream: false, maxTokens: 10,
+      messages: [
+        { role: "assistant", content: [{ type: "tool_use", id: "A", name: "shot", input: {} }] },
+        { role: "tool", content: [{ type: "tool_result", toolUseId: "A", content: "screenshot:", images: ["data:image/png;base64,IMG"] }] },
+      ],
+    });
+    const toolMsg = body.messages.find((m: any) => m.role === "tool");
+    expect(toolMsg.content).toEqual([
+      { type: "text", text: "screenshot:" },
+      { type: "image_url", image_url: { url: "data:image/png;base64,IMG" } },
+    ]);
+  });
+
   it("streams text deltas", async () => {
     const sse = 'data: {"choices":[{"delta":{"content":"he"}}]}\n\n' + 'data: {"choices":[{"delta":{"content":"llo"}}]}\n\n' + "data: [DONE]\n\n";
     const f = vi.fn(async () => new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } }));

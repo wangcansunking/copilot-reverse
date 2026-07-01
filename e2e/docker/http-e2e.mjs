@@ -107,6 +107,58 @@ async function main() {
     const ct = await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }));
     check("count_tokens input_tokens>0", JSON.parse(ct.t).input_tokens > 0, ct.t);
 
+    // Image downscale (model_max_prompt_tokens_exceeded fix): Copilot has no vision tiler on /chat for
+    // Claude models — it bills an inline base64 data URL as PLAIN TEXT (~char/4), so a full-res
+    // screenshot (~2.3M tokens) blows past the prompt limit. The worker now downscales oversized images
+    // before counting/sending (the job the real Anthropic backend does for us). Prove it quota-free
+    // through count_tokens: a large image's estimate must land FAR below the raw base64 byte count, i.e.
+    // the pixels were re-encoded smaller. The source is a NOISE image (randomised pixels) so its PNG
+    // can't run-length compress — a realistic high-entropy screenshot, unlike a solid color that encodes
+    // to a few KB and would actually grow when re-encoded. 1800px long edge (>1568) triggers the resize.
+    {
+      const { Jimp, JimpMime } = await import("jimp");
+      const { randomFillSync } = await import("node:crypto");
+      const noise = new Jimp({ width: 1800, height: 1200, color: 0 });
+      randomFillSync(noise.bitmap.data);
+      const bigBuf = await noise.getBuffer(JimpMime.png);
+      const b64 = bigBuf.toString("base64");
+      const rawTokens = Math.ceil((`data:image/png;base64,${b64}`).length / 4); // count_tokens with NO shrink
+      const body = JSON.stringify({ model: "claude-opus-4-8[1m]", messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: b64 } }] }] });
+      const imgCt = await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), body);
+      const imgTokens = JSON.parse(imgCt.t).input_tokens;
+      check("oversized image is downscaled before counting (tokens << raw base64)", imgTokens > 0 && imgTokens < rawTokens / 2, `shrunk=${imgTokens} raw=${rawTokens}`);
+
+      // The REAL generate-readme-cover-images 502: the oversized image came back INSIDE a tool_result
+      // (a Bash command that emitted a screenshot), which was being flattened to a text string and so
+      // bypassed both the resize and honest token counting. Same noise image, now nested in a
+      // tool_result — its count_tokens must ALSO land far below the raw base64 size.
+      const trBody = JSON.stringify({
+        model: "claude-opus-4-8[1m]",
+        messages: [
+          { role: "assistant", content: [{ type: "tool_use", id: "tu1", name: "shot", input: {} }] },
+          { role: "user", content: [{ type: "tool_result", tool_use_id: "tu1", content: [
+            { type: "text", text: "screenshot:" },
+            { type: "image", source: { type: "base64", media_type: "image/png", data: b64 } },
+          ] }] },
+        ],
+      });
+      const trCt = await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), trBody);
+      const trTokens = JSON.parse(trCt.t).input_tokens;
+      check("oversized image INSIDE a tool_result is also downscaled (readme-cover 502 path)", trTokens > 0 && trTokens < rawTokens / 2, `shrunk=${trTokens} raw=${rawTokens}`);
+
+      // The byte-gate gap (the "I read a normal-sized image and still 502'd" case): an image whose long
+      // edge is already WITHIN the pixel cap but whose BYTES are huge. A pixel-only gate would pass it
+      // through untouched. Build a 1568×1400 noise image (long edge == cap) and assert count_tokens
+      // still lands far below its raw base64 — proving the worker gates on BYTES, not just dimensions.
+      const heavy = new Jimp({ width: 1568, height: 1400, color: 0 });
+      randomFillSync(heavy.bitmap.data);
+      const hb64 = (await heavy.getBuffer(JimpMime.png)).toString("base64");
+      const hRaw = Math.ceil((`data:image/png;base64,${hb64}`).length / 4);
+      const hBody = JSON.stringify({ model: "claude-opus-4-8[1m]", messages: [{ role: "user", content: [{ type: "image", source: { type: "base64", media_type: "image/png", data: hb64 } }] }] });
+      const hTokens = JSON.parse((await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), hBody)).t).input_tokens;
+      check("within-edge but heavy image is still shrunk (byte gate, not pixel gate)", hTokens > 0 && hTokens < hRaw / 2, `shrunk=${hTokens} raw=${hRaw}`);
+    }
+
     // Reasoning effort (#33) is resolved and echoed in the x-copilot-reverse-effort response header
     // BEFORE any upstream call, so a dummy token still proves the resolution. Drives the REAL modern
     // Claude Code wire shape (top-level output_config.effort + thinking:{type:adaptive}, NOT

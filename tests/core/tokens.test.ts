@@ -20,4 +20,32 @@ describe("estimateTokens", () => {
     const withTools: CanonicalRequest = { ...base, tools: [{ name: "t", parameters: { type: "object", properties: { a: { type: "string" } } } }] };
     expect(estimateTokens(withTools)).toBeGreaterThan(estimateTokens(base));
   });
+
+  // An image's inline data URL is billed by Copilot as plain text (~char/4). If we didn't count it,
+  // count_tokens would under-report by millions and Claude Code would ship an oversized prompt into a
+  // model_max_prompt_tokens_exceeded 502. The estimate MUST grow with the image payload's byte size.
+  it("counts image data-URL bytes", () => {
+    const base = req("hi");
+    const bigDataUrl = `data:image/png;base64,${"A".repeat(40000)}`;
+    const withImage: CanonicalRequest = {
+      ...base,
+      messages: [{ role: "user", content: [{ type: "image", dataUrl: bigDataUrl }] }],
+    };
+    const est = estimateTokens(withImage);
+    expect(est).toBeGreaterThan(estimateTokens(base));
+    // ~char/4 of the data URL — proves it scales with payload size, not a flat constant.
+    expect(est).toBeGreaterThan(9000);
+  });
+
+  // An image returned INSIDE a tool_result (a Bash screenshot) must count too — this was the real
+  // readme-cover 502, where the tool image was invisible to count_tokens and blew the limit unseen.
+  it("counts images inside a tool_result", () => {
+    const base = req("hi");
+    const withToolImg: CanonicalRequest = {
+      ...base,
+      messages: [{ role: "tool", content: [{ type: "tool_result", toolUseId: "t1", content: "shot", images: [`data:image/png;base64,${"A".repeat(40000)}`] }] }],
+    };
+    const est = estimateTokens(withToolImg);
+    expect(est).toBeGreaterThan(9000);
+  });
 });
