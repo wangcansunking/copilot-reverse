@@ -3,6 +3,28 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-07-02 (context editing — fixes `413 Request Entity Too Large` (relayed 502) on long
+  browser-harness / agentic sessions)** — a browser-harness loop emits one screenshot per step, and the
+  stateless wire re-sends the WHOLE history every turn, so cumulative base64 grows until Copilot's
+  gateway rejects the request body at the HTTP layer (a byte-size limit, distinct from the token limit
+  the image-downscale fix targets — per-image resize alone can't satisfy it). The real Anthropic backend
+  handles this server-side via context editing (`clear_tool_uses_20250919`): keep the most recent few
+  tool results, replace older ones with a placeholder. Claude Code relies on it and keeps sending the
+  full history; Copilot has no such layer. We now sit where that layer would: new `core/context-edit.ts`
+  keeps the most recent 3 tool screenshots at full fidelity and, once the cumulative image payload
+  exceeds a ~6MB budget, clears older ones oldest-first (image → placeholder text) and only as much as
+  needed — lossless no-op when under budget, and it never touches top-level (user-attached) images, only
+  tool results. Wired AFTER resize on all send paths (`/anthropic/v1/messages`, `/openai/chat/completions`,
+  `/openai/responses`) AND `count_tokens`, so the estimate matches what's sent. Also adds a 413
+  `errorHint` (`request too large — /compact or send fewer/smaller images`). New unit suite
+  `tests/core/context-edit.test.ts` (7 cases: no-op under budget, keep-floor, oldest-first, minimal
+  edit, multi-image unit clear, top-level untouched, idempotent) + a 413 hint case + a hermetic http-e2e
+  check (12 accumulated screenshots, each under the per-image cap, `count_tokens` lands far below the raw
+  sum — proving clearing, not resizing). Plus a **real-CLI docker case**: an 11-screenshot browser-loop
+  history posted to live Copilot never 413s AND Claude still reads the most-recent (green) screenshot —
+  proving old cleared, recent kept, end-to-end. 588 unit tests green; docker http-e2e ALL PASSED (63);
+  `tsc` clean. (The same real-CLI run shows the 5 pre-existing FAILs documented in the PR #48 entry
+  below — codex tool loop, 2× vision OCR, 2× unknown-model — untouched by this change.)
 - **2026-07-02 (capability-driven 1M badge + generalised model names — PR #48)** — the picker's `[1m]`
   badge now follows each model's real upstream context window (`fetchModelOneMSupport`, injected into
   `toCanonical` as an `is1M` oracle) instead of a hardcoded set, and the friendly-name regex accepts any
