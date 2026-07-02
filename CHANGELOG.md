@@ -1,3 +1,7 @@
+## v0.14.2 — 2026-07-02
+
+chore(package): drop README images from the npm tarball (reference them via GitHub raw URLs) — shrinks the published package from 288 kB to 67 kB
+
 ## v0.14.1 — 2026-07-01
 
 fix(worker): only route to Copilot's Responses API when a model advertises it, and only send `reasoning_effort` to models that support it.

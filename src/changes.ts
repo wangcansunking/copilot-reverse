@@ -2,6 +2,14 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.14.2",
+    "date": "2026-07-02",
+    "summary": "chore(package): drop README images from the npm tarball (reference them via GitHub raw URLs) — shrinks the published package from 288 kB to 67 kB",
+    "summaries": [
+      "chore(package): drop README images from the npm tarball (reference them via GitHub raw URLs) — shrinks the published package from 288 kB to 67 kB"
+    ]
+  },
+  {
     "version": "0.14.1",
     "date": "2026-07-01",
     "summary": "fix(worker): only route to Copilot's Responses API when a model advertises it, and only send `reasoning_effort` to models that support it.",
@@ -90,14 +98,6 @@ export const APP_CHANGES: ChangeEntry[] = [
       "fix(release): update CHANGELOG before the build so the just-released version appears in `/changes`. gen-changes.mjs runs in prebuild and reads CHANGELOG, but the workflow appended the new entry only after publish — so each release's own notes lagged one version behind. CHANGELOG is now written before build; changesets are still consumed after publish.",
       "feat(tui): `/metrics` now renders a styled card — a colored summary row (reqs · errors · tokens↑↓ · est. cost) over an aligned per-model table — instead of flat gray lines. Numbers carry accent/state colors, labels are dimmed, models sort by request count.",
       "feat(network): explicit access modes — **localhost** (default, loopback only — private to this machine) vs **LAN** (`/network` to enable). LAN exposes the worker proxy on the network and requires a key on every request **from another machine** — `Authorization: Bearer <key>` or `x-api-key` — rejecting a remote request without it (`401`) before any upstream call. Your own machine keeps working over `127.0.0.1` with no key, so local Claude/Codex need no change when you flip to LAN (the local-vs-remote decision is TCP-layer only, never a spoofable header). It's **fail-closed**: enabling LAN auto-generates a key (no keyless LAN), and a remote request is refused (`503`) if a key ever goes missing — never an open relay. The key (timing-safe compare) is read per request, so rotation needs no restart; flipping the mode restarts the worker to rebind the socket. The supervisor control plane stays on localhost regardless. New `/network` panel, a `/config` row, and a `net` HUD indicator."
-    ]
-  },
-  {
-    "version": "0.8.0",
-    "date": "2026-06-29",
-    "summary": "Map Copilot model ids to the canonical ids Claude Code's native /model picker recognises, so models show friendly names and the 1M-context badge instead of bare ids. Outbound, `/anthropic/v1/models` dashes claude ids (`claude-opus-4.8` → `claude-opus-4-8[1m]`) and tags opus 4.6/4.7/4.8 + sonnet 4.6 as 1M; setup's default ANTHROPIC_MODEL is dashed the same way so the picker matches it; inbound, requests resolve back to the real Copilot model. GPT/o3 pass through unchanged.",
-    "summaries": [
-      "Map Copilot model ids to the canonical ids Claude Code's native /model picker recognises, so models show friendly names and the 1M-context badge instead of bare ids. Outbound, `/anthropic/v1/models` dashes claude ids (`claude-opus-4.8` → `claude-opus-4-8[1m]`) and tags opus 4.6/4.7/4.8 + sonnet 4.6 as 1M; setup's default ANTHROPIC_MODEL is dashed the same way so the picker matches it; inbound, requests resolve back to the real Copilot model. GPT/o3 pass through unchanged."
     ]
   }
 ];
