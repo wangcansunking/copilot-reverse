@@ -9,6 +9,7 @@ Guidance for Claude Code when working in this repo.
 - At the start of a feature/bugfix task, create a worktree (use the `EnterWorktree` tool, or `git worktree add`) and do all work there on a new branch.
 - Keep `master` clean; open a PR from the worktree branch to merge.
 - Small, single-file edits, docs-only tweaks, or quick investigations don't need a worktree — use judgment.
+- **Before merging any worktree branch, run the real CLI e2e (`cli-e2e`) against live Copilot and confirm it passes.** Build the image and run it with your token mounted read-only (see [`e2e/docker/README.md`](e2e/docker/README.md)) — on Windows/Git Bash that's `MSYS_NO_PATHCONV=1 docker run --rm -v "C:/Users/<you>/.copilot-reverse/creds.json:/root/.copilot-reverse/creds.json:ro" <image>`. This is the fidelity gate a merge must clear; the hermetic http-e2e alone is not sufficient. Skip only when nothing observable changed (pure docs/refactor).
 - When the work is merged or abandoned, remove the worktree.
 - **After a PR merges:** exit the worktree, `git push origin --delete <branch>`, remove the worktree, delete the local branch, then fast-forward `master` to the merged commit (`git fetch origin && git merge --ff-only origin/master`) so the next task branches from latest.
 
