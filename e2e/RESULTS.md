@@ -3,6 +3,20 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-07-02 (capability-driven 1M badge + generalised model names — PR #48)** — the picker's `[1m]`
+  badge now follows each model's real upstream context window (`fetchModelOneMSupport`, injected into
+  `toCanonical` as an `is1M` oracle) instead of a hardcoded set, and the friendly-name regex accepts any
+  Claude family + single- OR two-segment version. Fixes `claude-sonnet-5` (was a bare id with no badge
+  despite being 1M upstream). **Unit + vitest e2e: 632/632 green. HTTP edge docker e2e: 64/64 green**
+  (adds `sonnet-5 present / friendly "Sonnet 5" / [1m] badge` on the hermetic gate). **Real-CLI docker
+  e2e (real token):** the two new sonnet-5 cases PASS — `picker advertises sonnet-5 with friendly name`
+  and `canonical sonnet-5 [1m] id resolves to Copilot + answers` (a real `claude -p` turn). The run also
+  shows 5 FAILs (codex tool loop, 2× vision OCR `image media type not supported`, 2× unknown-model 90s
+  timeout) — **these are pre-existing and unrelated to this change: a from-scratch `master` (de42276)
+  baseline run reproduces the exact same 5 failures**, all in cases this PR never touched, all pointing
+  at upstream/environment (Copilot 400 on images, upstream latency on an invalid id, codex tool loop).
+  This change adds only passing coverage; it introduces no new failures.
+
 - **2026-07-01 (image downscale — fixes `model_max_prompt_tokens_exceeded` 502 on pasted/tool images)**
   — a large image came through as a multi-MB base64 data URL that Copilot's `/chat` bills as PLAIN TEXT
   (~char/4, it has no vision tiler for Claude models), so one ~9MB image ≈ 2.3M tokens overflowed the
