@@ -102,11 +102,34 @@ note "/anthropic/v1/models -> canonical ids + 1M badge"
 MODELS=$(curl -sf "http://127.0.0.1:$PORT/anthropic/v1/models")
 check "picker advertises dashed opus id + 1M badge" 'echo "$MODELS" | grep -q "claude-opus-4-8\[1m\]"' "models: $(echo "$MODELS" | jq -rc '[.data[].id]' 2>/dev/null)"
 check "no dotted claude id leaks to picker" '! echo "$MODELS" | grep -Eq "claude-(opus|sonnet)-4\.[0-9]"' "dotted ids would blank the picker"
+# Single-segment version id (claude-sonnet-5): the generalised name/badge mapping must surface it with a
+# friendly display + [1m] badge from its REAL upstream 1M window — never a bare id. Guarded softly: if
+# Copilot ever drops sonnet-5 from this account's list the case notes it instead of hard-failing.
+if echo "$MODELS" | jq -e '.data[] | select(.id|startswith("claude-sonnet-5"))' >/dev/null 2>&1; then
+  check "picker advertises sonnet-5 with friendly name" 'echo "$MODELS" | jq -e ".data[] | select(.id==\"claude-sonnet-5[1m]\") | select(.display_name==\"Sonnet 5\")" >/dev/null' "sonnet-5 entry: $(echo "$MODELS" | jq -rc '.data[]|select(.id|startswith("claude-sonnet-5"))')"
+else
+  note "sonnet-5 not in this account's model list -> skipping sonnet-5 picker assertion"
+  record "picker advertises sonnet-5 with friendly name" "SKIP" "claude-sonnet-5 absent from upstream /models"
+fi
 
 # --- 8) canonical opus [1m] picker id answers end-to-end (real 1M model, real Copilot) -----------
 note "claude -p with canonical opus [1m] -> answers via Copilot"
 OPUS=$(ANTHROPIC_MODEL="claude-opus-4-8[1m]" claude -p "Reply with exactly: OPUS_OK" --output-format json 2>/dev/null | jq -r '.result // empty')
 check "canonical opus [1m] id resolves to Copilot + answers" 'echo "$OPUS" | grep -q "OPUS_OK"' "claude (claude-opus-4-8[1m]) replied: \`${OPUS}\`"
+
+# --- 8b) canonical sonnet-5 [1m] picker id answers end-to-end (single-segment 1M model, real Copilot) --
+# The generalised mapping's headline model: a real `claude -p` turn on ANTHROPIC_MODEL=claude-sonnet-5[1m]
+# must strip [1m], resolve the single-segment id back to Copilot's claude-sonnet-5, and answer. Proves the
+# new id shape works the whole way through the CLI, not just in a /models JSON blob. Skips (not fails) if
+# this account can't see sonnet-5, keeping forks/limited-token runs green.
+if echo "$MODELS" | jq -e '.data[] | select(.id|startswith("claude-sonnet-5"))' >/dev/null 2>&1; then
+  note "claude -p with canonical sonnet-5 [1m] -> answers via Copilot"
+  SON=$(ANTHROPIC_MODEL="claude-sonnet-5[1m]" claude -p "Reply with exactly: SONNET5_OK" --output-format json 2>/dev/null | jq -r '.result // empty')
+  check "canonical sonnet-5 [1m] id resolves to Copilot + answers" 'echo "$SON" | grep -q "SONNET5_OK"' "claude (claude-sonnet-5[1m]) replied: \`${SON}\`"
+else
+  note "sonnet-5 absent from upstream -> skipping sonnet-5 round-trip"
+  record "canonical sonnet-5 [1m] id resolves to Copilot + answers" "SKIP" "claude-sonnet-5 absent from upstream /models"
+fi
 
 # --- 9) the DEFAULT ANTHROPIC_MODEL setup writes must be a canonical dashed [1m] id ---------------
 # Regression: setup once wrote Copilot's dotted id (claude-opus-4.8[1m]) which Claude Code's picker
