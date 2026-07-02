@@ -20,8 +20,24 @@ and update this file (paste the summary).
   `tests/core/context-edit.test.ts` (7 cases: no-op under budget, keep-floor, oldest-first, minimal
   edit, multi-image unit clear, top-level untouched, idempotent) + a 413 hint case + a hermetic http-e2e
   check (12 accumulated screenshots, each under the per-image cap, `count_tokens` lands far below the raw
-  sum — proving clearing, not resizing). 588 unit tests green; docker http-e2e ALL PASSED (63); `tsc`
-  clean.
+  sum — proving clearing, not resizing). Plus a **real-CLI docker case**: an 11-screenshot browser-loop
+  history posted to live Copilot never 413s AND Claude still reads the most-recent (green) screenshot —
+  proving old cleared, recent kept, end-to-end. 588 unit tests green; docker http-e2e ALL PASSED (63);
+  `tsc` clean. (The same real-CLI run shows the 5 pre-existing FAILs documented in the PR #48 entry
+  below — codex tool loop, 2× vision OCR, 2× unknown-model — untouched by this change.)
+- **2026-07-02 (capability-driven 1M badge + generalised model names — PR #48)** — the picker's `[1m]`
+  badge now follows each model's real upstream context window (`fetchModelOneMSupport`, injected into
+  `toCanonical` as an `is1M` oracle) instead of a hardcoded set, and the friendly-name regex accepts any
+  Claude family + single- OR two-segment version. Fixes `claude-sonnet-5` (was a bare id with no badge
+  despite being 1M upstream). **Unit + vitest e2e: 632/632 green. HTTP edge docker e2e: 64/64 green**
+  (adds `sonnet-5 present / friendly "Sonnet 5" / [1m] badge` on the hermetic gate). **Real-CLI docker
+  e2e (real token):** the two new sonnet-5 cases PASS — `picker advertises sonnet-5 with friendly name`
+  and `canonical sonnet-5 [1m] id resolves to Copilot + answers` (a real `claude -p` turn). The run also
+  shows 5 FAILs (codex tool loop, 2× vision OCR `image media type not supported`, 2× unknown-model 90s
+  timeout) — **these are pre-existing and unrelated to this change: a from-scratch `master` (de42276)
+  baseline run reproduces the exact same 5 failures**, all in cases this PR never touched, all pointing
+  at upstream/environment (Copilot 400 on images, upstream latency on an invalid id, codex tool loop).
+  This change adds only passing coverage; it introduces no new failures.
 
 - **2026-07-01 (image downscale — fixes `model_max_prompt_tokens_exceeded` 502 on pasted/tool images)**
   — a large image came through as a multi-MB base64 data URL that Copilot's `/chat` bills as PLAIN TEXT

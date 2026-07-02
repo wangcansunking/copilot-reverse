@@ -1,6 +1,6 @@
 // Live model list from Copilot. Falls back to a curated list if the endpoint is unavailable.
 const MODELS_URL = "https://api.githubcopilot.com/models";
-export const FALLBACK_MODELS = ["gpt-4o", "gpt-4o-mini", "claude-sonnet-4-6", "claude-opus-4-8", "o3-mini"];
+export const FALLBACK_MODELS = ["gpt-4o", "gpt-4o-mini", "claude-sonnet-4-6", "claude-sonnet-5", "claude-opus-4-8", "o3-mini"];
 
 const HEADERS = (token: string) => ({
   authorization: `Bearer ${token}`,
@@ -57,6 +57,22 @@ export async function fetchModelReasoningSupport(token: string, fetchFn: typeof 
   if (!data) return out;
   for (const m of data) {
     if (m.id && Array.isArray(m.capabilities?.supports?.reasoning_effort) && m.capabilities.supports.reasoning_effort.length) out.add(m.id);
+  }
+  return out;
+}
+
+// Set of model ids whose advertised context window reaches ~1M tokens (dotted upstream form). Feeds the
+// outbound /v1/models mapper's is1M oracle, so the [1m] picker badge follows the REAL upstream window
+// instead of a hardcoded list — a new 1M model (claude-sonnet-5, or any future family) badges with zero
+// code changes. Threshold 800K matches clients.ts's context-window suffix rule (max_prompt_tokens 936K
+// also clears it). Returns an empty set on failure/timeout, so callers fall back to the default set.
+export async function fetchModelOneMSupport(token: string, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Set<string>> {
+  const data = await getModels(token, fetchFn, timeoutMs);
+  const out = new Set<string>();
+  if (!data) return out;
+  for (const m of data) {
+    const w = m.capabilities?.limits?.max_context_window_tokens ?? m.capabilities?.limits?.max_prompt_tokens;
+    if (m.id && typeof w === "number" && w > 800_000) out.add(m.id);
   }
   return out;
 }
