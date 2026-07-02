@@ -26,4 +26,9 @@ describe("errorHint", () => {
     expect(errorHint("copilot token exchange failed: 401")).toMatch(/\/login/);
     expect(errorHint("403 Forbidden")).toMatch(/\/login/);
   });
+  it("detects an oversized request body (413) and suggests compacting / fewer screenshots", () => {
+    expect(errorHint("copilot completion failed: 413 — Request Entity Too Large")).toMatch(/too large/i);
+    expect(errorHint("copilot completion failed: 413 — Request Entity Too Large")).toMatch(/\/compact/);
+    expect(errorHint("payload too large")).toMatch(/too large/i);
+  });
 });

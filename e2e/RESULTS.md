@@ -3,6 +3,26 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-07-02 (context editing — fixes `413 Request Entity Too Large` (relayed 502) on long
+  browser-harness / agentic sessions)** — a browser-harness loop emits one screenshot per step, and the
+  stateless wire re-sends the WHOLE history every turn, so cumulative base64 grows until Copilot's
+  gateway rejects the request body at the HTTP layer (a byte-size limit, distinct from the token limit
+  the image-downscale fix targets — per-image resize alone can't satisfy it). The real Anthropic backend
+  handles this server-side via context editing (`clear_tool_uses_20250919`): keep the most recent few
+  tool results, replace older ones with a placeholder. Claude Code relies on it and keeps sending the
+  full history; Copilot has no such layer. We now sit where that layer would: new `core/context-edit.ts`
+  keeps the most recent 3 tool screenshots at full fidelity and, once the cumulative image payload
+  exceeds a ~6MB budget, clears older ones oldest-first (image → placeholder text) and only as much as
+  needed — lossless no-op when under budget, and it never touches top-level (user-attached) images, only
+  tool results. Wired AFTER resize on all send paths (`/anthropic/v1/messages`, `/openai/chat/completions`,
+  `/openai/responses`) AND `count_tokens`, so the estimate matches what's sent. Also adds a 413
+  `errorHint` (`request too large — /compact or send fewer/smaller images`). New unit suite
+  `tests/core/context-edit.test.ts` (7 cases: no-op under budget, keep-floor, oldest-first, minimal
+  edit, multi-image unit clear, top-level untouched, idempotent) + a 413 hint case + a hermetic http-e2e
+  check (12 accumulated screenshots, each under the per-image cap, `count_tokens` lands far below the raw
+  sum — proving clearing, not resizing). 588 unit tests green; docker http-e2e ALL PASSED (63); `tsc`
+  clean.
+
 - **2026-07-01 (image downscale — fixes `model_max_prompt_tokens_exceeded` 502 on pasted/tool images)**
   — a large image came through as a multi-MB base64 data URL that Copilot's `/chat` bills as PLAIN TEXT
   (~char/4, it has no vision tiler for Claude models), so one ~9MB image ≈ 2.3M tokens overflowed the

@@ -158,6 +158,14 @@ whose long edge is already within the pixel cap but whose bytes are huge, assert
 proving the gate is on bytes, not dimensions. Quota-free (no upstream call), so all run on the dummy
 token.
 
+It also asserts **context editing** (fixes `413 Request Entity Too Large` on long browser-harness
+sessions): 12 screenshot turns, each already UNDER the per-image resize cap (so resize passes them
+through untouched) but collectively far over the ~6MB cumulative budget, are posted to `count_tokens`.
+The estimate must land far below the raw sum of all screenshots — proving old tool screenshots were
+CLEARED (replaced with a placeholder, most-recent-3 kept), not merely resized. A precondition check
+confirms each screenshot really was under the resize cap, so what shrank the count was clearing, not
+per-image downscaling.
+
 This black-box path caught two bugs nothing else did: a Codex tool-translation `400` (a `custom`/
 `tool_search` tool forwarded nameless → Copilot rejects → "stream closed before response.completed"),
 and empty terminal Responses events (`output_*.done` carried no text → Codex rendered nothing).

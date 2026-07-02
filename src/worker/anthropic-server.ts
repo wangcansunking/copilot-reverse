@@ -5,6 +5,7 @@ import type { MetricSink } from "./server.js";
 import { anthropicRequestToCanonical, canonicalToAnthropicResponse } from "../core/anthropic-inbound.js";
 import { estimateTokens } from "../core/tokens.js";
 import { shrinkImagesInPlace } from "../core/image-resize.js";
+import { editImageContextInPlace } from "../core/context-edit.js";
 import { errorHint } from "./errors.js";
 import { CopilotAuthError } from "../providers/copilot/token.js";
 import { isGatewayTool, type GatewayToolRunner } from "../core/server-tools.js";
@@ -42,6 +43,10 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
   app.post("/anthropic/v1/messages/count_tokens", async (req, res) => {
     const canon = anthropicRequestToCanonical(req.body);
     await shrinkImagesInPlace(canon.messages);
+    // Mirror the send path's context editing so the count reflects the payload we'll ACTUALLY send —
+    // if we cleared old screenshots before sending but counted them here, count_tokens would over-report
+    // and Claude Code would compact needlessly. Both paths must agree.
+    editImageContextInPlace(canon.messages);
     res.json({ input_tokens: estimateTokens(canon) });
   });
 
@@ -52,6 +57,10 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
     // base64 payload can't blow past Copilot's prompt-token limit (it has no vision tiler on /chat and
     // bills the data URL as plain text). Runs before count/send so both see the reduced payload.
     await shrinkImagesInPlace(canon.messages);
+    // Then context-edit: clear OLD tool screenshots that resize alone can't save, so a long
+    // browser-harness conversation's cumulative image bytes don't trip Copilot's request entity limit
+    // (413 → relayed 502). Keeps the most recent few; the real Anthropic backend does this server-side.
+    editImageContextInPlace(canon.messages);
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
     // Echo the resolved reasoning effort back as a response header — real observability (a user can
