@@ -104,6 +104,14 @@ async function main() {
     const opus = models.find((m) => m.id.startsWith("claude-opus-4-8"));
     check("opus has friendly display_name", opus?.display_name === "Opus 4.8", opus?.display_name);
     check("opus carries [1m] 1M badge", opus?.id === "claude-opus-4-8[1m]", opus?.id);
+    // Single-segment version id (claude-sonnet-5): the friendly name must not regress to a bare id, and
+    // as a known-current 1M model it must carry the [1m] badge. In the hermetic gate the dummy token
+    // fails discovery, so this rides the offline fallback list (which now lists sonnet-5) — proving the
+    // generalised display-name + default-1M path without spending quota.
+    const sonnet5 = models.find((m) => m.id.startsWith("claude-sonnet-5"));
+    check("sonnet-5 present in picker", !!sonnet5, JSON.stringify(models.map((m) => m.id)));
+    check("sonnet-5 has friendly display_name (single-segment version)", sonnet5?.display_name === "Sonnet 5", sonnet5?.display_name);
+    check("sonnet-5 carries [1m] 1M badge", sonnet5?.id === "claude-sonnet-5[1m]", sonnet5?.id);
     const ct = await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }));
     check("count_tokens input_tokens>0", JSON.parse(ct.t).input_tokens > 0, ct.t);
 
