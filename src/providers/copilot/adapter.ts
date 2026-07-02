@@ -12,7 +12,7 @@ interface TokenSource { get(): Promise<string> }
 // classify it: a permanent 4xx (bad model, malformed request) must surface as a TERMINAL client
 // error so the caller fails fast — mapping it to a retriable 502 makes clients (Claude Code, the
 // Anthropic SDK) retry with backoff until their turn timeout, freezing the session (issue #50 P1).
-// 429/408 stay retriable (see isRetriableUpstream). Network/parse failures are plain Errors → 502.
+// 429/408 stay retriable (see isTerminalUpstream). Network/parse failures are plain Errors → 502.
 export class UpstreamError extends Error {
   constructor(public readonly status: number, message: string) {
     super(message);
