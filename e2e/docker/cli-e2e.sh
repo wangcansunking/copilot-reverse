@@ -274,10 +274,16 @@ check "codex completes a real tool loop (file written through the proxy)" 'echo 
 #                             proves the shrink kept the letters LEGIBLE (not a smear) — the whole point
 #                             of the 502 fix. (Distinct from case 11's colour-naming curl POST: this is
 #                             the real Read-tool path + OCR + the re-encode ladder.)
+# MODEL: pinned to a Claude model, NOT the default gpt-4o. Copilot's gpt-4o has NO image entitlement —
+# it 400s ANY inline image with "validating image item: image media type not supported" (probed: PNG
+# AND JPEG both rejected), regardless of our (valid) media type. That is an upstream model capability,
+# not a proxy bug — a real user doing OCR picks a vision-capable model, so the test must too. Claude
+# models accept images (probed: the exact Jimp fixture returns its baked token upstream). #50 P2.
+VISION_MODEL="claude-sonnet-4.6"
 vision_case() { # vision_case <png-path> <expected-token>
   local png="$1" tok="$2"
   local out
-  out=$(claude -p "Read the image file at ${png} and reply with ONLY the exact text shown in the image, nothing else." \
+  out=$(ANTHROPIC_MODEL="$VISION_MODEL" claude -p "Read the image file at ${png} and reply with ONLY the exact text shown in the image, nothing else." \
     --allowedTools Read --permission-mode acceptEdits --output-format json 2>/tmp/vision.err | jq -r '.result // empty' 2>/dev/null)
   echo "  claude vision (${png##*/}) read: ${out:-<none>}"
   # tolerant + case-insensitive (the model may add whitespace); a hit proves it truly saw the pixels.

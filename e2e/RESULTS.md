@@ -3,6 +3,29 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-07-03 (#50 P2 — codex tool loop + vision OCR: cli-e2e goes all-green)** — the two remaining
+  real-CLI reds from #50 are resolved.
+  - **Codex tool loop (real proxy bug, fixed).** `codex exec -s workspace-write "create a file …"`
+    completed with the file never written. Root cause isolated by capturing the live `/responses`
+    stream: the model DID emit a `shell_command` function_call, but our terminal events —
+    `response.function_call_arguments.done`, `response.output_item.done`, and the `function_call` inside
+    `response.completed.output` — carried only `{type,id,status}`, **dropping `name` and `arguments`**.
+    Codex reads those terminal events to learn which command to run, so a nameless/argless call was
+    silently skipped. Verified against the OpenAI Responses reference (Context7): each must carry the
+    COMPLETE call. `ResponsesSSE` now retains each call's `callId`+`name` and emits the full item on
+    every terminal event. **Verified end-to-end: `codex_proof.txt` is now written with `CODEX_TOOL_OK`
+    and codex replies `DONE`.** New strict unit test asserts all three terminal events carry
+    call_id+name+arguments (the old test only checked event-type strings were present — which is how the
+    gap shipped).
+  - **Vision OCR (test-fixture bug, not a proxy bug).** Both fixtures 400'd with `validating image item:
+    image media type not supported`. Direct upstream probing (real token) proved: the EXACT Jimp fixture
+    sent to a **Claude** model returns its baked token (`VISION7`) — vision + our media type are healthy —
+    but Copilot's **gpt-4o rejects ANY inline image** (PNG and JPEG alike) with that exact string. The
+    vision case was running under the default `ANTHROPIC_MODEL=gpt-4o`, which has no image entitlement.
+    Fix is in the test: pin the vision case to `claude-sonnet-4.6` (a real user doing OCR picks a
+    vision-capable model). No proxy change needed.
+  - **Unit + vitest e2e: 639/639 green** (adds the strict ResponsesSSE terminal-event test).
+
 - **2026-07-03 (unknown-model fast-fail — fixes #50 P1 90s freeze)** — a typo'd / unknown model id hit
   an upstream 400 (`model_not_supported`, confirmed <1s upstream by direct probe), but the worker masked
   EVERY non-auth error as a retriable **502 / `api_error`** in all three request handlers. A client that
