@@ -8,27 +8,36 @@
 // (see bestModelMatch). Non-claude ids (gpt*, o3*) have no canonical form → pass through untouched.
 export const ONE_M_SUFFIX = "[1m]";
 
-// Dashed canonical ids whose Claude Code table carries a 1M window — only these get the [1m] badge.
-// Everything else stays at its default window. Anchored on the probed v2.1.195 binary table.
-const ONE_M_MODELS = new Set(["claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-4-6"]);
+// Dashed canonical ids known to carry a 1M window — the FALLBACK used when a caller can't supply live
+// capabilities (e.g. TUI setup, or a worker whose discovery hasn't resolved / failed). Should reflect
+// the KNOWN-CURRENT 1M models; the worker's /v1/models route additionally passes a live is1M oracle
+// (from upstream max_context_window_tokens) so FUTURE 1M families badge correctly with zero code changes.
+// Anchored on the probed v2.1.195 binary table + models since confirmed 1M upstream (claude-sonnet-5).
+export const DEFAULT_ONE_M_MODELS = new Set(["claude-opus-4-6", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-4-6", "claude-sonnet-5"]);
 
-// claude-<family>-<major>-<minor> -> "Family Major.Minor" (e.g. claude-opus-4-8 -> "Opus 4.8").
+// claude-<family>-<version> -> "Family Version". Family is any lowercase word (so future families like
+// `fable` work); version is one or two dash-separated numeric segments joined with a dot, so BOTH the
+// two-segment ids (claude-opus-4-8 -> "Opus 4.8") and single-segment ids (claude-sonnet-5 -> "Sonnet 5")
+// get a friendly name. Anything that doesn't match echoes back unchanged.
 function displayName(dashed: string): string {
-  const m = /^claude-(opus|sonnet|haiku)-(\d+)-(\d+)$/.exec(dashed);
+  const m = /^claude-([a-z]+)-(\d+(?:-\d+)?)$/.exec(dashed);
   if (!m) return dashed;
-  const [, fam, maj, min] = m;
-  return `${fam[0].toUpperCase()}${fam.slice(1)} ${maj}.${min}`;
+  const [, fam, ver] = m;
+  return `${fam[0].toUpperCase()}${fam.slice(1)} ${ver.replace(/-/g, ".")}`;
 }
 
 export interface CanonicalModel { id: string; display_name: string }
 
 // Outbound: Copilot id -> the id+display Claude Code's picker understands. Claude ids are dashed to the
-// canonical form; the 1M families get the [1m] suffix so the picker shows the badge and sizes context
-// to 1M. Non-claude ids echo back as-is so they still appear, just without native metadata.
-export function toCanonical(copilotId: string): CanonicalModel {
+// canonical form; a model gets the [1m] suffix (badge + 1M context sizing) when `is1M` says so. `is1M`
+// receives the DASHED id and is injected by callers holding live upstream capabilities; when omitted
+// (no live data yet), it falls back to DEFAULT_ONE_M_MODELS so behaviour is unchanged for known models.
+// Non-claude ids echo back as-is so they still appear, just without native metadata.
+export function toCanonical(copilotId: string, is1M?: (dashed: string) => boolean): CanonicalModel {
   if (!copilotId.startsWith("claude-")) return { id: copilotId, display_name: copilotId };
   const dashed = copilotId.replace(/\./g, "-");
-  const id = ONE_M_MODELS.has(dashed) ? `${dashed}${ONE_M_SUFFIX}` : dashed;
+  const oneM = is1M ? is1M(dashed) : DEFAULT_ONE_M_MODELS.has(dashed);
+  const id = oneM ? `${dashed}${ONE_M_SUFFIX}` : dashed;
   return { id, display_name: displayName(dashed) };
 }
 

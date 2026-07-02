@@ -25,10 +25,17 @@ describe("Router", () => {
   });
   it("round-trips every advertised canonical id back to its Copilot model", () => {
     const r = new Router([fake], {});
-    r.setAvailableModels(["claude-opus-4.8", "claude-sonnet-4.6", "claude-haiku-4-5", "gpt-4o"]);
-    for (const real of ["claude-opus-4.8", "claude-sonnet-4.6", "claude-haiku-4-5"]) {
+    r.setAvailableModels(["claude-opus-4.8", "claude-sonnet-4.6", "claude-sonnet-5", "claude-haiku-4-5", "gpt-4o"]);
+    for (const real of ["claude-opus-4.8", "claude-sonnet-4.6", "claude-sonnet-5", "claude-haiku-4-5"]) {
       expect(r.resolveModel(toCanonical(real).id)).toBe(real);
     }
+  });
+  it("round-trips a 1M-badged single-segment id (sonnet-5[1m]) back to its Copilot model", () => {
+    // The picker advertises claude-sonnet-5[1m] when the oracle marks it 1M; the inbound path must strip
+    // [1m] and resolve it back to the dotted upstream id, exactly as it does for the opus/sonnet families.
+    const r = new Router([fake], {});
+    r.setAvailableModels(["claude-sonnet-5", "gpt-4o"]);
+    expect(r.resolveModel(toCanonical("claude-sonnet-5", () => true).id)).toBe("claude-sonnet-5");
   });
   it("returns the only provider", () => {
     expect(new Router([fake], { "*": "gpt-4o" }).pick("x").name).toBe("copilot");

@@ -2,7 +2,7 @@ import { createWorkerApp } from "./server.js";
 import { Router } from "./router.js";
 import { CopilotAdapter } from "../providers/copilot/adapter.js";
 import { CopilotTokenStore } from "../providers/copilot/token.js";
-import { fetchCopilotModels, fetchModelEndpoints, fetchModelReasoningSupport } from "../providers/copilot/models.js";
+import { fetchCopilotModels, fetchModelEndpoints, fetchModelReasoningSupport, fetchModelOneMSupport } from "../providers/copilot/models.js";
 import { readGhToken } from "../shared/creds.js";
 import { readWebIqKey, readWebSearchMode, resolveWebSearchBackend } from "../shared/webiq-key.js";
 import { readAccessMode, readAccessKey } from "../shared/network.js";
@@ -34,11 +34,13 @@ let modelEndpoints: Record<string, string[]> = {};
 let reasoningModels = new Set<string>();
 const router = new Router([new CopilotAdapter(tokenStore, fetch, (m) => modelEndpoints[m] ?? [], (m) => reasoningModels.size === 0 || reasoningModels.has(m))], cfg.modelMap);
 // Load the live model list so the router can fuzzy-match near-miss ids (e.g. dated Anthropic ids), the
-// endpoint map so the adapter can route per model, and the reasoning-support set so it only sends
-// reasoning_effort where accepted. One token fetch feeds all three.
+// endpoint map so the adapter can route per model, the reasoning-support set so it only sends
+// reasoning_effort where accepted, and the 1M set so the picker badges 1M models from real capabilities.
+// One token fetch feeds all four.
 void tokenStore.get().then(async (t) => {
-  const [ids, endpoints, reasoning] = await Promise.all([fetchCopilotModels(t), fetchModelEndpoints(t), fetchModelReasoningSupport(t)]);
+  const [ids, endpoints, reasoning, oneM] = await Promise.all([fetchCopilotModels(t), fetchModelEndpoints(t), fetchModelReasoningSupport(t), fetchModelOneMSupport(t)]);
   router.setAvailableModels(ids);
+  router.setOneMModels(oneM);
   modelEndpoints = endpoints;
   reasoningModels = reasoning;
 }).catch(() => {});
