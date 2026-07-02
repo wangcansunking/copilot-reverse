@@ -54,6 +54,43 @@ and update this file (paste the summary).
   neither touches nor regresses them (it does make the vision 400 surface as a clean terminal 400 rather
   than a masked 502).
 
+- **2026-07-03 (context editing budget FIX — the 413 came back)** — the context-editing fix still 413'd
+  on real long screenshot sessions. Root cause: `IMAGE_PAYLOAD_BUDGET` was 6MB, but Copilot's gateway
+  HTTP entity limit was never measured — I PROBED it at exactly **5 MiB** (5,242,880 bytes): a ~4.95MB
+  body returns 400 (accepted, model-name-only error), a 5.00MB body returns 413. Because the 6MB budget
+  sat ABOVE the 5 MiB wall, context editing believed an over-limit payload was "within budget" and
+  forwarded it straight into a 413. Two fixes: (1) lower the budget to **3.5MB** (≥1.5MB headroom under
+  the wall for text/tools/JSON); (2) make `keep` a PREFERENCE not a hard floor — if the most recent 3
+  screenshots alone exceed budget, clearing now breaks through the floor oldest-first (up to and
+  including the newest), since a body that still 413s is strictly worse than one missing a recent shot.
+  New tests: budget-below-gateway-limit regression, floor-break behavior, an http-e2e assertion that the
+  edited payload (tokens×4 bytes) fits under 5 MiB, and a strengthened real-CLI case #16 — 10 high-entropy
+  noise screenshots (~0.95MB each, **~9.5MB unedited**, over the wall) posted to live Copilot must not
+  413 AND Claude still reads the most-recent green screenshot. (The pre-fix 6MB budget would have left
+  ~6MB and still 413'd this.) 597 unit tests green; docker http-e2e ALL PASSED (67); `tsc` clean.
+
+- **2026-07-02 (context editing — fixes `413 Request Entity Too Large` (relayed 502) on long
+  browser-harness / agentic sessions)** — a browser-harness loop emits one screenshot per step, and the
+  stateless wire re-sends the WHOLE history every turn, so cumulative base64 grows until Copilot's
+  gateway rejects the request body at the HTTP layer (a byte-size limit, distinct from the token limit
+  the image-downscale fix targets — per-image resize alone can't satisfy it). The real Anthropic backend
+  handles this server-side via context editing (`clear_tool_uses_20250919`): keep the most recent few
+  tool results, replace older ones with a placeholder. Claude Code relies on it and keeps sending the
+  full history; Copilot has no such layer. We now sit where that layer would: new `core/context-edit.ts`
+  keeps the most recent 3 tool screenshots at full fidelity and, once the cumulative image payload
+  exceeds a ~6MB budget, clears older ones oldest-first (image → placeholder text) and only as much as
+  needed — lossless no-op when under budget, and it never touches top-level (user-attached) images, only
+  tool results. Wired AFTER resize on all send paths (`/anthropic/v1/messages`, `/openai/chat/completions`,
+  `/openai/responses`) AND `count_tokens`, so the estimate matches what's sent. Also adds a 413
+  `errorHint` (`request too large — /compact or send fewer/smaller images`). New unit suite
+  `tests/core/context-edit.test.ts` (7 cases: no-op under budget, keep-floor, oldest-first, minimal
+  edit, multi-image unit clear, top-level untouched, idempotent) + a 413 hint case + a hermetic http-e2e
+  check (12 accumulated screenshots, each under the per-image cap, `count_tokens` lands far below the raw
+  sum — proving clearing, not resizing). Plus a **real-CLI docker case**: an 11-screenshot browser-loop
+  history posted to live Copilot never 413s AND Claude still reads the most-recent (green) screenshot —
+  proving old cleared, recent kept, end-to-end. 588 unit tests green; docker http-e2e ALL PASSED (63);
+  `tsc` clean. (The same real-CLI run shows the 5 pre-existing FAILs documented in the PR #48 entry
+  below — codex tool loop, 2× vision OCR, 2× unknown-model — untouched by this change.)
 - **2026-07-02 (capability-driven 1M badge + generalised model names — PR #48)** — the picker's `[1m]`
   badge now follows each model's real upstream context window (`fetchModelOneMSupport`, injected into
   `toCanonical` as an `is1M` oracle) instead of a hardcoded set, and the friendly-name regex accepts any

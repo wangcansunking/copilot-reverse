@@ -12,6 +12,12 @@ export function errorHint(message: string): string {
   if (/context_length_exceeded|prompt is too long|maximum context|too many tokens|context window/.test(m)) {
     return "context window exceeded — the conversation is too long; /compact or switch to a larger-context model";
   }
+  // Copilot's gateway rejected the request body at the HTTP layer (byte size, not tokens) — most often a
+  // long agentic session that accreted many screenshots. Context editing clears old ones automatically,
+  // but a single huge turn can still trip it. Point the user at compaction / trimming attachments.
+  if (/\b413\b|request entity too large|payload too large|entity too large/.test(m)) {
+    return "request too large — the payload exceeded the gateway limit; /compact or send fewer/smaller images";
+  }
   if (/not supported|unknown model|invalid model|model_not_found|does not support/.test(m)) {
     return "model not supported — run /model to pick an available one";
   }

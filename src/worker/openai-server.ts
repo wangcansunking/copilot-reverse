@@ -5,6 +5,7 @@ import type { MetricSink } from "./server.js";
 import { openaiRequestToCanonical, canonicalToOpenAIResponse, canonicalChunkToOpenAISSE } from "../core/openai-inbound.js";
 import { responsesRequestToCanonical, canonicalToResponsesResponse, ResponsesSSE } from "../core/responses-inbound.js";
 import { shrinkImagesInPlace } from "../core/image-resize.js";
+import { editImageContextInPlace } from "../core/context-edit.js";
 import { errorHint, classifyError } from "./errors.js";
 import { RunawayGuard } from "../core/stream-guard.js";
 
@@ -25,6 +26,9 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
     // Downscale oversized images before they reach Copilot — it bills an inline data URL as plain
     // text, so a full-resolution screenshot would otherwise overflow the model's prompt-token limit.
     await shrinkImagesInPlace(canon.messages);
+    // Then clear OLD tool screenshots so a long agentic conversation's cumulative image bytes stay
+    // under Copilot's request entity limit (413). Keeps the most recent few, like Anthropic's backend.
+    editImageContextInPlace(canon.messages);
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
     const metric = (status: number, opts: { error?: string; tokensIn?: number; tokensOut?: number } = {}) => onMetric({ endpoint: "/openai/chat/completions", model: canon.model, status, latencyMs: Date.now() - start, tokensIn: opts.tokensIn, tokensOut: opts.tokensOut, error: opts.error });
@@ -79,6 +83,7 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
     const canon = responsesRequestToCanonical(req.body);
     // Same image downscale as /chat: keep the base64 payload within the model's prompt budget.
     await shrinkImagesInPlace(canon.messages);
+    editImageContextInPlace(canon.messages); // + clear old screenshots (cumulative-byte / 413 guard)
     canon.model = router.resolveModel(canon.model);
     const provider = router.pick(canon.model);
     const metric = (status: number, opts: { error?: string; tokensIn?: number; tokensOut?: number } = {}) => onMetric({ endpoint: "/openai/responses", model: canon.model, status, latencyMs: Date.now() - start, tokensIn: opts.tokensIn, tokensOut: opts.tokensOut, error: opts.error });

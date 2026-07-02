@@ -1,3 +1,11 @@
+## v0.16.0 — 2026-07-02
+
+Context editing for images: clear old tool screenshots before they reach Copilot, fixing `413 Request Entity Too Large` (relayed as a 502) on long browser-harness / agentic sessions. A stateless wire re-sends the whole history every turn, so a loop that screenshots each step accretes base64 until Copilot's gateway rejects the request body at the HTTP layer — a byte-size limit that per-image downscaling alone can't satisfy. The worker now does what Anthropic's backend does server-side (`clear_tool_uses_20250919`): keep the most recent 3 tool screenshots at full fidelity and replace older ones with a placeholder once the cumulative image payload exceeds budget, oldest-first and only as much as needed. Runs on both the Anthropic and OpenAI send paths (and `count_tokens`, so the estimate matches what's sent). Also adds a 413 hint pointing the user at `/compact` / fewer images.
+
+## v0.15.0 — 2026-07-02
+
+Model picker: drive the 1M-context `[1m]` badge from each model's real upstream context window instead of a hardcoded id set, and generalise the friendly-name mapping to any Claude family + single- or two-segment version. Fixes `claude-sonnet-5` (was showing as a bare id with no 1M badge despite being a 1M model upstream) and makes any future 1M model render correctly with zero code changes. Inbound resolution and non-1M models (Opus/Sonnet/Haiku 4.5 at 200K) are unaffected.
+
 ## v0.14.2 — 2026-07-02
 
 chore(package): drop README images from the npm tarball (reference them via GitHub raw URLs) — shrinks the published package from 288 kB to 67 kB
