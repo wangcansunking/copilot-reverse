@@ -312,10 +312,12 @@ fi
 
 # --- 14) unknown / typo'd model degrades gracefully (bounded is_error, never a hang or 502-mask) ---
 # router.ts:26 forwards an unmatched id VERBATIM (modelMap is empty, fuzzy < 0.6 threshold on a nonsense
-# id), so Copilot 404s it. This is the ONE model-resolution branch with zero real-Copilot coverage
-# (http-e2e cant reach it — its dummy token 401s before model validation). The north-star is "never
-# freeze/mask a degenerate turn": a user typo must surface a bounded is_error and RETURN, not hang to
-# the turn timeout. The bounded wall-clock (timeout) IS the assertion that it didn't freeze.
+# id), so Copilot 400s it (model_not_supported). This is the ONE model-resolution branch with zero
+# real-Copilot coverage (http-e2e cant reach it — its dummy token 401s before model validation). The
+# north-star is "never freeze/mask a degenerate turn": a user typo must surface a bounded is_error and
+# RETURN, not hang to the turn timeout. #50 P1 fix: the worker now classifies that upstream 400 as a
+# TERMINAL invalid_request_error (not a retriable 502/api_error), so a client fails fast instead of
+# retrying to its 90s deadline. The bounded wall-clock (timeout) IS the assertion that it didn't freeze.
 note "unknown model id -> bounded is_error, returns (no hang)"
 BAD_JSON=$(timeout 90 env ANTHROPIC_MODEL="not-a-real-model-xyz" claude -p "Reply with exactly: NOPE" --output-format json 2>/tmp/badmodel.err)
 BAD_RC=$?

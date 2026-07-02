@@ -3,6 +3,28 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-07-03 (unknown-model fast-fail — fixes #50 P1 90s freeze)** — a typo'd / unknown model id hit
+  an upstream 400 (`model_not_supported`, confirmed <1s upstream by direct probe), but the worker masked
+  EVERY non-auth error as a retriable **502 / `api_error`** in all three request handlers. A client that
+  retries a 502-class error (Claude Code, the Anthropic SDK) backed off to its **90s turn timeout and
+  froze** (`rc=124`) — the exact never-freeze north-star violation. Fix: the adapter now throws a typed
+  `UpstreamError(status, …)` at every non-ok throw site, and a shared `classifyError` maps a **permanent
+  4xx** (not 429/408) to a **terminal** surface — HTTP **400** + `invalid_request_error` on the Anthropic
+  path (both non-stream body and the stream `error` SSE frame) — so the client fails fast; genuine
+  5xx/network/429 stay retriable 502s. The OpenAI/Responses paths keep their flat `{type:"error"}` shape
+  (Codex's contract) and fast-fail via the **status code** only. **Unit + vitest e2e: 638/638 green**
+  (adds adapter `UpstreamError`/`isTerminalUpstream` coverage + 3 anthropic-server cases: terminal 4xx →
+  invalid_request_error SSE, non-stream 400 not 502, retriable 5xx stays 502/api_error). **HTTP edge
+  docker e2e: hermetic gate 64/64 green**; real-token golden adds 4 #50 assertions — `unknown model →
+  terminal 400 (not 502)`, `→ invalid_request_error type`, `fast-fails <15s`, `(stream) → terminal
+  invalid_request_error frame` — **all PASS**. **Real-CLI docker e2e (real token): the #50 P1 cases now
+  PASS** — `unknown-model rc=1 is_error=true` (returned fast, was `rc=124` hang) → `unknown model returns
+  (did not hang to timeout)` + `unknown model surfaces a bounded error`. The 3 remaining FAILs (codex
+  tool loop, 2× vision OCR `image media type not supported`) are the **pre-existing P2s #50 documents as
+  out-of-scope** — same failures on master, distinct code paths, upstream/entitlement causes; this change
+  neither touches nor regresses them (it does make the vision 400 surface as a clean terminal 400 rather
+  than a masked 502).
+
 - **2026-07-02 (capability-driven 1M badge + generalised model names — PR #48)** — the picker's `[1m]`
   badge now follows each model's real upstream context window (`fetchModelOneMSupport`, injected into
   `toCanonical` as an `is1M` oracle) instead of a hardcoded set, and the friendly-name regex accepts any

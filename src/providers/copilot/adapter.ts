@@ -7,6 +7,24 @@ import { oneLine } from "../../shared/format.js";
 
 const CHAT_URL = "https://api.githubcopilot.com/chat/completions";
 interface TokenSource { get(): Promise<string> }
+
+// A non-ok HTTP response from Copilot, carrying the upstream status so the request handlers can
+// classify it: a permanent 4xx (bad model, malformed request) must surface as a TERMINAL client
+// error so the caller fails fast — mapping it to a retriable 502 makes clients (Claude Code, the
+// Anthropic SDK) retry with backoff until their turn timeout, freezing the session (issue #50 P1).
+// 429/408 stay retriable (see isRetriableUpstream). Network/parse failures are plain Errors → 502.
+export class UpstreamError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = "UpstreamError";
+  }
+}
+// A permanent client-side upstream failure: a 4xx that won't succeed on retry. 429 (rate limit) and
+// 408 (request timeout) are transient, so they DON'T count — those should keep retrying. Everything
+// else 400–499 is terminal (bad model, invalid body, unsupported feature).
+export function isTerminalUpstream(err: unknown): err is UpstreamError {
+  return err instanceof UpstreamError && err.status >= 400 && err.status < 500 && err.status !== 429 && err.status !== 408;
+}
 type EndpointsFor = (model: string) => string[];
 // Whether a model advertises reasoning_effort support (from /models capabilities). Sending
 // reasoning_effort to a model without it (e.g. gpt-4o) is a hard 400 — gate on this.
@@ -128,7 +146,7 @@ export class CopilotAdapter implements ProviderAdapter {
       // Safety net: a responses-capable model rejected on /chat — retry once on /responses. ONLY when
       // the model actually advertises /responses; otherwise a matching 400 is a real /chat error to surface.
       if (res.status === 400 && this.canUseResponses(req.model) && RESPONSES_HINT_RE.test(detail)) return this.completeResponses(req);
-      throw new Error(`copilot completion failed: ${res.status}${detail}`);
+      throw new UpstreamError(res.status, `copilot completion failed: ${res.status}${detail}`);
     }
     const data = (await res.json()) as any;
     const content: ContentBlock[] = [];
@@ -164,13 +182,13 @@ export class CopilotAdapter implements ProviderAdapter {
   private async completeResponses(req: CanonicalRequest): Promise<CanonicalResponse> {
     const token = await this.tokenStore.get();
     const res = await this.fetchFn(RESPONSES_URL, { method: "POST", headers: headers(token), body: JSON.stringify(canonicalToResponsesBody({ ...req, stream: false })) });
-    if (!res.ok) throw new Error(`copilot responses failed: ${res.status}${await errorDetail(res)}`);
+    if (!res.ok) throw new UpstreamError(res.status, `copilot responses failed: ${res.status}${await errorDetail(res)}`);
     return { ...parseResponsesResult(await res.json()), model: req.model };
   }
   private async *streamResponsesReq(req: CanonicalRequest): AsyncIterable<CanonicalChunk> {
     const token = await this.tokenStore.get();
     const res = await this.fetchFn(RESPONSES_URL, { method: "POST", headers: headers(token), body: JSON.stringify(canonicalToResponsesBody({ ...req, stream: true })) });
-    if (!res.ok || !res.body) throw new Error(`copilot responses stream failed: ${res.status}${await errorDetail(res)}`);
+    if (!res.ok || !res.body) throw new UpstreamError(res.status, `copilot responses stream failed: ${res.status}${await errorDetail(res)}`);
     yield* streamResponses(res);
   }
 
@@ -181,7 +199,7 @@ export class CopilotAdapter implements ProviderAdapter {
     if (!res.ok || !res.body) {
       const detail = await errorDetail(res);
       if (res.status === 400 && this.canUseResponses(req.model) && RESPONSES_HINT_RE.test(detail)) { yield* this.streamResponsesReq(req); return; }
-      throw new Error(`copilot stream failed: ${res.status}${detail}`);
+      throw new UpstreamError(res.status, `copilot stream failed: ${res.status}${detail}`);
     }
     const reader = res.body.getReader();
     const decoder = new TextDecoder();
