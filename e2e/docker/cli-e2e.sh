@@ -255,9 +255,16 @@ check "claude sees the image and names the colour (red)" 'echo "$IMG_TEXT" | gre
 # hermetic checks stay green — the class already caught once (nameless tool -> Copilot 400).
 # ORACLE = the FILESYSTEM: codex can only create the file by really running the tool through the proxy,
 # so asserting the file exists + has the exact token is immune to codex's JSONL event-shape drifting.
+# SANDBOX: use --dangerously-bypass-approvals-and-sandbox, NOT -s workspace-write. Codex's
+# workspace-write sandbox needs Linux user namespaces (landlock/seccomp) to wrap the shell — those are
+# unavailable in an unprivileged Docker container, so codex fails with "sandbox wrapper cannot create a
+# namespace" and falls back to apply_patch ("invoked with incompatible payload"), never running the
+# command — a CONTAINER limitation, not a proxy bug. The container is already the isolation boundary
+# (ephemeral, --rm), so bypassing codex's inner sandbox is safe here and lets us test what we actually
+# care about: the function_call -> shell -> function_call_output translation round-trip through /responses.
 note "codex tool loop -> writes a file via a real shell tool_call (fs oracle)"
 rm -f /tmp/codex_proof.txt
-CODEX_TOOL_OUT=$(cd /tmp && codex exec --skip-git-repo-check -s workspace-write \
+CODEX_TOOL_OUT=$(cd /tmp && codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
   "Create a file named codex_proof.txt in the current directory whose contents are exactly CODEX_TOOL_OK, then reply DONE." 2>/tmp/codex-tool.err)
 CODEX_PROOF=$(cat /tmp/codex_proof.txt 2>/dev/null)
 echo "  codex_proof.txt contents: ${CODEX_PROOF:-<not created>}"
