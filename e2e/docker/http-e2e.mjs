@@ -168,13 +168,15 @@ async function main() {
 
       // Context editing (clear old tool screenshots): a browser-harness loop emits one screenshot per
       // step and the stateless wire re-sends ALL of them every turn, so cumulative base64 eventually
-      // trips Copilot's request entity limit (413 → relayed 502). The worker now does what Anthropic's
-      // backend does server-side — keep the most recent few screenshots, replace older ones with a
-      // placeholder. Prove it quota-free through count_tokens: build MANY screenshots each already under
-      // the per-image resize cap (so resize passes them through untouched) but collectively far over the
-      // cumulative budget, and assert the estimate lands far below the raw sum — i.e. old images were
-      // cleared, not merely resized. Each image ~1MB base64 (430×430 noise), 12 turns ≈ 12MB → the ~6MB
-      // budget forces roughly half to be cleared.
+      // trips Copilot's request entity limit (probed at exactly 5 MiB → 413 → relayed 502). The worker
+      // now does what Anthropic's backend does server-side — keep the most recent few screenshots,
+      // replace older ones with a placeholder — bounding the payload to the ~3.5MB image budget (under
+      // the 5 MiB wall). Prove it quota-free through count_tokens: build MANY screenshots each already
+      // under the per-image resize cap (so resize passes them through untouched) but collectively far
+      // over the cumulative budget, and assert (a) the estimate lands far below the raw sum — i.e. old
+      // images were CLEARED, not merely resized — and (b) the whole estimated payload now fits under the
+      // 5 MiB gateway limit, the property that actually prevents the 413. Each image ~1MB base64
+      // (430×430 noise), 12 turns ≈ 12MB raw.
       {
         const one = new Jimp({ width: 430, height: 430, color: 0 });
         randomFillSync(one.bitmap.data);
@@ -193,6 +195,11 @@ async function main() {
         const ceBody = JSON.stringify({ model: "claude-opus-4-8[1m]", messages: msgs });
         const ceTokens = JSON.parse((await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), ceBody)).t).input_tokens;
         check("old tool screenshots are context-edited out (tokens << all-screenshots raw)", ceTokens > 0 && ceTokens < rawAll * 0.6, `edited=${ceTokens} rawAll=${rawAll} perShot=${Math.ceil(shotLen / 4)}`);
+        // The property that actually prevents the 413: the edited payload (≈ tokens×4 bytes, since
+        // Copilot bills base64 at char/4) must fit under the probed 5 MiB gateway wall. The pre-fix 6MB
+        // budget FAILED this — it left an over-limit body that still 413'd.
+        const GATEWAY_LIMIT = 5 * 1024 * 1024;
+        check("edited payload fits under the 5 MiB gateway limit (the actual 413 guard)", ceTokens * 4 < GATEWAY_LIMIT, `estBytes=${ceTokens * 4} limit=${GATEWAY_LIMIT}`);
         // Precondition guard: each screenshot really was under the per-image resize cap, so what shrank
         // the count was CLEARING (context editing), not per-image downscaling.
         check("context-edit precondition: each screenshot is under the per-image resize cap", shotLen < 1_500_000, `shotLen=${shotLen}`);

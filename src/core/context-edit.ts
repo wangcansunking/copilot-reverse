@@ -1,5 +1,4 @@
 import type { CanonicalMessage, ToolResultBlock } from "./canonical.js";
-import { MAX_IMAGE_BYTES } from "./image-resize.js";
 
 // Context editing for images — our stand-in for Anthropic's server-side `clear_tool_uses_20250919`.
 //
@@ -17,16 +16,24 @@ import { MAX_IMAGE_BYTES } from "./image-resize.js";
 // *cumulative byte* payload across a long multi-turn conversation. Both run before send; resize first
 // (so kept images are already small), then this clears the older ones that resize alone can't save.
 
-// How many recent tool screenshots to always preserve at full fidelity — matches Anthropic's
+// How many recent tool screenshots to preserve at full fidelity when possible — matches Anthropic's
 // `clear_tool_uses` `keep` default of 3. Two or three recent screenshots are what an agent actually
-// reasons over; older ones are almost always spent context.
+// reasons over; older ones are almost always spent context. This is a PREFERENCE, not a hard floor: if
+// even the most recent `keep` screenshots together exceed the budget, clearing breaks through the floor
+// (oldest-first, up to and including the newest). A body that still 413s is strictly worse than one with
+// fewer images, so fitting under the gateway limit always wins over keeping a recent screenshot.
 export const KEEP_RECENT_SCREENSHOTS = 3;
 
-// Cumulative byte budget for all tool-screenshot payloads in a single request. resize caps each image
-// at MAX_IMAGE_BYTES (~1.5MB), so `keep` recent images sit safely under this; clearing only kicks in
-// once ACCUMULATED history pushes past it. Set to 4× the per-image cap (~6MB) — headroom for the kept
-// images plus conversation text, well below Copilot's gateway entity limit.
-export const IMAGE_PAYLOAD_BUDGET = 4 * MAX_IMAGE_BYTES;
+// Cumulative byte budget for all tool-screenshot payloads in a single request — the number that keeps
+// the whole request body under Copilot's gateway HTTP entity limit. That limit was PROBED at exactly
+// 5 MiB (5,242,880 bytes): a ~4.95MB body returns 400 (accepted, model-name-only error) while a 5.00MB
+// body returns 413. The budget sits well BELOW that hard wall to leave room for everything else in the
+// request that isn't a tool screenshot — conversation text, tool schemas, top-level images, and JSON
+// structural overhead. 3.5MB leaves ~1.5MB of headroom under the 5 MiB wall.
+//
+// (An earlier value of 4× the per-image cap ≈ 6MB was ABOVE the real 5 MiB gateway limit, so context
+// editing believed an over-limit payload was "within budget" and forwarded it straight into a 413.)
+export const IMAGE_PAYLOAD_BUDGET = 3_500_000;
 
 // Appended to a tool_result's text when its image(s) are cleared, so the model still knows a screenshot
 // was there (mirrors Anthropic replacing cleared content with placeholder text). Also the idempotency
@@ -57,9 +64,12 @@ export interface ContextEditResult {
   clearedBytes: number; // total base64 bytes freed
 }
 
-// Clear old tool screenshots in place so the cumulative image payload fits IMAGE_PAYLOAD_BUDGET, always
-// preserving the most recent `keep`. Oldest-first, and stops the moment we're back under budget — the
-// minimal edit, so we never drop context we didn't have to. Lossless (no-op) when already under budget.
+// Clear old tool screenshots in place so the cumulative image payload fits IMAGE_PAYLOAD_BUDGET,
+// preferring to preserve the most recent `keep`. Oldest-first, stopping the moment we're back under
+// budget — the minimal edit, so we never drop context we didn't have to. Lossless (no-op) when already
+// under budget. If clearing everything OLDER than the most recent `keep` still isn't enough, the
+// keep-floor is broken: keep clearing oldest-first through the recent ones too (up to and including the
+// newest), because a body that still 413s is worse than one that lost a recent screenshot.
 export function editImageContextInPlace(
   messages: CanonicalMessage[],
   keep: number = KEEP_RECENT_SCREENSHOTS,
@@ -70,13 +80,9 @@ export function editImageContextInPlace(
   for (const r of results) total += byteLen(r.images!);
   if (total <= budget) return { clearedCount: 0, clearedBytes: 0 };
 
-  // Candidates to clear: everything except the most recent `keep`. Clear oldest-first, stopping as soon
-  // as the running total is back within budget.
-  const clearable = results.slice(0, Math.max(0, results.length - keep));
   let clearedCount = 0;
   let clearedBytes = 0;
-  for (const r of clearable) {
-    if (total <= budget) break;
+  const clear = (r: ToolResultBlock) => {
     const freed = byteLen(r.images!);
     total -= freed;
     clearedBytes += freed;
@@ -84,6 +90,18 @@ export function editImageContextInPlace(
     // Replace the image(s) with a placeholder appended to the result text, then drop the images.
     r.content = r.content ? `${r.content}\n${CLEARED_SCREENSHOT_PLACEHOLDER}` : CLEARED_SCREENSHOT_PLACEHOLDER;
     delete r.images;
-  }
+  };
+
+  // Phase 1 — preferred: clear only screenshots OLDER than the most recent `keep`, oldest-first, stopping
+  // the instant we're back under budget. This spares the recent `keep` whenever the older ones free
+  // enough (the common case).
+  const boundary = Math.max(0, results.length - keep);
+  for (let i = 0; i < boundary && total > budget; i++) clear(results[i]);
+
+  // Phase 2 — floor break: if clearing every older screenshot still left us over budget, the most recent
+  // `keep` alone exceed the gateway limit. Keep clearing oldest-first THROUGH the recent ones (up to and
+  // including the newest) — a body that still 413s is strictly worse than one missing a recent shot.
+  for (let i = boundary; i < results.length && total > budget; i++) clear(results[i]);
+
   return { clearedCount, clearedBytes };
 }
