@@ -40,21 +40,37 @@ describe("editImageContextInPlace", () => {
     expect(JSON.stringify(messages)).toBe(before); // byte-identical, lossless
   });
 
-  it("never clears when there are only `keep` screenshots, even if over budget", () => {
-    // keep=3 screenshots, each big enough that together they exceed budget. The keep-floor wins:
-    // the most recent `keep` are ALWAYS preserved (mirrors Anthropic's `keep` default of 3).
+  it("breaks the keep-floor when the most recent `keep` alone exceed budget (must beat a 413)", () => {
+    // keep=3 screenshots, EACH already over budget on its own → the kept set can't fit no matter what.
+    // The floor is a preference, not a hard limit: clearing must break through it, oldest-first, until
+    // the payload is under budget — otherwise the body still 413s, which is strictly worse.
     const big = imageOfBytes(IMAGE_PAYLOAD_BUDGET); // one image alone exceeds the budget
     const messages: CanonicalMessage[] = Array.from({ length: KEEP_RECENT_SCREENSHOTS }, (_, i) => screenshotTurn(i, big));
     const res = editImageContextInPlace(messages);
-    expect(res.clearedCount).toBe(0);
-    for (const m of messages) expect(imagesOf(m)).toHaveLength(1); // all preserved
+    expect(res.clearedCount).toBeGreaterThan(0);
+    // Cleared oldest-first: the newest is the last one standing (or the only one left under budget).
+    expect(imagesOf(messages[0])).toHaveLength(0);
+    // The remaining image payload is within budget.
+    let remaining = 0;
+    for (const m of messages) for (const url of imagesOf(m)) remaining += url.length;
+    expect(remaining).toBeLessThanOrEqual(IMAGE_PAYLOAD_BUDGET);
+  });
+
+  it("keeps the budget below the probed 5 MiB gateway limit (with headroom for non-image content)", () => {
+    // The gateway rejects a ≥5 MiB (5,242,880-byte) request body with 413. The image budget must sit
+    // well under that so the rest of the request (text, tools, structure) still fits. Regression guard
+    // against the original 6MB budget that was ABOVE the wall and let over-limit bodies through.
+    const GATEWAY_LIMIT = 5 * 1024 * 1024;
+    expect(IMAGE_PAYLOAD_BUDGET).toBeLessThan(GATEWAY_LIMIT);
+    expect(GATEWAY_LIMIT - IMAGE_PAYLOAD_BUDGET).toBeGreaterThanOrEqual(1_000_000); // ≥1MB headroom
   });
 
   it("clears the OLDEST screenshots first, preserving the most recent `keep`", () => {
-    // Six screenshots each ~ half the budget → total ~3x budget. Editing must clear oldest-first until
-    // under budget, but never touch the most recent `keep`.
-    const half = imageOfBytes(Math.floor(IMAGE_PAYLOAD_BUDGET / 2));
-    const messages: CanonicalMessage[] = Array.from({ length: 6 }, (_, i) => screenshotTurn(i, half));
+    // Six screenshots each ~ a quarter of the budget → total ~1.5x budget, and the recent `keep` (3)
+    // together are ~0.75x budget (they fit). Editing must clear oldest-first until under budget, which
+    // is achievable WITHOUT touching the most recent `keep`.
+    const quarter = imageOfBytes(Math.floor(IMAGE_PAYLOAD_BUDGET / 4));
+    const messages: CanonicalMessage[] = Array.from({ length: 6 }, (_, i) => screenshotTurn(i, quarter));
     const res = editImageContextInPlace(messages);
 
     expect(res.clearedCount).toBeGreaterThan(0);
