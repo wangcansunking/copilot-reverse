@@ -17,8 +17,7 @@
   },
   "files": [
     "dist",
-    "README.md",
-    "images"
+    "README.md"
   ],
   "keywords": [
     "github-copilot",

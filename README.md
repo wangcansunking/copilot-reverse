@@ -1,8 +1,14 @@
 <p align="center">
-  <img src="images/hero.webp" alt="copilot-reverse — One command. Native experience." width="100%">
+  <img src="https://raw.githubusercontent.com/wangcansunking/copilot-reverse/master/images/hero.webp" alt="copilot-reverse — One command. Native experience." width="100%">
 </p>
 
 <h1 align="center">copilot-reverse</h1>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/copilot-reverse"><img src="https://img.shields.io/npm/v/copilot-reverse?color=cb3837&logo=npm" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/copilot-reverse"><img src="https://img.shields.io/npm/dw/copilot-reverse?color=cb3837&logo=npm" alt="npm weekly downloads"></a>
+  <a href="https://nodejs.org"><img src="https://img.shields.io/node/v/copilot-reverse?color=339933&logo=node.js" alt="node version"></a>
+</p>
 
 <p align="center"><b>One command. Native experience.</b> · <b>一行命令，原生体验。</b></p>
 
@@ -10,7 +16,7 @@
 No new API keys. No per-token bills. One terminal app — and Claude Code feels **exactly** like the real thing.
 
 <p align="center">
-  <img src="images/architecture.webp" alt="Claude Code / Codex → copilot-reverse (TUI · Supervisor · Worker) → GitHub Copilot" width="90%">
+  <img src="https://raw.githubusercontent.com/wangcansunking/copilot-reverse/master/images/architecture.webp" alt="Claude Code / Codex → copilot-reverse (TUI · Supervisor · Worker) → GitHub Copilot" width="90%">
 </p>
 
 > **Disclaimer:** The GitHub Copilot integration uses community-documented,
@@ -83,7 +89,7 @@ Prefer commands? Type `/` to see them all. The essentials:
 `/dashboard` opens a self-refreshing web view of everything happening through the proxy — worker
 health, request volume, and (most useful) recent **errors with their real messages**:
 
-![copilot-reverse dashboard](images/dashboard.webp)
+![copilot-reverse dashboard](https://raw.githubusercontent.com/wangcansunking/copilot-reverse/master/images/dashboard.webp)
 
 ---
 
