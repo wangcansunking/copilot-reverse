@@ -2,6 +2,14 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.16.0",
+    "date": "2026-07-02",
+    "summary": "Context editing for images: clear old tool screenshots before they reach Copilot, fixing `413 Request Entity Too Large` (relayed as a 502) on long browser-harness / agentic sessions. A stateless wire re-sends the whole history every turn, so a loop that screenshots each step accretes base64 until Copilot's gateway rejects the request body at the HTTP layer — a byte-size limit that per-image downscaling alone can't satisfy. The worker now does what Anthropic's backend does server-side (`clear_tool_uses_20250919`): keep the most recent 3 tool screenshots at full fidelity and replace older ones with a placeholder once the cumulative image payload exceeds budget, oldest-first and only as much as needed. Runs on both the Anthropic and OpenAI send paths (and `count_tokens`, so the estimate matches what's sent). Also adds a 413 hint pointing the user at `/compact` / fewer images.",
+    "summaries": [
+      "Context editing for images: clear old tool screenshots before they reach Copilot, fixing `413 Request Entity Too Large` (relayed as a 502) on long browser-harness / agentic sessions. A stateless wire re-sends the whole history every turn, so a loop that screenshots each step accretes base64 until Copilot's gateway rejects the request body at the HTTP layer — a byte-size limit that per-image downscaling alone can't satisfy. The worker now does what Anthropic's backend does server-side (`clear_tool_uses_20250919`): keep the most recent 3 tool screenshots at full fidelity and replace older ones with a placeholder once the cumulative image payload exceeds budget, oldest-first and only as much as needed. Runs on both the Anthropic and OpenAI send paths (and `count_tokens`, so the estimate matches what's sent). Also adds a 413 hint pointing the user at `/compact` / fewer images."
+    ]
+  },
+  {
     "version": "0.15.0",
     "date": "2026-07-02",
     "summary": "Model picker: drive the 1M-context `[1m]` badge from each model's real upstream context window instead of a hardcoded id set, and generalise the friendly-name mapping to any Claude family + single- or two-segment version. Fixes `claude-sonnet-5` (was showing as a bare id with no 1M badge despite being a 1M model upstream) and makes any future 1M model render correctly with zero code changes. Inbound resolution and non-1M models (Opus/Sonnet/Haiku 4.5 at 200K) are unaffected.",
@@ -88,14 +96,6 @@ export const APP_CHANGES: ChangeEntry[] = [
     "summary": "fix(tui): the \"what's new\" banner now shows **one line per recent version**, each surfacing that version's main change — instead of flattening all changes from the newest version (which let a single bundled release fill every slot). For a version that bundled several changesets it picks the headline change (a `feat`/`perf`, or hand-written prose, over a `fix`/`chore`; ties broken by length), so e.g. v0.9.0 shows the network access-modes feature rather than the release-plumbing fix.",
     "summaries": [
       "fix(tui): the \"what's new\" banner now shows **one line per recent version**, each surfacing that version's main change — instead of flattening all changes from the newest version (which let a single bundled release fill every slot). For a version that bundled several changesets it picks the headline change (a `feat`/`perf`, or hand-written prose, over a `fix`/`chore`; ties broken by length), so e.g. v0.9.0 shows the network access-modes feature rather than the release-plumbing fix."
-    ]
-  },
-  {
-    "version": "0.10.0",
-    "date": "2026-06-30",
-    "summary": "feat(tui): the startup \"what's new\" banner now shows the real recent headlines (top 3 across recent releases, version-tagged) instead of a generic \"type /changes\" pointer — so a freshly shipped feature is actually visible on launch rather than the banner looking empty. `/changes` now lists every change in a bundled release: `gen-changes` captures all paragraphs of each release (not just the first), so a headline feature merged alongside a plumbing fix is no longer hidden. Each release renders as a header with one bullet per change.",
-    "summaries": [
-      "feat(tui): the startup \"what's new\" banner now shows the real recent headlines (top 3 across recent releases, version-tagged) instead of a generic \"type /changes\" pointer — so a freshly shipped feature is actually visible on launch rather than the banner looking empty. `/changes` now lists every change in a bundled release: `gen-changes` captures all paragraphs of each release (not just the first), so a headline feature merged alongside a plumbing fix is no longer hidden. Each release renders as a header with one bullet per change."
     ]
   }
 ];

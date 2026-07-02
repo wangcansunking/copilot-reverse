@@ -1,4 +1,0 @@
----
-bump: minor
----
-Context editing for images: clear old tool screenshots before they reach Copilot, fixing `413 Request Entity Too Large` (relayed as a 502) on long browser-harness / agentic sessions. A stateless wire re-sends the whole history every turn, so a loop that screenshots each step accretes base64 until Copilot's gateway rejects the request body at the HTTP layer — a byte-size limit that per-image downscaling alone can't satisfy. The worker now does what Anthropic's backend does server-side (`clear_tool_uses_20250919`): keep the most recent 3 tool screenshots at full fidelity and replace older ones with a placeholder once the cumulative image payload exceeds budget, oldest-first and only as much as needed. Runs on both the Anthropic and OpenAI send paths (and `count_tokens`, so the estimate matches what's sent). Also adds a 413 hint pointing the user at `/compact` / fewer images.
