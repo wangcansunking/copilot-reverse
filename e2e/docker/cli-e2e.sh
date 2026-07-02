@@ -349,42 +349,52 @@ fi
 # The exact failure a user reported: browser-harness screenshots accumulate in history, the stateless
 # wire re-sends them ALL every turn, and Copilot's gateway rejects the oversized body with 413 (relayed
 # as a 502). The fix (core/context-edit.ts) clears OLD tool screenshots before send — keep the most
-# recent 3, replace older with a placeholder — so the body stays under the gateway's entity limit.
-# Reproduce it the way it actually happens: MANY tool_result screenshots (a browser loop) followed by a
-# fresh question about the LATEST screenshot. Each image is a real, distinct-coloured 200x200 PNG big
-# enough that, unedited, the pile would trip the limit. Two assertions:
-#   (a) the turn NEVER returns a 413 / entity-too-large (context editing kept the body small enough), and
-#   (b) Claude still correctly reads the MOST RECENT screenshot (green) — proving we cleared the OLD ones
-#       and preserved the recent ones, so the conversation still works. A naive "drop all images" would
-#       fail (b); a no-op would fail (a).
-note "context editing -> a pile of history screenshots does not 413, latest image still readable"
+# recent 3, replace older with a placeholder — so the body stays under the gateway's ~5 MiB entity limit.
+# Reproduce it the way it actually happens, and stress the ACTUAL limit: each screenshot is a HIGH-ENTROPY
+# noise PNG (~700KB base64 — under the 1.5MB per-image resize cap, so resize passes it through), and 10 of
+# them unedited sum to ~7MB, comfortably OVER the 5 MiB wall. The final (newest) screenshot is a solid
+# GREEN square we ask about. Three assertions:
+#   (a) the request is well-formed (no 4xx body-shape error masking the 413 check),
+#   (b) the turn NEVER 413s — context editing cleared old screenshots to fit the body under 5 MiB
+#       (with the pre-fix 6MB budget, ~7MB of screenshots would still exceed the wall and 413), and
+#   (c) Claude still reads the MOST RECENT (green) screenshot — old cleared, recent kept, conversation intact.
+note "context editing -> a 7MB pile of history screenshots does not 413, latest image still readable"
 CE_RESP=$(node -e '
-const zlib=require("zlib");
+const zlib=require("zlib");const crypto=require("crypto");
 function chunk(t,d){const l=Buffer.alloc(4);l.writeUInt32BE(d.length);const ty=Buffer.from(t);const cb=Buffer.concat([ty,d]);
   let c=~0;for(const b of cb){c^=b;for(let i=0;i<8;i++)c=(c>>>1)^(0xEDB88320&-(c&1));}c=~c>>>0;const cr=Buffer.alloc(4);cr.writeUInt32BE(c>>>0);return Buffer.concat([l,ty,d,cr]);}
-function png(W,H,r,g,b){const sig=Buffer.from([137,80,78,71,13,10,26,10]);const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(W,0);ihdr.writeUInt32BE(H,4);ihdr[8]=8;ihdr[9]=2;
+function pngSolid(W,H,r,g,b){const sig=Buffer.from([137,80,78,71,13,10,26,10]);const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(W,0);ihdr.writeUInt32BE(H,4);ihdr[8]=8;ihdr[9]=2;
   const raw=Buffer.alloc(H*(1+W*3));for(let y=0;y<H;y++){const o=y*(1+W*3);raw[o]=0;for(let x=0;x<W;x++){const p=o+1+x*3;raw[p]=r;raw[p+1]=g;raw[p+2]=b;}}
   return Buffer.concat([sig,chunk("IHDR",ihdr),chunk("IDAT",zlib.deflateSync(raw)),chunk("IEND",Buffer.alloc(0))]).toString("base64");}
+// High-entropy noise PNG: pixels are random so zlib cannot compress it, giving a large, realistic
+// screenshot-sized payload (~700KB base64 at 500x500). This is what makes the pile actually exceed the
+// gateway limit — a solid color would compress to a few KB and never stress it.
+function pngNoise(W,H){const sig=Buffer.from([137,80,78,71,13,10,26,10]);const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(W,0);ihdr.writeUInt32BE(H,4);ihdr[8]=8;ihdr[9]=2;
+  const raw=Buffer.alloc(H*(1+W*3));for(let y=0;y<H;y++){const o=y*(1+W*3);raw[o]=0;crypto.randomFillSync(raw,o+1,W*3);}
+  return Buffer.concat([sig,chunk("IHDR",ihdr),chunk("IDAT",zlib.deflateSync(raw,{level:0})),chunk("IEND",Buffer.alloc(0))]).toString("base64");}
 // A browser loop: an initial user turn kicks it off, then each step is assistant(tool_use) ->
-// user(tool_result with a screenshot). 10 older screenshots are grey; the newest is solid GREEN — the
-// one we ask about. The leading user turn matters: Anthropic rejects a tool_result that is not preceded
+// user(tool_result with a screenshot). 10 older screenshots are heavy noise; the newest is a small solid
+// GREEN square we ask about. The leading user turn matters: Anthropic rejects a tool_result not preceded
 // by an assistant tool_use, and messages[0] may not be a tool_result.
 const msgs=[{role:"user",content:[{type:"text",text:"Drive a browser and screenshot each step."}]}];
+let rawSum=0;
 for(let i=0;i<10;i++){
+  const img=pngNoise(500,500); rawSum+=img.length;
   msgs.push({role:"assistant",content:[{type:"text",text:"step "+i},{type:"tool_use",id:"s"+i,name:"screenshot",input:{}}]});
-  msgs.push({role:"user",content:[{type:"tool_result",tool_use_id:"s"+i,content:[{type:"text",text:"step "+i},{type:"image",source:{type:"base64",media_type:"image/png",data:png(200,200,128,128,128)}}]}]});
+  msgs.push({role:"user",content:[{type:"tool_result",tool_use_id:"s"+i,content:[{type:"text",text:"step "+i},{type:"image",source:{type:"base64",media_type:"image/png",data:img}}]}]});
 }
 msgs.push({role:"assistant",content:[{type:"text",text:"final step"},{type:"tool_use",id:"slast",name:"screenshot",input:{}}]});
-msgs.push({role:"user",content:[{type:"tool_result",tool_use_id:"slast",content:[{type:"text",text:"final step"},{type:"image",source:{type:"base64",media_type:"image/png",data:png(200,200,30,200,30)}}]}]});
+msgs.push({role:"user",content:[{type:"tool_result",tool_use_id:"slast",content:[{type:"text",text:"final step"},{type:"image",source:{type:"base64",media_type:"image/png",data:pngSolid(200,200,30,200,30)}}]}]});
 msgs.push({role:"user",content:[{type:"text",text:"What colour is the most recent screenshot? Reply with one word."}]});
+process.stderr.write("unedited screenshot bytes ~"+(rawSum/1024/1024).toFixed(1)+"MB\n");
 const body=JSON.stringify({model:"claude-opus-4-8[1m]",max_tokens:64,messages:msgs});
 fetch("http://127.0.0.1:'"$PORT"'/anthropic/v1/messages",{method:"POST",headers:{"content-type":"application/json"},body}).then(r=>r.text()).then(t=>process.stdout.write(t)).catch(e=>process.stdout.write(JSON.stringify({error:{message:String(e)}})));
-' 2>/dev/null)
+' 2>/tmp/ce-size.txt)
 CE_TEXT=$(echo "$CE_RESP" | jq -r '[.content[]?|select(.type=="text")|.text]|join("")' 2>/dev/null)
 CE_ERR=$(echo "$CE_RESP" | jq -r '.error.message // empty' 2>/dev/null)
-echo "  context-edit turn result: ${CE_TEXT:-<err: $CE_ERR>}"
+echo "  $(cat /tmp/ce-size.txt 2>/dev/null)  context-edit turn result: ${CE_TEXT:-<err: $CE_ERR>}"
 check "screenshot pile is a VALID request (no 4xx body-shape error masking the 413 check)" '! echo "$CE_RESP" | grep -qiE "invalid_request_body|400 —"' "request must be well-formed so the 413 check is meaningful; got err: \`${CE_ERR:-<none>}\`"
-check "screenshot pile never 413s (context editing kept the body under the gateway limit)" '! echo "$CE_RESP" | grep -qiE "413|entity too large|too large"' "no 413/entity-too-large for a 11-screenshot history; got err: \`${CE_ERR:-<none>}\`"
+check "a ~7MB screenshot pile never 413s (context editing kept the body under the ~5 MiB gateway limit)" '! echo "$CE_RESP" | grep -qiE "413|entity too large|too large"' "no 413/entity-too-large for an 11-screenshot ~7MB history; got err: \`${CE_ERR:-<none>}\`"
 check "latest screenshot still readable after clearing old ones (answers green)" 'echo "$CE_TEXT" | grep -qi "green"' "claude read the MOST RECENT (green) screenshot: \`${CE_TEXT:-<err: $CE_ERR>}\` — old ones cleared, recent kept"
 
 # --- teardown -----------------------------------------------------------------------------------

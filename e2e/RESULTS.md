@@ -3,6 +3,21 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-07-03 (context editing budget FIX — the 413 came back)** — the context-editing fix still 413'd
+  on real long screenshot sessions. Root cause: `IMAGE_PAYLOAD_BUDGET` was 6MB, but Copilot's gateway
+  HTTP entity limit was never measured — I PROBED it at exactly **5 MiB** (5,242,880 bytes): a ~4.95MB
+  body returns 400 (accepted, model-name-only error), a 5.00MB body returns 413. Because the 6MB budget
+  sat ABOVE the 5 MiB wall, context editing believed an over-limit payload was "within budget" and
+  forwarded it straight into a 413. Two fixes: (1) lower the budget to **3.5MB** (≥1.5MB headroom under
+  the wall for text/tools/JSON); (2) make `keep` a PREFERENCE not a hard floor — if the most recent 3
+  screenshots alone exceed budget, clearing now breaks through the floor oldest-first (up to and
+  including the newest), since a body that still 413s is strictly worse than one missing a recent shot.
+  New tests: budget-below-gateway-limit regression, floor-break behavior, an http-e2e assertion that the
+  edited payload (tokens×4 bytes) fits under 5 MiB, and a strengthened real-CLI case #16 — 10 high-entropy
+  noise screenshots (~0.95MB each, **~9.5MB unedited**, over the wall) posted to live Copilot must not
+  413 AND Claude still reads the most-recent green screenshot. (The pre-fix 6MB budget would have left
+  ~6MB and still 413'd this.) 597 unit tests green; docker http-e2e ALL PASSED (67); `tsc` clean.
+
 - **2026-07-02 (context editing — fixes `413 Request Entity Too Large` (relayed 502) on long
   browser-harness / agentic sessions)** — a browser-harness loop emits one screenshot per step, and the
   stateless wire re-sends the WHOLE history every turn, so cumulative base64 grows until Copilot's
