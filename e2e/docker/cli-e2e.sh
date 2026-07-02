@@ -360,6 +360,36 @@ else
   check "codex native web_search returns a grounded answer" 'false' "expected a 1.x version, got \`${CODEX_WEB_LINE}\`"
 fi
 
+# --- 16) codex MULTI-STEP tool loop: create -> read back (function_call_output feeds the next turn) -
+# Case 12 proves a SINGLE function_call round-trips. This proves the LOOP continues: codex must run a
+# first shell tool_call (write a file), get its output back as function_call_output, then issue a
+# SECOND tool_call informed by it (read the file) before answering. That second turn only happens if
+# our /responses translation fed the first tool's result back correctly — the richest agentic path,
+# and the one a real Codex task (edit, run tests, iterate) exercises every time. FS + stdout oracle.
+note "codex multi-step tool loop -> create then read back (2 tool turns through the proxy)"
+rm -f /tmp/codex_multi.txt
+CODEX_MULTI=$(cd /tmp && codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
+  "First create a file named codex_multi.txt containing exactly the token MULTI42. Then read that same file back and reply with ONLY its exact contents." 2>/tmp/codex-multi.err)
+CODEX_MULTI_FILE=$(cat /tmp/codex_multi.txt 2>/dev/null)
+CODEX_MULTI_LINE=$(echo "$CODEX_MULTI" | tail -1)
+echo "  codex_multi.txt=${CODEX_MULTI_FILE:-<none>}  final reply: ${CODEX_MULTI_LINE}"
+# Both halves must hold: the file was written (turn 1 tool ran) AND the model echoed it back (turn 2
+# tool result fed the answer) — proving the function_call -> output -> function_call loop, not one shot.
+check "codex multi-step loop wrote the file (turn 1 tool ran)" 'echo "$CODEX_MULTI_FILE" | grep -q "MULTI42"' "file contents: \`${CODEX_MULTI_FILE:-<none>}\`"
+check "codex multi-step loop read it back (turn 2 consumed the tool result)" 'echo "$CODEX_MULTI" | grep -q "MULTI42"' "final reply echoed the read-back token: \`${CODEX_MULTI_LINE}\`"
+
+# --- 17) codex on an UNKNOWN model fast-fails too (the /responses side of the #50 P1 never-freeze) --
+# Case 14 proves the fast-fail on the CLAUDE (/anthropic) path. The OpenAI /responses path has its own
+# catch handler, and Codex is the client that speaks it — so a typo'd Codex model must ALSO surface a
+# bounded error and RETURN, never hang. Bound the wall-clock: rc!=124 (no 60s freeze) is the assertion.
+note "codex unknown model -> bounded error, returns (no hang; /responses fast-fail)"
+CODEX_BAD=$(cd /tmp && timeout 60 codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
+  -c model="not-a-real-codex-model-zzz" "Reply with exactly: NOPE" 2>/tmp/codex-bad.err)
+CODEX_BAD_RC=$?
+echo "  codex-unknown-model rc=$CODEX_BAD_RC"
+check "codex unknown model returns (did not hang to timeout)" '[ "$CODEX_BAD_RC" != "124" ]' "codex returned rc=$CODEX_BAD_RC within 60s (no freeze on /responses)"
+check "codex unknown model surfaces a visible error" '{ echo "$CODEX_BAD"; cat /tmp/codex-bad.err; } | grep -qiE "error|not.?support|unknown|invalid|400|404"' "a typo'd Codex model id degrades to a visible error, not a silent/frozen turn"
+
 # --- teardown -----------------------------------------------------------------------------------
 kill "$WPID" 2>/dev/null
 

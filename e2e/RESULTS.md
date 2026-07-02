@@ -4,9 +4,13 @@ Latest run of the end-to-end suite. Regenerate after every code change with `npm
 and update this file (paste the summary).
 
 - **2026-07-03 (#50 P2 — codex tool loop + vision OCR: cli-e2e goes all-green)** — the two remaining
-  real-CLI reds from #50 are resolved. **Full real-CLI docker e2e vs live Copilot: 27 PASS / 0 FAIL /
-  2 SKIP (`✅ ALL PASSED`)** — the 2 skips are graceful degradation (web_search needs a WebIQ key not
-  mounted). Combined with #50 P1 (unknown-model fast-fail), the entire cli-e2e matrix is green.
+  real-CLI reds from #50 are resolved, and the matrix grew 4 new cases. **Full real-CLI docker e2e vs
+  live Copilot: 31 PASS / 0 FAIL / 2 SKIP (`✅ ALL PASSED`)** — the 2 skips are graceful degradation
+  (web_search needs a WebIQ key not mounted). Combined with #50 P1 (unknown-model fast-fail), the entire
+  cli-e2e matrix is green. New cases added, all passing live: **codex multi-step tool loop** (create →
+  read back, proving `function_call_output` feeds the next turn, not just a single shot) and **codex
+  unknown-model fast-fail** (the /responses side of the never-freeze north-star — a typo'd Codex model
+  returns bounded, rc≠124, never hangs).
   - **Codex tool loop (real proxy bug, fixed).** `codex exec -s workspace-write "create a file …"`
     completed with the file never written. Root cause isolated by capturing the live `/responses`
     stream: the model DID emit a `shell_command` function_call, but our terminal events —
