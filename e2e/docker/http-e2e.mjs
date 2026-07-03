@@ -204,6 +204,31 @@ async function main() {
         // the count was CLEARING (context editing), not per-image downscaling.
         check("context-edit precondition: each screenshot is under the per-image resize cap", shotLen < 1_500_000, `shotLen=${shotLen}`);
       }
+
+      // Dynamic budget (issue #52 follow-up): the 413 is on the WHOLE body, not just images. A big
+      // conversation (a ~700k-token transcript) plus a few kept screenshots can still exceed the 5 MiB
+      // wall even though the images alone fit a fixed 3.5MB budget. The image allowance must therefore
+      // shrink as non-image text grows. Drive it: 9 issue-52-sized screenshots PLUS ~700k tokens of text
+      // carried as a leading user message, through count_tokens. The estimate (≈ whole-body bytes / 4)
+      // must land under the 5 MiB wall — proving context editing cleared MORE images to make room for the
+      // text. A fixed image-only budget would keep 3 images (~3.15MB) + 2.7MB text ≈ 5.9MB and still 413.
+      {
+        const sizes = [280077, 1022958, 1100790, 1188974, 923334, 1099958, 1062270, 1062270, 1174838];
+        const bigText = "x".repeat(700_000 * 4); // ~700k tokens carried as conversation text
+        const dmsgs = [{ role: "user", content: bigText }];
+        for (let i = 0; i < sizes.length; i++) {
+          dmsgs.push({ role: "assistant", content: [{ type: "tool_use", id: `d${i}`, name: "screenshot", input: {} }] });
+          dmsgs.push({ role: "user", content: [{ type: "tool_result", tool_use_id: `d${i}`, content: [
+            { type: "text", text: `step ${i}` },
+            // A base64 blob of the issue-52 byte size (content irrelevant to count_tokens — it sizes bytes).
+            { type: "image", source: { type: "base64", media_type: "image/png", data: "A".repeat(sizes[i] - 23) } },
+          ] }] });
+        }
+        const dBody = JSON.stringify({ model: "claude-opus-4-8[1m]", messages: dmsgs });
+        const dTokens = JSON.parse((await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), dBody)).t).input_tokens;
+        const GATEWAY_LIMIT2 = 5 * 1024 * 1024;
+        check("dynamic budget: big text + screenshots still fits the 5 MiB wall (issue #52 follow-up)", dTokens * 4 < GATEWAY_LIMIT2, `estBytes=${dTokens * 4} limit=${GATEWAY_LIMIT2}`);
+      }
     }
 
     // Reasoning effort (#33) is resolved and echoed in the x-copilot-reverse-effort response header

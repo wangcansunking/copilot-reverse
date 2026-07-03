@@ -3,6 +3,20 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-07-03 (context editing DYNAMIC budget + reactive 413 retry — issue #52 follow-up)** — issue #52
+  showed the 413 returns when a screenshot-heavy session ALSO carries a large conversation. The 413 is on
+  the whole request body, but context editing budgeted only image bytes against a fixed 3.5MB cap — so a
+  ~700k-token transcript (~2.7MB text) + 3 kept screenshots (~3.15MB) ≈ 5.9MB still blew the 5 MiB wall.
+  Fix: the image allowance is now DYNAMIC — `GATEWAY_ENTITY_LIMIT (5 MiB) − SAFETY_MARGIN − nonImageBytes`,
+  capped by the fixed budget for the common small-text case. Verified on issue #52's exact 9 images: 343k
+  text → keep 3 (4.46MB), 500k → keep 2 (4.04MB), 700k → keep 1 (3.79MB), 900k → keep 0 (3.43MB) — always
+  under the wall. Plus a REACTIVE fallback: if the gateway still 413s, force-clear every screenshot and
+  retry once (streaming path retries on the first-pull 413 before any content_block is written; non-stream
+  wraps the complete() call) instead of relaying a 502. New unit tests (dynamic budget across text sizes,
+  `forceClearAllScreenshots`, `is413Error`, and end-to-end reactive-retry through the Express app for both
+  stream and non-stream) + an http-e2e assertion that big-text + screenshots fits under 5 MiB. 604 unit
+  tests green; docker http-e2e ALL PASSED (68); `tsc` clean.
+
 - **2026-07-03 (context editing budget FIX — the 413 came back)** — the context-editing fix still 413'd
   on real long screenshot sessions. Root cause: `IMAGE_PAYLOAD_BUDGET` was 6MB, but Copilot's gateway
   HTTP entity limit was never measured — I PROBED it at exactly **5 MiB** (5,242,880 bytes): a ~4.95MB

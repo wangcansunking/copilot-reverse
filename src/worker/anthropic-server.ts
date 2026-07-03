@@ -5,16 +5,39 @@ import type { MetricSink } from "./server.js";
 import { anthropicRequestToCanonical, canonicalToAnthropicResponse } from "../core/anthropic-inbound.js";
 import { estimateTokens } from "../core/tokens.js";
 import { shrinkImagesInPlace } from "../core/image-resize.js";
-import { editImageContextInPlace } from "../core/context-edit.js";
+import { editImageContextInPlace, forceClearAllScreenshots, is413Error } from "../core/context-edit.js";
 import { errorHint } from "./errors.js";
 import { CopilotAuthError } from "../providers/copilot/token.js";
 import { isGatewayTool, type GatewayToolRunner } from "../core/server-tools.js";
-import type { ContentBlock } from "../core/canonical.js";
+import type { ContentBlock, CanonicalChunk } from "../core/canonical.js";
 import { RunawayGuard } from "../core/stream-guard.js";
 import { toCanonical } from "../core/model-canonical.js";
 
 const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 const safeJson = (s: string): unknown => { try { return JSON.parse(s); } catch { return {}; } };
+
+// Open an upstream stream with a reactive 413 fallback. The dynamic image budget is proactive, but if
+// the gateway STILL rejects the body as too large, the 413 surfaces on the FIRST pull of the stream —
+// before any content_block has been written (only message_start), so a clean retry is safe. On that
+// first-pull 413 we force-clear every screenshot and re-open the stream ONCE. A 413 after real content
+// has already streamed is not retried (it can't happen from a body-size limit, which is evaluated before
+// the response begins). Yields chunks transparently otherwise.
+async function* streamWith413Retry(
+  open: () => AsyncIterable<CanonicalChunk>,
+  onRetry: () => void,
+): AsyncIterable<CanonicalChunk> {
+  let it = open()[Symbol.asyncIterator]();
+  let first;
+  try {
+    first = await it.next();
+  } catch (e) {
+    if (!is413Error(e)) throw e;
+    onRetry();
+    it = open()[Symbol.asyncIterator](); // retry once with a smaller body
+    first = await it.next();
+  }
+  for (; !first.done; first = await it.next()) yield first.value;
+}
 
 // Bounds the gateway tool loop so a model that calls web_search every turn (or a runner that always
 // returns "search more") can never spin forever inside one request.
@@ -119,7 +142,7 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
             }
           };
 
-          for await (const chunk of provider.stream(canon)) {
+          for await (const chunk of streamWith413Retry(() => provider.stream(canon), () => forceClearAllScreenshots(canon.messages))) {
             if (chunk.done) {
               turnStop = chunk.finishReason ?? "stop";
               if (chunk.usage) { lastPrompt = chunk.usage.promptTokens ?? lastPrompt; lastCached = chunk.usage.cachedTokens ?? 0; sumCompletion += chunk.usage.completionTokens ?? 0; }
@@ -201,7 +224,18 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
       } else {
         // Non-stream: same gateway loop without SSE — run gateway tools and re-complete until the
         // model answers with text (or a client tool), capped identically.
-        let resp = await provider.complete(canon);
+        // Reactive 413 fallback: the dynamic image budget is proactive, but if the gateway STILL rejects
+        // the body as too large (limit shifted, or non-image content we don't byte-count tipped it over),
+        // force-clear every screenshot and retry ONCE before surfacing the error. Nothing was sent to the
+        // client yet, so a clean retry is safe.
+        let resp: Awaited<ReturnType<typeof provider.complete>>;
+        try {
+          resp = await provider.complete(canon);
+        } catch (e) {
+          if (!is413Error(e)) throw e;
+          forceClearAllScreenshots(canon.messages);
+          resp = await provider.complete(canon);
+        }
         for (let iter = 0; runner && iter < MAX_TOOL_ITERS; iter++) {
           const toolUses = resp.content.filter((b): b is Extract<ContentBlock, { type: "tool_use" }> => b.type === "tool_use");
           const gatewayUses = toolUses.filter((b) => isGatewayTool(b.name));
