@@ -160,11 +160,16 @@ token.
 
 It also asserts **context editing** (fixes `413 Request Entity Too Large` on long browser-harness
 sessions): 12 screenshot turns, each already UNDER the per-image resize cap (so resize passes them
-through untouched) but collectively far over the ~6MB cumulative budget, are posted to `count_tokens`.
+through untouched) but collectively far over the cumulative budget, are posted to `count_tokens`.
 The estimate must land far below the raw sum of all screenshots — proving old tool screenshots were
 CLEARED (replaced with a placeholder, most-recent-3 kept), not merely resized. A precondition check
 confirms each screenshot really was under the resize cap, so what shrank the count was clearing, not
-per-image downscaling.
+per-image downscaling. Two further checks assert the property that actually prevents the 413: the edited
+payload (tokens×4 bytes) fits under the probed **5 MiB** gateway wall, and — for the issue-52 follow-up —
+a request with a **~700k-token conversation PLUS screenshots** still fits, proving the image budget is
+DYNAMIC (it shrinks as non-image text grows, clearing more screenshots to keep the WHOLE body under the
+wall). The real-CLI matrix mirrors both: a ~9.5MB screenshot pile, and a ~700k-token-text + screenshots
+turn, each against live Copilot must not 413 and must still read the most-recent (green) screenshot.
 
 This black-box path caught two bugs nothing else did: a Codex tool-translation `400` (a `custom`/
 `tool_search` tool forwarded nameless → Copilot rejects → "stream closed before response.completed"),

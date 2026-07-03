@@ -580,4 +580,64 @@ describe("worker Anthropic endpoint — gateway tool loop (web_search/web_fetch)
     expect(res.status).toBe(200);
     expect(res.body.content.some((b: any) => b.type === "tool_use")).toBe(false);
   });
+
+  // Reactive 413 fallback: a body that still 413s upstream (despite the proactive budget) must be
+  // retried ONCE after force-clearing screenshots, not surfaced as a 502. The provider throws 413 on the
+  // first call, then succeeds — and the retried request must have had its tool screenshots cleared.
+  it("non-stream: an upstream 413 force-clears screenshots and retries once (not a 502)", async () => {
+    let calls = 0;
+    let secondCallImageCount = -1;
+    const flaky413: ProviderAdapter = {
+      name: "copilot",
+      async complete(req) {
+        calls++;
+        if (calls === 1) throw new Error("copilot completion failed: 413 — Request Entity Too Large");
+        // On the retry, count how many tool_result images survived — the fallback should have cleared them.
+        secondCallImageCount = req.messages.flatMap((m) => m.content).filter((b) => b.type === "tool_result").flatMap((b: any) => b.images ?? []).length;
+        return { id: "c1", model: "m", content: [{ type: "text", text: "recovered" }], finishReason: "stop", usage: { promptTokens: 2, completionTokens: 1 } };
+      },
+      async *stream(): AsyncIterable<CanonicalChunk> { yield { kind: "done", done: true, finishReason: "stop" }; },
+    };
+    const img = { type: "base64", media_type: "image/png", data: "A".repeat(1000) };
+    const res = await request(app(flaky413)).post("/anthropic/v1/messages").send({
+      model: "claude-opus-4-8", max_tokens: 100, messages: [
+        { role: "assistant", content: [{ type: "tool_use", id: "s0", name: "shot", input: {} }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "s0", content: [{ type: "text", text: "shot" }, { type: "image", source: img }] }] },
+        { role: "user", content: "what colour?" },
+      ],
+    });
+    expect(calls).toBe(2);                    // retried exactly once
+    expect(secondCallImageCount).toBe(0);     // the retry body had its screenshots force-cleared
+    expect(res.status).toBe(200);             // recovered, not a 502
+    expect(res.body.content[0].text).toBe("recovered");
+  });
+
+  it("stream: an upstream 413 on first pull force-clears screenshots and retries once", async () => {
+    let calls = 0;
+    let secondCallImageCount = -1;
+    const flaky413: ProviderAdapter = {
+      name: "copilot",
+      async complete() { return { id: "c", model: "m", content: [], finishReason: "stop", usage: { promptTokens: 1, completionTokens: 1 } }; },
+      async *stream(req): AsyncIterable<CanonicalChunk> {
+        calls++;
+        if (calls === 1) throw new Error("copilot stream failed: 413 — Request Entity Too Large");
+        secondCallImageCount = req.messages.flatMap((m) => m.content).filter((b) => b.type === "tool_result").flatMap((b: any) => b.images ?? []).length;
+        yield { kind: "text", delta: "ok", done: false };
+        yield { kind: "done", done: true, finishReason: "stop" };
+      },
+    };
+    const img = { type: "base64", media_type: "image/png", data: "A".repeat(1000) };
+    const res = await request(app(flaky413)).post("/anthropic/v1/messages").send({
+      model: "claude-opus-4-8", max_tokens: 100, stream: true, messages: [
+        { role: "assistant", content: [{ type: "tool_use", id: "s0", name: "shot", input: {} }] },
+        { role: "user", content: [{ type: "tool_result", tool_use_id: "s0", content: [{ type: "text", text: "shot" }, { type: "image", source: img }] }] },
+        { role: "user", content: "what colour?" },
+      ],
+    });
+    expect(calls).toBe(2);                    // retried once
+    expect(secondCallImageCount).toBe(0);     // screenshots force-cleared on the retry
+    expect(res.status).toBe(200);
+    const frames = parseFrames(res.text);
+    expect(frames.some((f) => f.event === "content_block_delta" && f.data.delta?.text === "ok")).toBe(true);
+  });
 });
