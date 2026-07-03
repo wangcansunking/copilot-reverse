@@ -3,6 +3,57 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-07-03 (#50 P2 — codex tool loop + vision OCR: cli-e2e goes all-green)** — the two remaining
+  real-CLI reds from #50 are resolved, and the matrix grew 4 new cases. **Full real-CLI docker e2e vs
+  live Copilot: 31 PASS / 0 FAIL / 2 SKIP (`✅ ALL PASSED`)** — the 2 skips are graceful degradation
+  (web_search needs a WebIQ key not mounted). Combined with #50 P1 (unknown-model fast-fail), the entire
+  cli-e2e matrix is green. New cases added, all passing live: **codex multi-step tool loop** (create →
+  read back, proving `function_call_output` feeds the next turn, not just a single shot) and **codex
+  unknown-model fast-fail** (the /responses side of the never-freeze north-star — a typo'd Codex model
+  returns bounded, rc≠124, never hangs).
+  - **Codex tool loop (real proxy bug, fixed).** `codex exec -s workspace-write "create a file …"`
+    completed with the file never written. Root cause isolated by capturing the live `/responses`
+    stream: the model DID emit a `shell_command` function_call, but our terminal events —
+    `response.function_call_arguments.done`, `response.output_item.done`, and the `function_call` inside
+    `response.completed.output` — carried only `{type,id,status}`, **dropping `name` and `arguments`**.
+    Codex reads those terminal events to learn which command to run, so a nameless/argless call was
+    silently skipped. Verified against the OpenAI Responses reference (Context7): each must carry the
+    COMPLETE call. `ResponsesSSE` now retains each call's `callId`+`name` and emits the full item on
+    every terminal event. **Verified end-to-end: `codex_proof.txt` is now written with `CODEX_TOOL_OK`
+    and codex replies `DONE`.** New strict unit test asserts all three terminal events carry
+    call_id+name+arguments (the old test only checked event-type strings were present — which is how the
+    gap shipped).
+  - **Vision OCR (test-fixture bug, not a proxy bug).** Both fixtures 400'd with `validating image item:
+    image media type not supported`. Direct upstream probing (real token) proved: the EXACT Jimp fixture
+    sent to a **Claude** model returns its baked token (`VISION7`) — vision + our media type are healthy —
+    but Copilot's **gpt-4o rejects ANY inline image** (PNG and JPEG alike) with that exact string. The
+    vision case was running under the default `ANTHROPIC_MODEL=gpt-4o`, which has no image entitlement.
+    Fix is in the test: pin the vision case to `claude-sonnet-4.6` (a real user doing OCR picks a
+    vision-capable model). No proxy change needed.
+  - **Unit + vitest e2e: 639/639 green** (adds the strict ResponsesSSE terminal-event test).
+
+- **2026-07-03 (unknown-model fast-fail — fixes #50 P1 90s freeze)** — a typo'd / unknown model id hit
+  an upstream 400 (`model_not_supported`, confirmed <1s upstream by direct probe), but the worker masked
+  EVERY non-auth error as a retriable **502 / `api_error`** in all three request handlers. A client that
+  retries a 502-class error (Claude Code, the Anthropic SDK) backed off to its **90s turn timeout and
+  froze** (`rc=124`) — the exact never-freeze north-star violation. Fix: the adapter now throws a typed
+  `UpstreamError(status, …)` at every non-ok throw site, and a shared `classifyError` maps a **permanent
+  4xx** (not 429/408) to a **terminal** surface — HTTP **400** + `invalid_request_error` on the Anthropic
+  path (both non-stream body and the stream `error` SSE frame) — so the client fails fast; genuine
+  5xx/network/429 stay retriable 502s. The OpenAI/Responses paths keep their flat `{type:"error"}` shape
+  (Codex's contract) and fast-fail via the **status code** only. **Unit + vitest e2e: 638/638 green**
+  (adds adapter `UpstreamError`/`isTerminalUpstream` coverage + 3 anthropic-server cases: terminal 4xx →
+  invalid_request_error SSE, non-stream 400 not 502, retriable 5xx stays 502/api_error). **HTTP edge
+  docker e2e: hermetic gate 64/64 green**; real-token golden adds 4 #50 assertions — `unknown model →
+  terminal 400 (not 502)`, `→ invalid_request_error type`, `fast-fails <15s`, `(stream) → terminal
+  invalid_request_error frame` — **all PASS**. **Real-CLI docker e2e (real token): the #50 P1 cases now
+  PASS** — `unknown-model rc=1 is_error=true` (returned fast, was `rc=124` hang) → `unknown model returns
+  (did not hang to timeout)` + `unknown model surfaces a bounded error`. The 3 remaining FAILs (codex
+  tool loop, 2× vision OCR `image media type not supported`) are the **pre-existing P2s #50 documents as
+  out-of-scope** — same failures on master, distinct code paths, upstream/entitlement causes; this change
+  neither touches nor regresses them (it does make the vision 400 surface as a clean terminal 400 rather
+  than a masked 502).
+
 - **2026-07-03 (context editing budget FIX — the 413 came back)** — the context-editing fix still 413'd
   on real long screenshot sessions. Root cause: `IMAGE_PAYLOAD_BUDGET` was 6MB, but Copilot's gateway
   HTTP entity limit was never measured — I PROBED it at exactly **5 MiB** (5,242,880 bytes): a ~4.95MB

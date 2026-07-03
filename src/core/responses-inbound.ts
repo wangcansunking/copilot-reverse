@@ -99,7 +99,7 @@ export class ResponsesSSE {
   private textIndex?: number;
   private textItemId?: string;
   private accumulatedText = ""; // the full assistant text, replayed in the terminal done events
-  private toolIndex = new Map<number, { outputIndex: number; itemId: string }>();
+  private toolIndex = new Map<number, { outputIndex: number; itemId: string; callId: string; name: string }>();
   constructor(private responseId: string, private model: string) {}
 
   private ev(type: string, extra: Record<string, unknown>): string {
@@ -130,7 +130,7 @@ export class ResponsesSSE {
     if (this.toolIndex.has(copilotIdx)) return [];
     const outputIndex = this.nextIndex++;
     const itemId = `fc_${callId}`;
-    this.toolIndex.set(copilotIdx, { outputIndex, itemId });
+    this.toolIndex.set(copilotIdx, { outputIndex, itemId, callId, name });
     return [this.ev("response.output_item.added", { output_index: outputIndex, item: { type: "function_call", id: itemId, call_id: callId, name, arguments: "", status: "in_progress" } })];
   }
 
@@ -151,15 +151,18 @@ export class ResponsesSSE {
     }
     for (const [copilotIdx, t] of this.toolIndex) {
       const args = argsByIdx?.get(copilotIdx) ?? "";
-      out.push(this.ev("response.function_call_arguments.done", { item_id: t.itemId, output_index: t.outputIndex, arguments: args }));
-      out.push(this.ev("response.output_item.done", { output_index: t.outputIndex, item: { type: "function_call", id: t.itemId, status: "completed" } }));
+      // Spec (Responses API): arguments.done carries call_id + name + the final arguments; output_item.done
+      // carries the COMPLETE finalized item. Codex reads these to know which shell command to run — a bare
+      // {type,id,status} (the old shape) left it nameless/argless, so Codex skipped execution (#50 P2).
+      out.push(this.ev("response.function_call_arguments.done", { item_id: t.itemId, output_index: t.outputIndex, call_id: t.callId, name: t.name, arguments: args }));
+      out.push(this.ev("response.output_item.done", { output_index: t.outputIndex, item: { type: "function_call", id: t.itemId, call_id: t.callId, name: t.name, arguments: args, status: "completed" } }));
     }
     const u = usage ? { input_tokens: usage.promptTokens, output_tokens: usage.completionTokens, total_tokens: usage.promptTokens + usage.completionTokens } : undefined;
     // Spec-correct clients reconstruct the final response from response.completed.response.output, so
     // include the finished items (the text message + any function calls), not just an empty envelope.
     const output: unknown[] = [];
     if (this.textIndex !== undefined) output.push({ type: "message", id: this.textItemId, role: "assistant", status: "completed", content: [{ type: "output_text", text: this.accumulatedText, annotations: [] }] });
-    for (const [copilotIdx, t] of this.toolIndex) output.push({ type: "function_call", id: t.itemId, call_id: t.itemId.replace(/^fc_/, ""), arguments: argsByIdx?.get(copilotIdx) ?? "", status: "completed" });
+    for (const [copilotIdx, t] of this.toolIndex) output.push({ type: "function_call", id: t.itemId, call_id: t.callId, name: t.name, arguments: argsByIdx?.get(copilotIdx) ?? "", status: "completed" });
     out.push(this.ev("response.completed", { response: { ...this.envelope("completed"), output, ...(u ? { usage: u } : {}) } }));
     return out;
   }

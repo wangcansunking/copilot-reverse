@@ -255,9 +255,16 @@ check "claude sees the image and names the colour (red)" 'echo "$IMG_TEXT" | gre
 # hermetic checks stay green — the class already caught once (nameless tool -> Copilot 400).
 # ORACLE = the FILESYSTEM: codex can only create the file by really running the tool through the proxy,
 # so asserting the file exists + has the exact token is immune to codex's JSONL event-shape drifting.
+# SANDBOX: use --dangerously-bypass-approvals-and-sandbox, NOT -s workspace-write. Codex's
+# workspace-write sandbox needs Linux user namespaces (landlock/seccomp) to wrap the shell — those are
+# unavailable in an unprivileged Docker container, so codex fails with "sandbox wrapper cannot create a
+# namespace" and falls back to apply_patch ("invoked with incompatible payload"), never running the
+# command — a CONTAINER limitation, not a proxy bug. The container is already the isolation boundary
+# (ephemeral, --rm), so bypassing codex's inner sandbox is safe here and lets us test what we actually
+# care about: the function_call -> shell -> function_call_output translation round-trip through /responses.
 note "codex tool loop -> writes a file via a real shell tool_call (fs oracle)"
 rm -f /tmp/codex_proof.txt
-CODEX_TOOL_OUT=$(cd /tmp && codex exec --skip-git-repo-check -s workspace-write \
+CODEX_TOOL_OUT=$(cd /tmp && codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
   "Create a file named codex_proof.txt in the current directory whose contents are exactly CODEX_TOOL_OK, then reply DONE." 2>/tmp/codex-tool.err)
 CODEX_PROOF=$(cat /tmp/codex_proof.txt 2>/dev/null)
 echo "  codex_proof.txt contents: ${CODEX_PROOF:-<not created>}"
@@ -274,10 +281,16 @@ check "codex completes a real tool loop (file written through the proxy)" 'echo 
 #                             proves the shrink kept the letters LEGIBLE (not a smear) — the whole point
 #                             of the 502 fix. (Distinct from case 11's colour-naming curl POST: this is
 #                             the real Read-tool path + OCR + the re-encode ladder.)
+# MODEL: pinned to a Claude model, NOT the default gpt-4o. Copilot's gpt-4o has NO image entitlement —
+# it 400s ANY inline image with "validating image item: image media type not supported" (probed: PNG
+# AND JPEG both rejected), regardless of our (valid) media type. That is an upstream model capability,
+# not a proxy bug — a real user doing OCR picks a vision-capable model, so the test must too. Claude
+# models accept images (probed: the exact Jimp fixture returns its baked token upstream). #50 P2.
+VISION_MODEL="claude-sonnet-4.6"
 vision_case() { # vision_case <png-path> <expected-token>
   local png="$1" tok="$2"
   local out
-  out=$(claude -p "Read the image file at ${png} and reply with ONLY the exact text shown in the image, nothing else." \
+  out=$(ANTHROPIC_MODEL="$VISION_MODEL" claude -p "Read the image file at ${png} and reply with ONLY the exact text shown in the image, nothing else." \
     --allowedTools Read --permission-mode acceptEdits --output-format json 2>/tmp/vision.err | jq -r '.result // empty' 2>/dev/null)
   echo "  claude vision (${png##*/}) read: ${out:-<none>}"
   # tolerant + case-insensitive (the model may add whitespace); a hit proves it truly saw the pixels.
@@ -312,10 +325,12 @@ fi
 
 # --- 14) unknown / typo'd model degrades gracefully (bounded is_error, never a hang or 502-mask) ---
 # router.ts:26 forwards an unmatched id VERBATIM (modelMap is empty, fuzzy < 0.6 threshold on a nonsense
-# id), so Copilot 404s it. This is the ONE model-resolution branch with zero real-Copilot coverage
-# (http-e2e cant reach it — its dummy token 401s before model validation). The north-star is "never
-# freeze/mask a degenerate turn": a user typo must surface a bounded is_error and RETURN, not hang to
-# the turn timeout. The bounded wall-clock (timeout) IS the assertion that it didn't freeze.
+# id), so Copilot 400s it (model_not_supported). This is the ONE model-resolution branch with zero
+# real-Copilot coverage (http-e2e cant reach it — its dummy token 401s before model validation). The
+# north-star is "never freeze/mask a degenerate turn": a user typo must surface a bounded is_error and
+# RETURN, not hang to the turn timeout. #50 P1 fix: the worker now classifies that upstream 400 as a
+# TERMINAL invalid_request_error (not a retriable 502/api_error), so a client fails fast instead of
+# retrying to its 90s deadline. The bounded wall-clock (timeout) IS the assertion that it didn't freeze.
 note "unknown model id -> bounded is_error, returns (no hang)"
 BAD_JSON=$(timeout 90 env ANTHROPIC_MODEL="not-a-real-model-xyz" claude -p "Reply with exactly: NOPE" --output-format json 2>/tmp/badmodel.err)
 BAD_RC=$?
@@ -345,7 +360,37 @@ else
   check "codex native web_search returns a grounded answer" 'false' "expected a 1.x version, got \`${CODEX_WEB_LINE}\`"
 fi
 
-# --- 16) context editing: a browser-harness-style pile of screenshots does NOT 413 ----------------
+# --- 16) codex MULTI-STEP tool loop: create -> read back (function_call_output feeds the next turn) -
+# Case 12 proves a SINGLE function_call round-trips. This proves the LOOP continues: codex must run a
+# first shell tool_call (write a file), get its output back as function_call_output, then issue a
+# SECOND tool_call informed by it (read the file) before answering. That second turn only happens if
+# our /responses translation fed the first tool's result back correctly — the richest agentic path,
+# and the one a real Codex task (edit, run tests, iterate) exercises every time. FS + stdout oracle.
+note "codex multi-step tool loop -> create then read back (2 tool turns through the proxy)"
+rm -f /tmp/codex_multi.txt
+CODEX_MULTI=$(cd /tmp && codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
+  "First create a file named codex_multi.txt containing exactly the token MULTI42. Then read that same file back and reply with ONLY its exact contents." 2>/tmp/codex-multi.err)
+CODEX_MULTI_FILE=$(cat /tmp/codex_multi.txt 2>/dev/null)
+CODEX_MULTI_LINE=$(echo "$CODEX_MULTI" | tail -1)
+echo "  codex_multi.txt=${CODEX_MULTI_FILE:-<none>}  final reply: ${CODEX_MULTI_LINE}"
+# Both halves must hold: the file was written (turn 1 tool ran) AND the model echoed it back (turn 2
+# tool result fed the answer) — proving the function_call -> output -> function_call loop, not one shot.
+check "codex multi-step loop wrote the file (turn 1 tool ran)" 'echo "$CODEX_MULTI_FILE" | grep -q "MULTI42"' "file contents: \`${CODEX_MULTI_FILE:-<none>}\`"
+check "codex multi-step loop read it back (turn 2 consumed the tool result)" 'echo "$CODEX_MULTI" | grep -q "MULTI42"' "final reply echoed the read-back token: \`${CODEX_MULTI_LINE}\`"
+
+# --- 17) codex on an UNKNOWN model fast-fails too (the /responses side of the #50 P1 never-freeze) --
+# Case 14 proves the fast-fail on the CLAUDE (/anthropic) path. The OpenAI /responses path has its own
+# catch handler, and Codex is the client that speaks it — so a typo'd Codex model must ALSO surface a
+# bounded error and RETURN, never hang. Bound the wall-clock: rc!=124 (no 60s freeze) is the assertion.
+note "codex unknown model -> bounded error, returns (no hang; /responses fast-fail)"
+CODEX_BAD=$(cd /tmp && timeout 60 codex exec --skip-git-repo-check --dangerously-bypass-approvals-and-sandbox \
+  -c model="not-a-real-codex-model-zzz" "Reply with exactly: NOPE" 2>/tmp/codex-bad.err)
+CODEX_BAD_RC=$?
+echo "  codex-unknown-model rc=$CODEX_BAD_RC"
+check "codex unknown model returns (did not hang to timeout)" '[ "$CODEX_BAD_RC" != "124" ]' "codex returned rc=$CODEX_BAD_RC within 60s (no freeze on /responses)"
+check "codex unknown model surfaces a visible error" '{ echo "$CODEX_BAD"; cat /tmp/codex-bad.err; } | grep -qiE "error|not.?support|unknown|invalid|400|404"' "a typo'd Codex model id degrades to a visible error, not a silent/frozen turn"
+
+# --- 18) context editing: a browser-harness-style pile of screenshots does NOT 413 ----------------
 # The exact failure a user reported: browser-harness screenshots accumulate in history, the stateless
 # wire re-sends them ALL every turn, and Copilot's gateway rejects the oversized body with 413 (relayed
 # as a 502). The fix (core/context-edit.ts) clears OLD tool screenshots before send — keep the most

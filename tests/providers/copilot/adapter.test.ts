@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from "vitest";
-import { CopilotAdapter } from "../../../src/providers/copilot/adapter.js";
+import { CopilotAdapter, isTerminalUpstream } from "../../../src/providers/copilot/adapter.js";
 import type { CanonicalRequest } from "../../../src/core/canonical.js";
 
 const tokenStore = { get: async () => "cop" };
@@ -398,5 +398,33 @@ describe("CopilotAdapter", () => {
     catch (e) { msg = e instanceof Error ? e.message : String(e); }
     expect(msg).toMatch(/copilot stream failed: 502/);
     expect(msg).not.toMatch(/\n/); // no embedded newlines — won't shatter the /logs card
+  });
+
+  // #50 P1: an upstream error must carry its HTTP status so the request handlers can fast-fail a
+  // permanent 4xx instead of masking it as a retriable 502 (which freezes the client to its timeout).
+  it("throws an UpstreamError carrying the status on a non-stream 4xx (bad model)", async () => {
+    const body = JSON.stringify({ error: { message: "The requested model is not supported.", code: "model_not_supported" } });
+    const f = vi.fn(async () => new Response(body, { status: 400, headers: { "content-type": "application/json" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+    await expect(a.complete(base)).rejects.toMatchObject({ name: "UpstreamError", status: 400 });
+    expect(isTerminalUpstream(await a.complete(base).catch((e) => e))).toBe(true);
+  });
+  it("throws an UpstreamError carrying the status on a stream 4xx (bad model)", async () => {
+    const body = JSON.stringify({ error: { message: "The requested model is not supported.", code: "model_not_supported" } });
+    const f = vi.fn(async () => new Response(body, { status: 400, headers: { "content-type": "application/json" } }));
+    const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+    const err = await (async () => { try { for await (const _ of a.stream({ ...base, stream: true })) { /* drain */ } } catch (e) { return e; } })();
+    expect(err).toMatchObject({ name: "UpstreamError", status: 400 });
+    expect(isTerminalUpstream(err)).toBe(true);
+  });
+  // A 429 rate-limit and a 5xx are transient — they must NOT be classified terminal (keep retrying).
+  it("classifies a 429 rate-limit and a 502 as non-terminal (retriable)", async () => {
+    for (const status of [429, 502, 503]) {
+      const f = vi.fn(async () => new Response("busy", { status }));
+      const a = new CopilotAdapter(tokenStore, f as unknown as typeof fetch, () => []);
+      const err = await a.complete(base).catch((e) => e);
+      expect(err).toMatchObject({ name: "UpstreamError", status });
+      expect(isTerminalUpstream(err)).toBe(false);
+    }
   });
 });

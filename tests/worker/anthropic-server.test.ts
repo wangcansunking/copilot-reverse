@@ -4,6 +4,7 @@ import { createWorkerApp } from "../../src/worker/server.js";
 import { Router } from "../../src/worker/router.js";
 import type { ProviderAdapter } from "../../src/providers/types.js";
 import type { CanonicalChunk } from "../../src/core/canonical.js";
+import { UpstreamError } from "../../src/providers/copilot/adapter.js";
 
 const textProvider: ProviderAdapter = {
   name: "copilot",
@@ -201,6 +202,50 @@ describe("worker Anthropic endpoint", () => {
     const err = frames.find((f) => f.event === "error");
     expect(err!.data.type).toBe("error");
     expect(err!.data.error.message).toMatch(/context_length_exceeded/);
+  });
+
+  // #50 P1: an unknown/typo'd model id hits an upstream 400 (model_not_supported). Before the fix the
+  // worker masked EVERY error as a retriable api_error / 502, so a client (Claude Code) retried it to
+  // its 90s turn timeout and FROZE. A permanent 4xx must surface as a TERMINAL invalid_request_error so
+  // the client fails fast — this is the never-freeze north-star.
+  it("surfaces an upstream 4xx as a terminal invalid_request_error SSE frame (no retry → no freeze)", async () => {
+    const badModel: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => { throw new UpstreamError(400, "copilot completion failed: 400 — model_not_supported"); },
+      async *stream(): AsyncIterable<CanonicalChunk> {
+        throw new UpstreamError(400, "copilot stream failed: 400 — model_not_supported");
+        // eslint-disable-next-line no-unreachable
+        yield { kind: "done", done: true, finishReason: "stop" };
+      },
+    };
+    const res = await request(app(badModel)).post("/anthropic/v1/messages").send({ model: "not-a-real-model", max_tokens: 100, stream: true, messages: [{ role: "user", content: "hi" }] });
+    const err = parseFrames(res.text).find((f) => f.event === "error");
+    expect(err).toBeDefined();
+    // The type is the retry signal: invalid_request_error is terminal (client won't retry); api_error is not.
+    expect(err!.data.error.type).toBe("invalid_request_error");
+    expect(err!.data.error.message).toMatch(/model.*not supported|model_not_supported/i);
+  });
+
+  it("returns HTTP 400 (not 502) for an upstream 4xx on a NON-stream request", async () => {
+    const badModel: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => { throw new UpstreamError(400, "copilot completion failed: 400 — model_not_supported"); },
+      async *stream(): AsyncIterable<CanonicalChunk> { yield { kind: "done", done: true, finishReason: "stop" }; },
+    };
+    const res = await request(app(badModel)).post("/anthropic/v1/messages").send({ model: "not-a-real-model", max_tokens: 100, messages: [{ role: "user", content: "hi" }] });
+    expect(res.status).toBe(400);
+    expect(res.body.error.type).toBe("invalid_request_error");
+  });
+
+  it("keeps a retriable upstream 5xx as a 502 api_error (only 4xx is terminal)", async () => {
+    const flaky: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => { throw new UpstreamError(503, "copilot completion failed: 503 — upstream busy"); },
+      async *stream(): AsyncIterable<CanonicalChunk> { yield { kind: "done", done: true, finishReason: "stop" }; },
+    };
+    const res = await request(app(flaky)).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, messages: [{ role: "user", content: "hi" }] });
+    expect(res.status).toBe(502);
+    expect(res.body.error.type).toBe("api_error");
   });
 
   it("cuts a degenerate repeating stream cleanly (stop_reason max_tokens, ends, never tool_use)", async () => {

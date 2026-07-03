@@ -1,5 +1,8 @@
 // Turn a raw upstream error message into an actionable hint (agent-maestro v2.8.1/v2.6.0:
 // structured context-window-exceeded + model_not_supported guidance instead of a bare 400).
+import { CopilotAuthError } from "../providers/copilot/token.js";
+import { isTerminalUpstream } from "../providers/copilot/adapter.js";
+
 export function errorHint(message: string): string {
   const m = message.toLowerCase();
   // An expired/revoked GitHub login — tell the user to re-authenticate from inside the app.
@@ -19,4 +22,20 @@ export function errorHint(message: string): string {
     return "model not supported — run /model to pick an available one";
   }
   return "";
+}
+
+// How a request handler should surface a thrown error. Classifying here (not per-endpoint) keeps the
+// Anthropic + OpenAI + Responses catch blocks consistent.
+//   - `status`: the HTTP status for a non-stream reply, or the status we'd have used pre-stream.
+//   - `terminal`: true = a permanent client error (bad model, invalid body) — the client must NOT
+//     retry. A retriable class (5xx/network/429) is false. This drives the SSE error *type*: a
+//     terminal error becomes `invalid_request_error` (Anthropic) so Claude Code / the SDK fail fast
+//     instead of retrying a 502-class `api_error` to their turn timeout (issue #50 P1 freeze).
+export interface ErrorClass { status: number; terminal: boolean }
+export function classifyError(err: unknown): ErrorClass {
+  if (err instanceof CopilotAuthError) return { status: 401, terminal: true };
+  // A permanent upstream 4xx (model_not_supported, invalid_request_body, …) — surface it verbatim so
+  // the caller sees the real status and stops retrying. 429/408 and 5xx fall through to a retriable 502.
+  if (isTerminalUpstream(err)) return { status: err.status, terminal: true };
+  return { status: 502, terminal: false };
 }

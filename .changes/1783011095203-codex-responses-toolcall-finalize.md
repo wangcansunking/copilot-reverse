@@ -1,0 +1,4 @@
+---
+bump: patch
+---
+fix(responses): finalize a streamed function_call with its full call_id + name + arguments so Codex actually runs the tool (#50 P2). The terminal `response.function_call_arguments.done` and `response.output_item.done` events (and the `function_call` item inside `response.completed.output`) were emitted with only `{type,id,status}` — missing `name` and `arguments`. Codex reads those terminal events to learn which shell command to run, so a nameless/argless call was silently skipped: every real Codex tool loop (`codex exec` writing a file, running a command) completed with no action. `ResponsesSSE` now retains each call's `callId`+`name` and emits the complete item on every terminal event, matching the OpenAI Responses spec. Verified end-to-end: `codex exec -s workspace-write` now writes the file through the proxy.
