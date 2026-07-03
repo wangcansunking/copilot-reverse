@@ -397,6 +397,50 @@ check "screenshot pile is a VALID request (no 4xx body-shape error masking the 4
 check "a ~7MB screenshot pile never 413s (context editing kept the body under the ~5 MiB gateway limit)" '! echo "$CE_RESP" | grep -qiE "413|entity too large|too large"' "no 413/entity-too-large for an 11-screenshot ~7MB history; got err: \`${CE_ERR:-<none>}\`"
 check "latest screenshot still readable after clearing old ones (answers green)" 'echo "$CE_TEXT" | grep -qi "green"' "claude read the MOST RECENT (green) screenshot: \`${CE_TEXT:-<err: $CE_ERR>}\` — old ones cleared, recent kept"
 
+# --- 17) context editing DYNAMIC budget: a big conversation + screenshots stays a valid turn (issue #52) ---
+# Issue #52's follow-up: the 413 is on the WHOLE body, so context editing budgets image bytes DYNAMICALLY
+# against what the non-image conversation leaves under the 5 MiB wall (proven exactly, quota-free, in the
+# hermetic http-e2e). Here we prove the LIVE end-to-end consequence: a substantial mixed conversation
+# (~100k tokens of real prose + a screenshot pile) is a valid turn — no 413, and the newest screenshot is
+# still read. (The pure byte-wall extreme is unreachable as a <1M-token live request — base64 images
+# tokenize at ~char/4, so a ~5 MiB body is ~1.3M tokens, over the model window — which is exactly why the
+# byte-budget math is asserted hermetically, and case #16 stresses a big screenshot pile on its own.)
+note "context editing (dynamic) -> a big conversation + screenshots stays a valid turn (issue #52)"
+DCE_RESP=$(node -e '
+const zlib=require("zlib");const crypto=require("crypto");
+function chunk(t,d){const l=Buffer.alloc(4);l.writeUInt32BE(d.length);const ty=Buffer.from(t);const cb=Buffer.concat([ty,d]);
+  let c=~0;for(const b of cb){c^=b;for(let i=0;i<8;i++)c=(c>>>1)^(0xEDB88320&-(c&1));}c=~c>>>0;const cr=Buffer.alloc(4);cr.writeUInt32BE(c>>>0);return Buffer.concat([l,ty,d,cr]);}
+function pngSolid(W,H,r,g,b){const sig=Buffer.from([137,80,78,71,13,10,26,10]);const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(W,0);ihdr.writeUInt32BE(H,4);ihdr[8]=8;ihdr[9]=2;
+  const raw=Buffer.alloc(H*(1+W*3));for(let y=0;y<H;y++){const o=y*(1+W*3);raw[o]=0;for(let x=0;x<W;x++){const p=o+1+x*3;raw[p]=r;raw[p+1]=g;raw[p+2]=b;}}
+  return Buffer.concat([sig,chunk("IHDR",ihdr),chunk("IDAT",zlib.deflateSync(raw)),chunk("IEND",Buffer.alloc(0))]).toString("base64");}
+function pngNoise(W,H){const sig=Buffer.from([137,80,78,71,13,10,26,10]);const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(W,0);ihdr.writeUInt32BE(H,4);ihdr[8]=8;ihdr[9]=2;
+  const raw=Buffer.alloc(H*(1+W*3));for(let y=0;y<H;y++){const o=y*(1+W*3);raw[o]=0;crypto.randomFillSync(raw,o+1,W*3);}
+  return Buffer.concat([sig,chunk("IHDR",ihdr),chunk("IDAT",zlib.deflateSync(raw,{level:0})),chunk("IEND",Buffer.alloc(0))]).toString("base64");}
+// ~100k tokens of realistic conversation (varied prose, not a degenerate repeat) as the opening turn.
+const lines=[]; let acc=0;
+const words="the quick brown fox jumps over a lazy dog while parsing logs and rendering the dashboard for the current build status across every worker node in the cluster".split(" ");
+for(let n=0; acc<400000; n++){ const line="Line "+n+": "+words.slice(0, 8+(n%12)).join(" ")+".\n"; lines.push(line); acc+=line.length; }
+const bigText=lines.join("");
+const msgs=[{role:"user",content:bigText}];
+let rawImg=0;
+for(let i=0;i<4;i++){ const img=pngNoise(350,350); rawImg+=img.length;
+  msgs.push({role:"assistant",content:[{type:"text",text:"step "+i},{type:"tool_use",id:"d"+i,name:"screenshot",input:{}}]});
+  msgs.push({role:"user",content:[{type:"tool_result",tool_use_id:"d"+i,content:[{type:"text",text:"step "+i},{type:"image",source:{type:"base64",media_type:"image/png",data:img}}]}]});
+}
+msgs.push({role:"assistant",content:[{type:"text",text:"final"},{type:"tool_use",id:"dlast",name:"screenshot",input:{}}]});
+msgs.push({role:"user",content:[{type:"tool_result",tool_use_id:"dlast",content:[{type:"text",text:"final"},{type:"image",source:{type:"base64",media_type:"image/png",data:pngSolid(200,200,30,200,30)}}]}]});
+msgs.push({role:"user",content:[{type:"text",text:"What colour is the most recent screenshot? Reply with one word."}]});
+process.stderr.write("text ~"+(bigText.length/1024/1024).toFixed(1)+"MB + images ~"+(rawImg/1024/1024).toFixed(1)+"MB unedited\n");
+const body=JSON.stringify({model:"claude-opus-4-8[1m]",max_tokens:64,messages:msgs});
+fetch("http://127.0.0.1:'"$PORT"'/anthropic/v1/messages",{method:"POST",headers:{"content-type":"application/json"},body}).then(r=>r.text()).then(t=>process.stdout.write(t)).catch(e=>process.stdout.write(JSON.stringify({error:{message:String(e)}})));
+' 2>/tmp/dce-size.txt)
+DCE_TEXT=$(echo "$DCE_RESP" | jq -r '[.content[]?|select(.type=="text")|.text]|join("")' 2>/dev/null)
+DCE_ERR=$(echo "$DCE_RESP" | jq -r '.error.message // empty' 2>/dev/null)
+echo "  $(cat /tmp/dce-size.txt 2>/dev/null)  result: ${DCE_TEXT:-<err: $DCE_ERR>}"
+check "big-text + screenshots is a VALID request" '! echo "$DCE_RESP" | grep -qiE "invalid_request_body|400 —"' "request must be well-formed; got err: \`${DCE_ERR:-<none>}\`"
+check "issue #52: big conversation + screenshots never 413s (dynamic budget cleared more images)" '! echo "$DCE_RESP" | grep -qiE "413|entity too large|too large"' "no 413 for a big-text+screenshots body; got err: \`${DCE_ERR:-<none>}\`"
+check "latest screenshot still readable with a big conversation (answers green)" 'echo "$DCE_TEXT" | grep -qi "green"' "claude read the most-recent (green) screenshot alongside a big conversation: \`${DCE_TEXT:-<err: $DCE_ERR>}\`"
+
 # --- teardown -----------------------------------------------------------------------------------
 kill "$WPID" 2>/dev/null
 
