@@ -450,10 +450,36 @@ async function main() {
       // proves the round-trip (dashed+[1m] -> dotted Copilot id) works end-to-end, not just in units.
       const c = await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "claude-opus-4-8[1m]", max_tokens: 16, messages: [{ role: "user", content: "say OK" }] }));
       check("canonical opus [1m] id resolves + 200", c.s === 200, c.t.slice(0, 120));
+
+      // #50 P1 (never-freeze): a typo'd / unknown model id hits an upstream 400 (model_not_supported).
+      // The worker must fast-fail it as a TERMINAL client error — HTTP 400 with an invalid_request_error
+      // type on the non-stream path — NOT mask it as a retriable 502 (which made Claude Code retry to its
+      // 90s turn timeout and FREEZE). Costs ~nothing: upstream 400s in <1s. Assert both status + type.
+      const badStart = Date.now();
+      const bad = await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "not-a-real-model-xyz", max_tokens: 16, messages: [{ role: "user", content: "hi" }] }));
+      const badMs = Date.now() - badStart;
+      const badBody = (() => { try { return JSON.parse(bad.t); } catch { return {}; } })();
+      check("unknown model → terminal 400 (not a retriable 502)", bad.s === 400, `status=${bad.s} in ${badMs}ms`);
+      check("unknown model → invalid_request_error type (client won't retry → no freeze)", badBody?.error?.type === "invalid_request_error", bad.t.slice(0, 140));
+      check("unknown model fast-fails (well under the turn timeout)", badMs < 15000, `${badMs}ms`);
+
+      // The STREAMING path is what Claude Code actually drives: after message_start (HTTP 200) it must
+      // emit an `error` SSE frame typed invalid_request_error — the terminal signal — then close, so the
+      // client fails fast instead of retrying an api_error to the deadline.
+      const badStream = await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "not-a-real-model-xyz", max_tokens: 16, stream: true, messages: [{ role: "user", content: "hi" }] }));
+      const badErrFrame = badStream.t.split("\n\n").map((b) => {
+        const ev = b.split("\n").find((l) => l.startsWith("event: "))?.slice(7);
+        const d = b.split("\n").find((l) => l.startsWith("data: "))?.slice(6);
+        try { return ev && d ? { ev, d: JSON.parse(d) } : null; } catch { return null; }
+      }).find((f) => f?.ev === "error");
+      check("unknown model (stream) → terminal invalid_request_error error frame", badErrFrame?.d?.error?.type === "invalid_request_error", badStream.t.slice(0, 160));
+
       // Token metrics: after a real round-trip the supervisor should log non-null in/out token counts.
+      // Pick the most-recent SUCCESSFUL request (a 200) — the unknown-model 400 asserts above log a
+      // token-less failure metric, so reqs[0] isn't guaranteed to be a round-trip.
       await sleep(500);
       const reqs = (await jget(supUrl("/api/requests"))).j?.requests ?? [];
-      const top = reqs[0] ?? {};
+      const top = reqs.find((r) => r.status === 200) ?? reqs[0] ?? {};
       check("metric carries token counts", typeof top.tokensIn === "number" && typeof top.tokensOut === "number", JSON.stringify(top));
 
       // Extended thinking (#33): a `thinking`-enabled streaming request to a real Claude model must

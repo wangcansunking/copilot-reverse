@@ -6,8 +6,7 @@ import { anthropicRequestToCanonical, canonicalToAnthropicResponse } from "../co
 import { estimateTokens } from "../core/tokens.js";
 import { shrinkImagesInPlace } from "../core/image-resize.js";
 import { editImageContextInPlace, forceClearAllScreenshots, is413Error } from "../core/context-edit.js";
-import { errorHint } from "./errors.js";
-import { CopilotAuthError } from "../providers/copilot/token.js";
+import { errorHint, classifyError } from "./errors.js";
 import { isGatewayTool, type GatewayToolRunner } from "../core/server-tools.js";
 import type { ContentBlock, CanonicalChunk } from "../core/canonical.js";
 import { RunawayGuard } from "../core/stream-guard.js";
@@ -258,14 +257,18 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
       const raw = err instanceof Error ? err.message : String(err);
       const hint = errorHint(raw);
       const message = hint ? `${raw}\n${hint}` : raw;
-      const status = err instanceof CopilotAuthError ? 401 : 502;
-      const errorType = status === 401 ? "authentication_error" : "api_error";
+      // Classify: a permanent upstream 4xx (bad model, invalid body) is TERMINAL — surface it as a
+      // non-retriable invalid_request_error so the client fails fast instead of retrying a 502-class
+      // api_error to its 90s turn timeout (issue #50 P1 freeze). Auth → 401; everything else → 502.
+      const { status, terminal } = classifyError(err);
+      const errorType = status === 401 ? "authentication_error" : terminal ? "invalid_request_error" : "api_error";
       if (!res.headersSent) {
         res.status(status).json({ type: "error", error: { type: errorType, message } });
       } else {
         // The stream already opened (message_start sent), so we can't set a status code.
         // Emit an Anthropic `error` SSE event before closing so the client renders the
-        // failure instead of seeing a silently truncated response.
+        // failure instead of seeing a silently truncated response — with the classified type,
+        // so a terminal error is NOT retried (invalid_request_error), only a real api_error is.
         res.write(frame("error", { type: "error", error: { type: errorType, message } }));
         res.end();
       }

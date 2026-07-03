@@ -6,8 +6,7 @@ import { openaiRequestToCanonical, canonicalToOpenAIResponse, canonicalChunkToOp
 import { responsesRequestToCanonical, canonicalToResponsesResponse, ResponsesSSE } from "../core/responses-inbound.js";
 import { shrinkImagesInPlace } from "../core/image-resize.js";
 import { editImageContextInPlace } from "../core/context-edit.js";
-import { errorHint } from "./errors.js";
-import { CopilotAuthError } from "../providers/copilot/token.js";
+import { errorHint, classifyError } from "./errors.js";
 import { RunawayGuard } from "../core/stream-guard.js";
 
 // Cut a single streaming turn that degenerates (model repeats one short token forever, never stops)
@@ -61,7 +60,9 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
       const raw = err instanceof Error ? err.message : String(err);
       const hint = errorHint(raw);
       const message = hint ? `${raw}\n${hint}` : raw;
-      const status = err instanceof CopilotAuthError ? 401 : 502;
+      // A permanent upstream 4xx (bad model, invalid body) is terminal — surface its real status so
+      // the client fails fast instead of retrying a 502-class error to its turn timeout (#50 P1).
+      const { status } = classifyError(err);
       if (!res.headersSent) {
         res.status(status).json({ error: { message } });
       } else {
@@ -118,7 +119,10 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
       const raw = err instanceof Error ? err.message : String(err);
       const hint = errorHint(raw);
       const message = hint ? `${raw}\n${hint}` : raw;
-      const status = err instanceof CopilotAuthError ? 401 : 502;
+      // Terminal upstream 4xx → its real status; retriable (5xx/network/429) → 502. Fast-fail (#50 P1).
+      // The Responses error shape stays a flat {type:"error"} (Codex's contract); the STATUS carries
+      // the fast-fail — a non-stream 400 no longer masquerades as a retriable 502.
+      const { status } = classifyError(err);
       if (!res.headersSent) {
         res.status(status).json({ error: { type: "error", message } });
       } else {

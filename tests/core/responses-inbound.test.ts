@@ -137,4 +137,31 @@ describe("ResponsesSSE emitter", () => {
     expect(text).toContain("response.function_call_arguments.done");
     expect(text).toContain("response.completed");
   });
+
+  // #50 P2: Codex reads the FINAL function_call from the terminal events (arguments.done +
+  // output_item.done + response.completed.output) to know what shell command to run. The OpenAI spec
+  // (verified against the Responses API reference) requires each of these to carry the COMPLETE call —
+  // call_id, name, AND the accumulated arguments. We previously emitted a bare {type,id,status} on
+  // output_item.done and omitted `name` from response.completed.output, so Codex saw a nameless/argless
+  // call and silently skipped execution — the file never got written. Assert all three are complete.
+  it("finalizes a function_call with call_id + name + arguments on every terminal event (Codex tool loop)", () => {
+    const sse = new ResponsesSSE("resp_x", "gpt-5.5");
+    const args = '{"command":["bash","-c","echo hi"]}';
+    // The server accumulates arg deltas into argsByIdx and hands the finished map to finish() (mirrors
+    // openai-server.ts). toolArgs only emits the streaming delta frame; the terminal args come from the map.
+    const argsByIdx = new Map([[0, args]]);
+    const out = [sse.start(), ...sse.toolStart(0, "call_abc", "shell_command"), ...sse.toolArgs(0, args), ...sse.finish({ promptTokens: 1, completionTokens: 1 }, "tool_use", argsByIdx)];
+    const events = out.join("").split("\n\n").filter(Boolean).map((b) => JSON.parse(b.replace(/^data: /, "")));
+    const byType = (t: string) => events.find((e) => e.type === t);
+
+    const argsDone = byType("response.function_call_arguments.done");
+    expect(argsDone).toMatchObject({ call_id: "call_abc", name: "shell_command", arguments: args });
+
+    const itemDone = events.filter((e) => e.type === "response.output_item.done").find((e) => e.item?.type === "function_call");
+    expect(itemDone.item).toMatchObject({ type: "function_call", call_id: "call_abc", name: "shell_command", arguments: args, status: "completed" });
+
+    const completed = byType("response.completed");
+    const fc = completed.response.output.find((o: any) => o.type === "function_call");
+    expect(fc).toMatchObject({ type: "function_call", call_id: "call_abc", name: "shell_command", arguments: args });
+  });
 });
