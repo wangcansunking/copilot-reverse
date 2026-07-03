@@ -2,6 +2,14 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.16.3",
+    "date": "2026-07-03",
+    "summary": "Fix the 413 that returns on screenshot-heavy sessions with a large conversation (issue #52 follow-up). The 413 is on the WHOLE request body, but context editing budgeted only image bytes against a fixed 3.5MB cap — so a ~700k-token transcript (~2.7MB of text) plus 3 kept screenshots (~3.15MB) still exceeded Copilot's 5 MiB gateway wall. The image allowance is now DYNAMIC: `GATEWAY_ENTITY_LIMIT (5 MiB) − SAFETY_MARGIN − nonImageBytes`, capped by the fixed budget for the common small-text case. Big text automatically clears more screenshots (700k text → keep 1 image; 900k text → keep 0), keeping the total body under the wall for any text size. Adds a reactive fallback: if the gateway STILL returns 413, force-clear every screenshot and retry once before surfacing the error (both the streaming and non-streaming Anthropic paths). New unit tests (dynamic budget across text sizes, `forceClearAllScreenshots`, `is413Error`, and end-to-end reactive-retry through the Express app for both stream and non-stream) + an http-e2e assertion that big-text + screenshots fits under 5 MiB.",
+    "summaries": [
+      "Fix the 413 that returns on screenshot-heavy sessions with a large conversation (issue #52 follow-up). The 413 is on the WHOLE request body, but context editing budgeted only image bytes against a fixed 3.5MB cap — so a ~700k-token transcript (~2.7MB of text) plus 3 kept screenshots (~3.15MB) still exceeded Copilot's 5 MiB gateway wall. The image allowance is now DYNAMIC: `GATEWAY_ENTITY_LIMIT (5 MiB) − SAFETY_MARGIN − nonImageBytes`, capped by the fixed budget for the common small-text case. Big text automatically clears more screenshots (700k text → keep 1 image; 900k text → keep 0), keeping the total body under the wall for any text size. Adds a reactive fallback: if the gateway STILL returns 413, force-clear every screenshot and retry once before surfacing the error (both the streaming and non-streaming Anthropic paths). New unit tests (dynamic budget across text sizes, `forceClearAllScreenshots`, `is413Error`, and end-to-end reactive-retry through the Express app for both stream and non-stream) + an http-e2e assertion that big-text + screenshots fits under 5 MiB."
+    ]
+  },
+  {
     "version": "0.16.2",
     "date": "2026-07-03",
     "summary": "fix(worker): fast-fail an unknown/typo'd model id instead of freezing the turn (#50 P1). An upstream 4xx (e.g. `model_not_supported`) was masked as a retriable 502/`api_error`, so clients that retry (Claude Code, the Anthropic SDK) backed off to their 90s turn timeout and froze. The worker now carries the upstream status through a typed `UpstreamError` and surfaces a permanent 4xx as a terminal `invalid_request_error` (HTTP 400 on the non-stream path; a terminal `error` SSE frame on the stream path), while genuine 5xx/network/429 stay retriable 502s — honoring the never-freeze north-star.",
@@ -82,16 +90,6 @@ export const APP_CHANGES: ChangeEntry[] = [
       "Switching `/network` to LAN used to dump the URL + key and a one-line \"send it as `Authorization: Bearer`\" hint, leaving the user to hand-assemble each remote machine's config and guess which slot the key goes in. The LAN success card now renders **paste-ready config blocks** for both clients, with the key already in the correct place:",
       "- **Claude** → `~/.claude/settings.json` `env` block (key in `ANTHROPIC_API_KEY`) - **Codex** → `~/.codex/config.toml` provider block (key in `experimental_bearer_token`)",
       "Blocks are built by a new pure helper (`tui/setup/remote-config.ts`) that reuses the same `claudeCopilotReverseEnv` / codex-toml shape local `/setup` writes, so a remote config matches what local setup produces — only the LAN host + real key replace loopback + the local placeholder. Each block uses the model this machine has pinned for that client (falling back to sensible defaults) and its real context window when known (Claude `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, Codex `model_context_window`), so the remote client sizes context like the local one instead of assuming a default ~200K window for a 1M model. If the LAN IPv4 can't be determined, the card falls back to a `<this-machine-LAN-IP>` placeholder instead of crashing."
-    ]
-  },
-  {
-    "version": "0.11.1",
-    "date": "2026-06-30",
-    "summary": "fix(worker,supervisor): stop three recurring 502/crash failures behind `/doctor` and the daemon",
-    "summaries": [
-      "fix(worker,supervisor): stop three recurring 502/crash failures behind `/doctor` and the daemon",
-      "- **EADDRINUSE crash loop → daemon \"unhealthy\"**: a forked worker no longer orphans when its supervisor dies abnormally (terminal closed/killed/crashed). The worker now exits on IPC `disconnect`, releasing `:7891` instead of squatting it so the next supervisor's worker can't bind. The supervisor's manual restart also waits for the old worker to fully exit before spawning the replacement, closing the kill/respawn race that hit the same `listen EADDRINUSE :7891`. - **502 `Cannot read properties of undefined (reading 'message')`**: the Copilot adapter's non-stream `complete()` guards an empty `choices` array (a content-filtered turn or a 1-token ping) and returns an empty completion instead of throwing. - **502 `Invalid 'max_output_tokens'` on responses-only models (e.g. gpt-5.5)**: `max_output_tokens` is clamped up to the Responses API minimum of 16, so `/doctor`'s 1-token ping (and Claude Code's connection probe) no longer 400s.",
-      "Docker HTTP e2e gains an EADDRINUSE regression block (orphaned worker releases its port when the IPC parent drops; daemon stays `ready` through restart churn); new units cover the empty-choices guard, the `max_output_tokens` floor, and the restart-waits-for-exit ordering."
     ]
   }
 ];
