@@ -1,3 +1,7 @@
+## v0.18.0 — 2026-07-08
+
+feat(status): show the logged-in GitHub user and Copilot plan on the status card. The GitHub line now reads e.g. `✓ connected · Can Wang (canwa_microsoft) · Copilot Enterprise` — the username comes from GitHub `/user`, and the plan (derived from the `sku` on the Copilot token exchange we already perform, so no extra request) is mapped to a friendly label. Both are best-effort: a failed or pending lookup, an expired login, or a signed-out state simply omits them.
+
 ## v0.17.0 — 2026-07-08
 
 feat(skills): add `/setup-skill` — install a bundled agent skill into Claude Code (`~/.claude/skills/` global or `./.claude/skills/` project) via an interactive picker. Ships one curated skill, `analyze-session-create-issue`, which walks the agent through turning a session into a well-formed GitHub issue. Installs are idempotent and non-destructive to other skills.

@@ -2,6 +2,14 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.18.0",
+    "date": "2026-07-08",
+    "summary": "feat(status): show the logged-in GitHub user and Copilot plan on the status card. The GitHub line now reads e.g. `✓ connected · Can Wang (canwa_microsoft) · Copilot Enterprise` — the username comes from GitHub `/user`, and the plan (derived from the `sku` on the Copilot token exchange we already perform, so no extra request) is mapped to a friendly label. Both are best-effort: a failed or pending lookup, an expired login, or a signed-out state simply omits them.",
+    "summaries": [
+      "feat(status): show the logged-in GitHub user and Copilot plan on the status card. The GitHub line now reads e.g. `✓ connected · Can Wang (canwa_microsoft) · Copilot Enterprise` — the username comes from GitHub `/user`, and the plan (derived from the `sku` on the Copilot token exchange we already perform, so no extra request) is mapped to a friendly label. Both are best-effort: a failed or pending lookup, an expired login, or a signed-out state simply omits them."
+    ]
+  },
+  {
     "version": "0.17.0",
     "date": "2026-07-08",
     "summary": "feat(skills): add `/setup-skill` — install a bundled agent skill into Claude Code (`~/.claude/skills/` global or `./.claude/skills/` project) via an interactive picker. Ships one curated skill, `analyze-session-create-issue`, which walks the agent through turning a session into a well-formed GitHub issue. Installs are idempotent and non-destructive to other skills.",
@@ -79,14 +87,6 @@ export const APP_CHANGES: ChangeEntry[] = [
       "Crucially this covers images returned **inside a `tool_result`** (a Bash command or MCP tool that emits a screenshot) — the real-world trigger, where the image was previously flattened into the tool result's text string and so bypassed both resize and token counting entirely. `tool_result` now carries structured images end-to-end: preserved on the Anthropic/OpenAI inbound paths, downscaled + counted, and forwarded inline on the Copilot `tool` message (which Copilot accepts — probed). The Responses path, whose `function_call_output` can't carry an image, notes the omission instead of shipping raw base64.",
       "Runs on every image path (`/anthropic/v1/messages`, `/openai/chat/completions`, `/openai/responses`) and in `count_tokens`, so Claude Code's context sizing and the actual request agree. `estimateTokens` also now counts image bytes at all (top-level and inside tool results); it previously ignored images, under-reporting by millions and letting the client ship an oversized prompt straight into the 502.",
       "Performance is bounded: a text-only request costs ~0.04ms and an under-budget image ~0.002ms (byte short-circuit, no decode), so normal traffic is unaffected. A persistent oversized image in history — re-sent every turn, and hit by both `count_tokens` and `messages` — is decoded and re-encoded only ONCE: results are cached by content (LRU), turning a ~2s/turn cost into a first-turn-only cost (measured ~4.3s cold → ~45ms warm)."
-    ]
-  },
-  {
-    "version": "0.13.0",
-    "date": "2026-06-30",
-    "summary": "feat(reasoning): extended thinking + reasoning-effort passthrough. A `thinking`-enabled Anthropic request (or an OpenAI `reasoning_effort`) now drives the model's reasoning, and the chain-of-thought streams back as a native Anthropic thinking block (thinking_delta + signature_delta) ahead of the answer — so Claude Code renders its thinking panel through the proxy. The signed continuation token (reasoning_opaque) round-trips across tool-call turns to preserve reasoning context. Effort is also forwarded on the /responses path for gpt-5 models. Verified end-to-end against live Copilot.",
-    "summaries": [
-      "feat(reasoning): extended thinking + reasoning-effort passthrough. A `thinking`-enabled Anthropic request (or an OpenAI `reasoning_effort`) now drives the model's reasoning, and the chain-of-thought streams back as a native Anthropic thinking block (thinking_delta + signature_delta) ahead of the answer — so Claude Code renders its thinking panel through the proxy. The signed continuation token (reasoning_opaque) round-trips across tool-call turns to preserve reasoning context. Effort is also forwarded on the /responses path for gpt-5 models. Verified end-to-end against live Copilot."
     ]
   }
 ];
