@@ -34,4 +34,19 @@ describe("summarizeStatus", () => {
   it("reports github signed-out when no token", () => {
     expect(summarizeStatus({ ...base, hasToken: false, tokenValid: false }).github).toBe("signed-out");
   });
+  it("passes through identity + plan when connected", () => {
+    const s = summarizeStatus({ ...base, identity: "Can Wang (canwa)", plan: "Copilot Enterprise" });
+    expect(s.identity).toBe("Can Wang (canwa)");
+    expect(s.plan).toBe("Copilot Enterprise");
+  });
+  it("omits identity + plan when the token is not valid (no stale name on an expired login)", () => {
+    const s = summarizeStatus({ ...base, tokenValid: false, identity: "Can Wang (canwa)", plan: "Copilot Enterprise" });
+    expect(s.identity).toBeUndefined();
+    expect(s.plan).toBeUndefined();
+  });
+  it("omits identity + plan when signed out", () => {
+    const s = summarizeStatus({ ...base, hasToken: false, tokenValid: false, identity: "x", plan: "y" });
+    expect(s.identity).toBeUndefined();
+    expect(s.plan).toBeUndefined();
+  });
 });

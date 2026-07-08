@@ -51,6 +51,10 @@ export const sameStatus = (a: ClientStatus, b: ClientStatus): boolean =>
 // `extra` appends detail lines (e.g. worker restart history for /status).
 function statusCard(s: StatusSummary, extra: string[] = [], clients?: ClientStatus): Entry {
   const gh = s.github === "connected" ? "✓ connected" : s.github === "expired" ? "✗ expired — run /login" : "✗ signed out — run /login";
+  // Fold in who's logged in + their Copilot plan when connected: "✓ connected · Can Wang (canwa) ·
+  // Copilot Enterprise". Each segment is appended only when present, so a failed/pending lookup just
+  // shows "✓ connected" with no dangling separator.
+  const ghLine = [gh, s.identity, s.plan].filter(Boolean).join(" · ");
   const web = s.webSearch === "webiq" ? "✓ via WebIQ" : s.webSearch === "copilot" ? "✓ via Copilot (native)" : "✗ unavailable — run /webiq";
   // Per-scope + model when we have the file-derived detail; else fall back to the simple flag.
   const scope = (sc?: { on: boolean; model?: string }) => sc?.on ? `✓ ${sc.model ? sc.model.replace(/\[1m\]$/, "") : "on"}` : "○";
@@ -59,7 +63,7 @@ function statusCard(s: StatusSummary, extra: string[] = [], clients?: ClientStat
     : `claude ${s.clients.claude ? "✓" : "○"}  codex ${s.clients.codex ? "✓" : "○"}`;
   const tone: "ok" | "error" = s.github === "connected" ? "ok" : "error";
   return { type: "card", title: "status", tone, lines: [
-    `GitHub login   ${gh}`,
+    `GitHub login   ${ghLine}`,
     `web search     ${web}`,
     `worker         ${s.worker}`,
     `clients        ${clientsLine}`,
@@ -120,6 +124,9 @@ export interface AppProps {
   onChangeSeen?: () => void;
   // Live GitHub login check for /status (a real token-exchange check). Defaults to the startup value.
   githubStatus?: () => Promise<GithubLoginState>;
+  // Fresh account facts (username + Copilot plan label) for the live /status card. Best-effort — may
+  // return empty fields if the lookups fail. Startup uses startupStatus.identity/plan instead.
+  accountInfo?: () => Promise<{ identity?: string; plan?: string }>;
 }
 
 // Split card lines into physical rows: a single rendered <Text> with an embedded newline makes
@@ -225,7 +232,7 @@ function ClientBadge({ name, status }: { name: string; status: { user: boolean; 
 export function App({
   registry, title, workerState = "starting", initialModel = "—",
   statusSource, metricsSource, readStatus, modelLimits, onChat,
-  loadModels, setup, installSkill, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, networkInfo, setAccessMode, rotateKey, clientModels, startupStatus, githubStatus, changeBanner, onChangeSeen,
+  loadModels, setup, installSkill, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, networkInfo, setAccessMode, rotateKey, clientModels, startupStatus, githubStatus, accountInfo, changeBanner, onChangeSeen,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
   const [entries, setEntries] = useState<Entry[]>(() => [
@@ -312,10 +319,15 @@ export function App({
         const s = await statusSource?.();
         if (s) { worker = s.workerState; restarts = s.restarts.slice(0, 5).map((r) => `  ${r.reason} exit=${r.exitCode ?? "-"} ${r.stderrTail.slice(0, 60)}`); }
       } catch { /* daemon momentarily down — show what we have */ }
+      // Fresh identity/plan for the live card when connected. Best-effort — a failed lookup just omits
+      // them. Fall back to the startup values so a transient miss doesn't blank a name we already had.
+      const acct: { identity?: string; plan?: string } = ghState === "connected" && accountInfo ? await accountInfo().catch(() => ({})) : {};
       const summary = summarizeStatus({
         hasToken: ghState !== "signed-out", tokenValid: ghState === "connected",
         webSearch: webSearchBackend?.() ?? webBackend, worker,
         clients: { claude: status.claude.user || status.claude.project, codex: status.codex.user || status.codex.project },
+        identity: acct.identity ?? startupStatus?.identity,
+        plan: acct.plan ?? startupStatus?.plan,
       });
       add(statusCard(summary, restarts.length ? ["", "recent restarts:", ...restarts] : [], status));
       return;

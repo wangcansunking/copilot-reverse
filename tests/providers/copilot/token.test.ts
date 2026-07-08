@@ -42,6 +42,20 @@ describe("CopilotTokenStore", () => {
     await expect(s.get()).rejects.toThrow(/login expired/i);
     expect(f).not.toHaveBeenCalled(); // never hits the network with a bogus credential
   });
+  it("parses the plan entitlement from the exchange (no extra call)", async () => {
+    const f = vi.fn(async () => json({ token: "cop", expires_at: 9_999_999_999, sku: "copilot_enterprise_seat_quota", chat_enabled: true, individual: false }));
+    const s = new CopilotTokenStore("gho", f as unknown as typeof fetch);
+    expect(s.getEntitlement()).toBeUndefined();       // nothing until the first exchange
+    await s.get();
+    expect(s.getEntitlement()).toEqual({ sku: "copilot_enterprise_seat_quota", chatEnabled: true, individual: false });
+    expect(f).toHaveBeenCalledTimes(1);               // entitlement rode along on the token call
+  });
+  it("leaves the entitlement undefined when the exchange omits a sku", async () => {
+    const f = vi.fn(async () => json({ token: "cop", expires_at: 9_999_999_999 }));
+    const s = new CopilotTokenStore("gho", f as unknown as typeof fetch);
+    await s.get();
+    expect(s.getEntitlement()).toBeUndefined();
+  });
 });
 
 describe("isCopilotTokenValid", () => {

@@ -16,6 +16,11 @@ export interface StatusInputs {
   webSearch: WebSearchBackend; // resolved active backend (copilot | webiq | unavailable)
   worker: WorkerState;
   clients: { claude: boolean; codex: boolean };
+  // Optional account facts folded into the GitHub line when present. `identity` is the pre-formatted
+  // "Name (login)" (or just the login); `plan` is the friendly Copilot plan label (from sku). Both are
+  // best-effort — absent when the lookups fail or before they resolve, and the card omits them cleanly.
+  identity?: string;
+  plan?: string;
 }
 
 export interface StatusSummary {
@@ -23,6 +28,8 @@ export interface StatusSummary {
   webSearch: WebSearchState;
   worker: WorkerState;
   clients: { claude: boolean; codex: boolean };
+  identity?: string;
+  plan?: string;
 }
 
 export function githubLoginState(hasToken: boolean, tokenValid: boolean): GithubLoginState {
@@ -36,5 +43,9 @@ export function summarizeStatus(i: StatusInputs): StatusSummary {
     webSearch: i.webSearch,
     worker: i.worker,
     clients: i.clients,
+    // Identity/plan only make sense when actually connected — an expired/signed-out token shouldn't
+    // show a stale name. Guard here so callers can pass them unconditionally.
+    ...(i.hasToken && i.tokenValid && i.identity ? { identity: i.identity } : {}),
+    ...(i.hasToken && i.tokenValid && i.plan ? { plan: i.plan } : {}),
   };
 }
