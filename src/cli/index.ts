@@ -21,6 +21,8 @@ import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/tok
 import { fetchGithubUser, skuLabel, formatIdentity } from "../providers/copilot/account.js";
 import { fetchCopilotModels, fetchModelLimits } from "../providers/copilot/models.js";
 import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
+import { installSkill as installSkillFile } from "../tui/skills/install.js";
+import type { SkillEntry } from "../tui/skills/catalog.js";
 import { readClientStatus } from "../tui/setup/status.js";
 import { summarizeStatus } from "../tui/status-summary.js";
 import { applyCodexToml } from "../tui/setup/codex-toml.js";
@@ -269,6 +271,8 @@ async function launchTui(): Promise<void> {
       onChat,
       loadModels,
       setup,
+      // Install a bundled agent skill into ~/.claude/skills (global) or ./.claude/skills (project).
+      installSkill: async (scope: Scope, entry: SkillEntry) => installSkillFile(scope, entry),
       info: {
         openai: openaiBase,
         anthropic: anthropicBase,

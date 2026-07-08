@@ -266,6 +266,40 @@ describe("TUI: /status command shows the live status card", () => {
   });
 });
 
+describe("TUI: /setup-skill installs a bundled skill", () => {
+  it("opens the picker, installs the chosen skill at the chosen scope, and shows a success card", async () => {
+    const calls: Array<{ scope: string; name: string }> = [];
+    const installSkill = vi.fn(async (scope: any, entry: any) => {
+      calls.push({ scope, name: entry.name });
+      return { path: `/home/.claude/skills/${entry.name}`, changed: ["SKILL.md"] };
+    });
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" installSkill={installSkill} />);
+    await tick();
+    stdin.write("/setup-skill");
+    await tick();
+    stdin.write("\r");              // run the command -> opens the picker
+    await tick(60);
+    expect(lastFrame() ?? "").toMatch(/install skill/);
+    expect(lastFrame() ?? "").toMatch(/choose a skill/);
+    stdin.write("\r");             // pick the first (only) catalog skill -> scope step
+    await tick(60);
+    expect(lastFrame() ?? "").toMatch(/choose scope/);
+    stdin.write("\r");            // first scope = global -> install
+    await tick(80);
+    expect(installSkill).toHaveBeenCalledTimes(1);
+    expect(calls[0].scope).toBe("global");
+    expect(calls[0].name).toBe("analyze-session-create-issue");
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/installed/);
+    expect(f).toContain("SKILL.md");
+    stdin.write("x");            // dismiss the done screen -> success card
+    await tick(60);
+    const done = lastFrame() ?? "";
+    expect(done).toMatch(/install skill/);
+    expect(done).toContain("/home/.claude/skills/analyze-session-create-issue");
+  });
+});
+
 describe("TUI: startup status card", () => {
   it("renders the GitHub/web-search/worker overview on startup", () => {
     const startupStatus = { github: "connected" as const, webSearch: "webiq" as const, worker: "ready" as const, clients: { claude: true, codex: false } };
