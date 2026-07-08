@@ -7,6 +7,8 @@ import { ModelScreen } from "./screens/model.js";
 import { ConfigScreen, type ConfigInfo } from "./screens/config.js";
 import { WebIqKeyScreen } from "./screens/webiq-key.js";
 import { NetworkScreen, type NetworkInfo, type NetworkAction } from "./screens/network.js";
+import { SkillScreen } from "./screens/skill.js";
+import type { SkillEntry } from "./skills/catalog.js";
 import { summarizeStatus, githubLoginState, type StatusSummary, type GithubLoginState } from "./status-summary.js";
 import { remoteConfigBlocks } from "./setup/remote-config.js";
 import type { Scope, ApplyResult } from "./setup/apply.js";
@@ -25,7 +27,7 @@ type Entry =
   | { type: "metrics"; agg: Aggregate; day: Aggregate; errors: string[] }
   | { type: "help"; commands: CommandHint[] };
 
-type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | { kind: "webiq-key" } | { kind: "network" } | null;
+type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | { kind: "webiq-key" } | { kind: "network" } | { kind: "skill" } | null;
 
 const stateColor: Record<WorkerState, string> = {
   ready: theme.ready, starting: theme.starting, crashed: theme.crashed, unhealthy: theme.unhealthy,
@@ -83,6 +85,9 @@ export interface AppProps {
   onChat?: (text: string, print: (line: string) => void, model?: string, abort?: AbortController) => Promise<void>;
   loadModels?: () => Promise<string[]>;
   setup?: { apply: (client: SetupClient, scope: Scope, model: string) => Promise<ApplyResult> };
+  // Install a bundled agent skill into a client's skills dir. Optional → the /setup-skill surface is
+  // hidden when a host doesn't wire it (the command falls through to its stub message).
+  installSkill?: (scope: Scope, entry: SkillEntry) => Promise<ApplyResult>;
   info?: ConfigInfo;
   onModelChange?: (model: string) => void;
   pickModelOnStart?: boolean;
@@ -220,7 +225,7 @@ function ClientBadge({ name, status }: { name: string; status: { user: boolean; 
 export function App({
   registry, title, workerState = "starting", initialModel = "—",
   statusSource, metricsSource, readStatus, modelLimits, onChat,
-  loadModels, setup, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, networkInfo, setAccessMode, rotateKey, clientModels, startupStatus, githubStatus, changeBanner, onChangeSeen,
+  loadModels, setup, installSkill, info, onModelChange, pickModelOnStart, login, enableWebiq, disableWebiq, webSearchBackend, networkInfo, setAccessMode, rotateKey, clientModels, startupStatus, githubStatus, changeBanner, onChangeSeen,
 }: AppProps) {
   const cmds: CommandHint[] = registry.list().map((c) => ({ name: c.name, describe: c.describe }));
   const [entries, setEntries] = useState<Entry[]>(() => [
@@ -342,6 +347,7 @@ export function App({
       setScreen({ kind: "setup", client: t === "/setup-claude" ? "claude" : "codex" });
       return;
     }
+    if (t === "/setup-skill" && installSkill) { setScreen({ kind: "skill" }); return; }
     if (line.startsWith("/")) {
       if (t === "/help") { add({ type: "help", commands: cmds }); return; }
       const out = await registry.run(line);
@@ -464,6 +470,22 @@ export function App({
       }
     };
     body = <NetworkScreen info={net} onAction={onNet} />;
+  } else if (screen?.kind === "skill" && installSkill) {
+    body = (
+      <SkillScreen
+        install={(scope, entry) => installSkill(scope, entry)}
+        onDone={(result, entry, scope) => {
+          setScreen(null);
+          add({ type: "card", title: "install skill", tone: "ok", lines: [
+            `✓ ${entry.title}  (${scope})`,
+            `wrote ${result.path}`,
+            `files: ${result.changed.join(", ") || "(already up to date)"}`,
+            "Claude Code discovers it on its next launch.",
+          ] });
+        }}
+        onCancel={() => { setScreen(null); add({ type: "system", text: "skill install cancelled" }); }}
+      />
+    );
   } else {
     body = <Repl onSubmit={handle} commands={cmds} />;
   }
