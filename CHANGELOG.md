@@ -1,3 +1,7 @@
+## v0.17.0 — 2026-07-08
+
+feat(skills): add `/setup-skill` — install a bundled agent skill into Claude Code (`~/.claude/skills/` global or `./.claude/skills/` project) via an interactive picker. Ships one curated skill, `analyze-session-create-issue`, which walks the agent through turning a session into a well-formed GitHub issue. Installs are idempotent and non-destructive to other skills.
+
 ## v0.16.3 — 2026-07-03
 
 Fix the 413 that returns on screenshot-heavy sessions with a large conversation (issue #52 follow-up). The 413 is on the WHOLE request body, but context editing budgeted only image bytes against a fixed 3.5MB cap — so a ~700k-token transcript (~2.7MB of text) plus 3 kept screenshots (~3.15MB) still exceeded Copilot's 5 MiB gateway wall. The image allowance is now DYNAMIC: `GATEWAY_ENTITY_LIMIT (5 MiB) − SAFETY_MARGIN − nonImageBytes`, capped by the fixed budget for the common small-text case. Big text automatically clears more screenshots (700k text → keep 1 image; 900k text → keep 0), keeping the total body under the wall for any text size. Adds a reactive fallback: if the gateway STILL returns 413, force-clear every screenshot and retry once before surfacing the error (both the streaming and non-streaming Anthropic paths). New unit tests (dynamic budget across text sizes, `forceClearAllScreenshots`, `is413Error`, and end-to-end reactive-retry through the Express app for both stream and non-stream) + an http-e2e assertion that big-text + screenshots fits under 5 MiB.

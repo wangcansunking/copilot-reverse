@@ -2,6 +2,14 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.17.0",
+    "date": "2026-07-08",
+    "summary": "feat(skills): add `/setup-skill` — install a bundled agent skill into Claude Code (`~/.claude/skills/` global or `./.claude/skills/` project) via an interactive picker. Ships one curated skill, `analyze-session-create-issue`, which walks the agent through turning a session into a well-formed GitHub issue. Installs are idempotent and non-destructive to other skills.",
+    "summaries": [
+      "feat(skills): add `/setup-skill` — install a bundled agent skill into Claude Code (`~/.claude/skills/` global or `./.claude/skills/` project) via an interactive picker. Ships one curated skill, `analyze-session-create-issue`, which walks the agent through turning a session into a well-formed GitHub issue. Installs are idempotent and non-destructive to other skills."
+    ]
+  },
+  {
     "version": "0.16.3",
     "date": "2026-07-03",
     "summary": "Fix the 413 that returns on screenshot-heavy sessions with a large conversation (issue #52 follow-up). The 413 is on the WHOLE request body, but context editing budgeted only image bytes against a fixed 3.5MB cap — so a ~700k-token transcript (~2.7MB of text) plus 3 kept screenshots (~3.15MB) still exceeded Copilot's 5 MiB gateway wall. The image allowance is now DYNAMIC: `GATEWAY_ENTITY_LIMIT (5 MiB) − SAFETY_MARGIN − nonImageBytes`, capped by the fixed budget for the common small-text case. Big text automatically clears more screenshots (700k text → keep 1 image; 900k text → keep 0), keeping the total body under the wall for any text size. Adds a reactive fallback: if the gateway STILL returns 413, force-clear every screenshot and retry once before surfacing the error (both the streaming and non-streaming Anthropic paths). New unit tests (dynamic budget across text sizes, `forceClearAllScreenshots`, `is413Error`, and end-to-end reactive-retry through the Express app for both stream and non-stream) + an http-e2e assertion that big-text + screenshots fits under 5 MiB.",
@@ -79,17 +87,6 @@ export const APP_CHANGES: ChangeEntry[] = [
     "summary": "feat(reasoning): extended thinking + reasoning-effort passthrough. A `thinking`-enabled Anthropic request (or an OpenAI `reasoning_effort`) now drives the model's reasoning, and the chain-of-thought streams back as a native Anthropic thinking block (thinking_delta + signature_delta) ahead of the answer — so Claude Code renders its thinking panel through the proxy. The signed continuation token (reasoning_opaque) round-trips across tool-call turns to preserve reasoning context. Effort is also forwarded on the /responses path for gpt-5 models. Verified end-to-end against live Copilot.",
     "summaries": [
       "feat(reasoning): extended thinking + reasoning-effort passthrough. A `thinking`-enabled Anthropic request (or an OpenAI `reasoning_effort`) now drives the model's reasoning, and the chain-of-thought streams back as a native Anthropic thinking block (thinking_delta + signature_delta) ahead of the answer — so Claude Code renders its thinking panel through the proxy. The signed continuation token (reasoning_opaque) round-trips across tool-call turns to preserve reasoning context. Effort is also forwarded on the /responses path for gpt-5 models. Verified end-to-end against live Copilot."
-    ]
-  },
-  {
-    "version": "0.12.0",
-    "date": "2026-06-30",
-    "summary": "feat(tui): LAN switch now shows paste-ready remote client config (Claude + Codex)",
-    "summaries": [
-      "feat(tui): LAN switch now shows paste-ready remote client config (Claude + Codex)",
-      "Switching `/network` to LAN used to dump the URL + key and a one-line \"send it as `Authorization: Bearer`\" hint, leaving the user to hand-assemble each remote machine's config and guess which slot the key goes in. The LAN success card now renders **paste-ready config blocks** for both clients, with the key already in the correct place:",
-      "- **Claude** → `~/.claude/settings.json` `env` block (key in `ANTHROPIC_API_KEY`) - **Codex** → `~/.codex/config.toml` provider block (key in `experimental_bearer_token`)",
-      "Blocks are built by a new pure helper (`tui/setup/remote-config.ts`) that reuses the same `claudeCopilotReverseEnv` / codex-toml shape local `/setup` writes, so a remote config matches what local setup produces — only the LAN host + real key replace loopback + the local placeholder. Each block uses the model this machine has pinned for that client (falling back to sensible defaults) and its real context window when known (Claude `CLAUDE_CODE_AUTO_COMPACT_WINDOW`, Codex `model_context_window`), so the remote client sizes context like the local one instead of assuming a default ~200K window for a 1M model. If the LAN IPv4 can't be determined, the card falls back to a `<this-machine-LAN-IP>` placeholder instead of crashing."
     ]
   }
 ];
