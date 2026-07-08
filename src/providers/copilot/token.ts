@@ -1,5 +1,8 @@
 const COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token";
-interface CopilotTokenResponse { token: string; expires_at: number }
+// The exchange returns the Copilot token plus a bag of entitlement flags. We only type the fields we
+// surface (sku/chat_enabled/individual); the rest are ignored.
+interface CopilotTokenResponse { token: string; expires_at: number; sku?: string; chat_enabled?: boolean; individual?: boolean }
+import type { CopilotEntitlement } from "./account.js";
 
 // Thrown when the stored GitHub token can no longer be exchanged for a Copilot token
 // (expired / revoked login). Carries an actionable message.
@@ -16,6 +19,10 @@ export class CopilotAuthError extends Error {
 
 export class CopilotTokenStore {
   private cached?: { token: string; expiresAtMs: number };
+  // The entitlement (plan sku, chat flag) parsed from the most recent successful exchange. Read-only
+  // account info the status card surfaces; populated as a side effect of get(), so it costs no extra
+  // network call. Undefined until the first successful exchange.
+  private entitlement?: CopilotEntitlement;
   private readGhToken: () => string | null;
   // Accepts either a fixed token string or a provider that is re-read on each exchange. The provider
   // form matters when the GitHub token can change or be momentarily unreadable: a captured-once null
@@ -39,8 +46,14 @@ export class CopilotTokenStore {
     if (!res.ok) throw new CopilotAuthError(res.status);
     const data = (await res.json()) as CopilotTokenResponse;
     this.cached = { token: data.token, expiresAtMs: data.expires_at * 1000 };
+    if (data.sku) this.entitlement = { sku: data.sku, chatEnabled: data.chat_enabled ?? false, individual: data.individual ?? false };
     return data.token;
   }
+
+  // The plan entitlement from the last successful exchange, or undefined if none has succeeded yet.
+  // Does not trigger a fetch — callers that need it fresh should await get() first (a valid login makes
+  // that a cached, round-trip-free call).
+  getEntitlement(): CopilotEntitlement | undefined { return this.entitlement; }
 }
 
 // True if the stored GitHub token still exchanges for a Copilot token. A thin wrapper over

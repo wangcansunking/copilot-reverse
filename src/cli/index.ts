@@ -18,6 +18,7 @@ import { readChatModel, writeChatModel, shouldShowChange, markChangeShown } from
 import { readAccessMode, readAccessKey, setAccessMode as persistAccessMode, rotateAccessKey } from "../shared/network.js";
 import type { NetworkInfo } from "../tui/screens/network.js";
 import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
+import { fetchGithubUser, skuLabel, formatIdentity } from "../providers/copilot/account.js";
 import { fetchCopilotModels, fetchModelLimits } from "../providers/copilot/models.js";
 import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
 import { readClientStatus } from "../tui/setup/status.js";
@@ -153,6 +154,7 @@ async function launchTui(): Promise<void> {
     // GitHub token (the store re-reads the token on each exchange, so a new instance isn't required —
     // but resetting clears any Copilot token cached against the old login).
     tokenStore = new CopilotTokenStore(() => readGhToken(dataDir()));
+    cachedIdentity = undefined; // a new login may be a different user — re-resolve the username
     await client.restart().catch(() => {});
     return ["GitHub authorization complete — worker restarting with the new token"];
   };
@@ -170,6 +172,23 @@ async function launchTui(): Promise<void> {
   };
   // Pull each model's real context window in the background too, in case the picker never opens.
   void tokenStore.get().then((t) => fetchModelLimits(t)).then((m) => Object.assign(modelLimits, m)).catch(() => {});
+
+  // Account facts for the status card: who's logged in (GitHub /user) + their Copilot plan (rides along
+  // on the token exchange, so getEntitlement() is free once get() has run). The username is cached
+  // per-process (it doesn't change within a login); a /login re-auth clears it so the next read
+  // re-resolves against the new token. Both are best-effort — any failure yields empty fields and the
+  // card simply omits them.
+  let cachedIdentity: string | undefined;
+  const resolveAccount = async (): Promise<{ identity?: string; plan?: string }> => {
+    let plan: string | undefined;
+    try { await tokenStore.get(); const ent = tokenStore.getEntitlement(); if (ent) plan = skuLabel(ent.sku); }
+    catch { /* not logged in / transient — omit plan */ }
+    if (cachedIdentity === undefined) {
+      const gh = readGhToken(dataDir());
+      if (gh) { const user = await fetchGithubUser(gh); if (user) cachedIdentity = formatIdentity(user); }
+    }
+    return { identity: cachedIdentity, plan };
+  };
 
   // Apply a client's config (shared by the /setup wizard and the assistant's setup_* tools).
   // For Claude Code we also write the selected model's real context window so the client doesn't
@@ -224,14 +243,18 @@ async function launchTui(): Promise<void> {
     : undefined;
 
   // Startup overview. The token was already validated above (re-auth happens before we get here), so
-  // GitHub is connected; web search readiness and configured clients are read from disk.
+  // GitHub is connected; web search readiness and configured clients are read from disk. Resolve the
+  // account (username + plan) too — best-effort, and the token is already cached so it's cheap.
   const clientStatus = readClientStatus();
+  const account = await resolveAccount().catch(() => ({} as { identity?: string; plan?: string }));
   const startupStatus = summarizeStatus({
     hasToken: Boolean(readGhToken(dataDir())),
     tokenValid: true,
     webSearch: resolveWebSearchBackend(readWebSearchMode(dataDir()), Boolean(readWebIqKey(dataDir()))),
     worker: "ready",
     clients: { claude: clientStatus.claude.user || clientStatus.claude.project, codex: clientStatus.codex.user || clientStatus.codex.project },
+    identity: account.identity,
+    plan: account.plan,
   });
 
   app = render(
@@ -294,6 +317,8 @@ async function launchTui(): Promise<void> {
         if (!token) return "signed-out";
         return (await isCopilotTokenValid(token)) ? "connected" : "expired";
       },
+      // Fresh username + Copilot plan for the live /status card (best-effort).
+      accountInfo: resolveAccount,
     }),
   );
 }

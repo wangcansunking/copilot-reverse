@@ -276,6 +276,29 @@ describe("TUI: startup status card", () => {
     expect(f).toMatch(/web search.*via WebIQ/);
     expect(f).toMatch(/worker.*ready/);
   });
+  it("folds the username + Copilot plan into the GitHub line when present", () => {
+    const startupStatus = { github: "connected" as const, webSearch: "webiq" as const, worker: "ready" as const,
+      clients: { claude: true, codex: false }, identity: "Can Wang (canwa_microsoft)", plan: "Copilot Enterprise" };
+    const { lastFrame } = render(<App registry={reg()} title="m" startupStatus={startupStatus} />);
+    const f = lastFrame() ?? "";
+    expect(f).toMatch(/GitHub login.*connected.*canwa_microsoft.*Copilot Enterprise/);
+  });
+});
+
+describe("TUI: /status folds in identity + plan from accountInfo", () => {
+  it("shows the fresh username + plan on the live status card", async () => {
+    const accountInfo = vi.fn(async () => ({ identity: "Can Wang (canwa_microsoft)", plan: "Copilot Enterprise" }));
+    const { stdin, lastFrame } = render(
+      <App registry={reg()} title="m" githubStatus={async () => "connected"} webSearchBackend={() => "copilot"} accountInfo={accountInfo} />,
+    );
+    await tick();
+    stdin.write("/status");
+    await tick();
+    stdin.write("\r");
+    await tick(80);
+    expect(accountInfo).toHaveBeenCalled();
+    expect(lastFrame() ?? "").toMatch(/GitHub login.*connected.*canwa_microsoft.*Copilot Enterprise/);
+  });
 });
 
 describe("TUI: HUD web search indicator", () => {
