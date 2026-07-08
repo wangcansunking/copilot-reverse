@@ -65,6 +65,12 @@ describe("slash commands", () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/setup-claude");
     expect(out.join("\n")).toMatch(/ANTHROPIC_BASE_URL=http:\/\/127\.0\.0\.1:7891\/anthropic/);
   });
+  it("/setup-skill is recognized and listed in /help + autocomplete", async () => {
+    const reg = buildRegistry(ctx() as any, endpoint);
+    expect((await reg.run("/setup-skill")).join("\n")).not.toMatch(/unknown/i); // recognized (stub)
+    expect((await reg.run("/help")).join("\n")).toMatch(/\/setup-skill/);        // visible in help
+    expect(reg.list().map((c) => c.name)).toContain("/setup-skill");             // in autocomplete
+  });
   it("/metrics shows empty-state when no requests", async () => {
     const out = await buildRegistry(ctx() as any, endpoint).run("/metrics");
     expect(out.join("\n")).toMatch(/no requests yet/i);
