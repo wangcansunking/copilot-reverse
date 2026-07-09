@@ -7,6 +7,7 @@ import { EventBus } from "./events.js";
 import { createControlApp } from "./api.js";
 import { defaultConfig, workerBindHost } from "../shared/config.js";
 import { dataDir, dbPath } from "../shared/paths.js";
+import { ensureProfileSeeded } from "../shared/profile.js";
 import { readGhToken } from "../shared/creds.js";
 import { readAccessMode } from "../shared/network.js";
 import { probeGithubAuth } from "../providers/copilot/token.js";
@@ -19,6 +20,9 @@ import { readWebIqKey, readWebSearchMode, resolveWebSearchBackend } from "../sha
 import type { WorkerState, DoctorCheck } from "../shared/control-types.js";
 
 export function startSupervisor(): { stop: () => void } {
+  // Idempotent profile seed in case the supervisor is spawned standalone (the argv guard below) rather
+  // than in-process from the TUI — guarantees the data dir exists & is seeded before any read.
+  ensureProfileSeeded();
   const config = defaultConfig();
   mkdirSync(dataDir(), { recursive: true });
   const db = openDb(dbPath());

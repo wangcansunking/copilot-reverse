@@ -34,6 +34,22 @@ Requires Node >=20.
 - Install / verify: `npm install && npm test && npm run build`
 - Run the app locally: `npm run dev` (tsx on `src/`, no build needed)
 - Tests: `npm test` (vitest, includes e2e) · `npm run test:e2e` (e2e only)
+
+### Always run the dev profile, never prod — unless the user asks
+
+**When you (the agent) need to launch the app, start ONLY the dev profile. Do NOT start the prod
+instance unless the user explicitly asks for prod.** A prod daemon is usually already running on the
+user's machine (ports 7890/7891); starting another prod instance fights it for those ports and triggers
+EADDRINUSE crash loops.
+
+- `npm run dev` is already wired to the **dev profile** (`COPILOT_REVERSE_PROFILE=dev`): it runs on
+  ports **7990/7991** with its own data dir `~/.copilot-reverse-dev`, so it coexists with a running prod
+  instance instead of colliding. On first boot it seeds credentials from prod, so no re-`/login`.
+- The prod profile is `copilot-reverse` (the installed binary) or `npm run dev:prod-profile` — reserve
+  these for when the user explicitly wants prod.
+- **Clean up after yourself:** if you spawn a dev instance for a check, kill it (supervisor + its forked
+  worker) when done. Never kill the user's prod daemon (7890/7891) without being asked.
+
 - **Every change must keep the full e2e suite green.** After a change, re-run and update [`e2e/RESULTS.md`](e2e/RESULTS.md). Case catalog: [`e2e/cases.md`](e2e/cases.md).
 - **Prefer adding a docker e2e case for every change.** Two harnesses, two jobs:
   - **HTTP edge matrix** (`e2e/docker/http-e2e.mjs`) — hermetic, runs on a dummy token, drives the real worker+supervisor over HTTP. Add an assertion here when a change touches request/response, metrics, or supervision so regressions are caught with no quota spent. This is the always-on PR gate.
@@ -52,3 +68,7 @@ Requires Node >=20.
 - **Worker** (:7891) — OpenAI `/openai/chat/completions` + Anthropic `/anthropic/v1/messages` → Copilot, with tool-use translation both ways.
 
 Data dir: `~/.copilot-reverse`.
+
+Ports and the data dir are **per profile** (`COPILOT_REVERSE_PROFILE`): the default/prod profile uses
+7890/7891 + `~/.copilot-reverse`; the dev profile (what `npm run dev` runs) uses 7990/7991 +
+`~/.copilot-reverse-dev`. See "Always run the dev profile" above.
