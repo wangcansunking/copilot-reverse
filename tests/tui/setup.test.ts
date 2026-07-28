@@ -11,6 +11,26 @@ describe("withClaude1mSuffix", () => {
     expect(withClaude1mSuffix("gpt-4o")).toBe("gpt-4o");
     expect(withClaude1mSuffix("claude-opus-4-8[1m]", 1_000_000)).toBe("claude-opus-4-8[1m]");
   });
+  // Regression: the 1M decision must follow the REAL context window we were handed, not a hardcoded
+  // list. A freshly-shipped 1M claude model (claude-opus-5) whose window is 1M gets [1m] even though it
+  // predates any list edit; a brand-new family (claude-fable-5) does too. Before the fix, claude ids
+  // ignored contextWindow and consulted DEFAULT_ONE_M_MODELS, so opus-5 shipped WITHOUT [1m] → Claude
+  // Code sized it at 200K instead of 1M.
+  it("badges any claude model 1M from its real window, even one not in the default set", () => {
+    expect(withClaude1mSuffix("claude-opus-5", 1_000_000)).toBe("claude-opus-5[1m]");
+    expect(withClaude1mSuffix("claude-fable-5", 1_000_000)).toBe("claude-fable-5[1m]");
+  });
+  // The inverse: a live sub-1M window must strip a badge the hardcoded default set would otherwise add,
+  // so data wins over the fallback in both directions.
+  it("omits [1m] when the live window is sub-1M, even for a default-set member", () => {
+    expect(withClaude1mSuffix("claude-opus-4.8", 200_000)).toBe("claude-opus-4-8");
+  });
+  // When no window is known (discovery not resolved / no token) it falls back to the default set, so a
+  // known 1M model still badges rather than briefly sizing at 200K.
+  it("falls back to the default set when the window is unknown", () => {
+    expect(withClaude1mSuffix("claude-opus-4.8")).toBe("claude-opus-4-8[1m]");
+    expect(withClaude1mSuffix("claude-opus-5")).toBe("claude-opus-5[1m]");
+  });
 });
 
 describe("claudeCopilotReverseEnv", () => {

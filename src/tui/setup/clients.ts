@@ -1,6 +1,6 @@
 export interface Endpoint { host: string; port: number; apiKey: string }
 export interface ClientSetup { env: Record<string, string>; instructions: string }
-import { toCanonical } from "../../core/model-canonical.js";
+import { toCanonical, stripOneM } from "../../core/model-canonical.js";
 
 export function claudeCodeConfig(e: Endpoint): ClientSetup {
   const base = `http://${e.host}:${e.port}/anthropic`;
@@ -14,13 +14,19 @@ export const ONE_M_SUFFIX = "[1m]";
 // Claude Code switches to its 1M window only when ANTHROPIC_MODEL ends with `[1m]`, and only matches
 // the model to its native picker entry when the id is the DASHED canonical form it knows
 // (claude-opus-4-8, not Copilot's dotted claude-opus-4.8). Route the default model through toCanonical
-// so it's both dashed and 1M-badged for the known families; for non-claude ids keep the legacy
-// context-window suffix. The proxy strips [1m] + fuzzy-maps back to Copilot before forwarding.
+// so it's both dashed and 1M-badged; for non-claude ids keep the legacy context-window suffix. The
+// proxy strips [1m] + fuzzy-maps back to Copilot before forwarding.
+//
+// The 1M decision is driven by the REAL context window we were handed (fetchModelLimits), in the same
+// ~800K..1.5M band agent-maestro uses, so a newly-shipped 1M model (claude-opus-5, or any future
+// family) gets [1m] with zero list edits. Only when the window is unknown (discovery not yet resolved /
+// no token) do we fall back to toCanonical's hardcoded DEFAULT_ONE_M_MODELS, so known models still badge.
 export function withClaude1mSuffix(model: string, contextWindow?: number): string {
-  if (model.startsWith("claude-")) return toCanonical(model).id;
-  return contextWindow && contextWindow > 800_000 && contextWindow < 1_500_000 && !model.endsWith(ONE_M_SUFFIX)
-    ? `${model}${ONE_M_SUFFIX}`
-    : model;
+  const inBand = contextWindow != null && contextWindow > 800_000 && contextWindow < 1_500_000;
+  // Strip any suffix the caller already applied so we never double-append when re-canonicalizing.
+  const bare = stripOneM(model);
+  if (bare.startsWith("claude-")) return toCanonical(bare, contextWindow != null ? () => inBand : undefined).id;
+  return inBand && !model.endsWith(ONE_M_SUFFIX) ? `${model}${ONE_M_SUFFIX}` : model;
 }
 
 // The full env copilot-reverse writes into Claude Code's settings.json. Beyond the endpoint, it tells
