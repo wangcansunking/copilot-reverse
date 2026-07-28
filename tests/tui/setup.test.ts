@@ -67,6 +67,15 @@ describe("claudeCopilotReverseEnv", () => {  it("writes the canonical dashed [1m
     expect(env.ANTHROPIC_MODEL).toBe("gpt-4o");
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
   });
+  // Regression: setup used to write CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 alongside
+  // CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1. The former gates the latter — Claude Code's
+  // discovery fetch bails when traffic is "essential only", so gateway-models.json is never written
+  // and the /model picker silently shows only its built-in models. The two must never coexist.
+  it("never writes the traffic switch that would defeat gateway model discovery", () => {
+    const env = claudeCopilotReverseEnv("http://127.0.0.1:7891", "k", "claude-opus-5", 1_000_000);
+    expect(env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY).toBe("1");
+    expect(env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined();
+  });
 });
 
 describe("client setup", () => {

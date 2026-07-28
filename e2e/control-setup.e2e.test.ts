@@ -53,10 +53,23 @@ describe("E2E: setup lifecycle (Claude + Codex)", () => {
     // "Opus 4.8 (1M context)" in the picker/status line instead of the raw id.
     expect(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("claude-opus-4-8[1m]");
     expect(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME).toBe("Opus 4.8 (1M context)");
+    // Discovery must survive: the traffic switch that silently disables it is stripped, not written.
+    expect(settings.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY).toBe("1");
+    expect(settings.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined();
   });
 
-  it("EP-25 setup-codex writes a native config.toml with the model context window", () => {
-    const home = mkdtempSync(join(tmpdir(), "e2e-codex-"));
+  it("EP-24b re-running setup heals an install still carrying the discovery-killing traffic flag", () => {
+    const cwd = mkdtempSync(join(tmpdir(), "e2e-heal-"));
+    // an older setup left the flag behind
+    applyClaude("project", { CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1" }, { cwd });
+    applyClaude("project", claudeCopilotReverseEnv("http://127.0.0.1:7891", "k", "claude-opus-5", 1_000_000), { cwd });
+    const settings = JSON.parse(readFileSync(join(cwd, ".claude", "settings.json"), "utf8"));
+    expect(settings.env.CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC).toBeUndefined();
+    expect(settings.env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY).toBe("1");
+    expect(settings.env.ANTHROPIC_MODEL).toBe("claude-opus-5[1m]");
+  });
+
+  it("EP-25 setup-codex writes a native config.toml with the model context window", () => {    const home = mkdtempSync(join(tmpdir(), "e2e-codex-"));
     applyCodexToml({ home, baseUrl: "http://127.0.0.1:7891/v1", model: "gpt-5.5", contextWindow: 1_050_000 });
     const toml = readFileSync(codexTomlPath(home), "utf8");
     expect(toml).toContain('model = "gpt-5.5"');

@@ -75,8 +75,12 @@ export function claudeCopilotReverseEnv(base: string, apiKey: string, model: str
     // Friendly name + family alias for a model Claude Code's built-in table doesn't carry yet.
     ...claudeCustomModelEnv(model, contextWindow),
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80",
-    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     CLAUDE_CODE_ATTRIBUTION_HEADER: "0", // keep prompt caching working on a non-Anthropic gateway
+    // NOTE: we deliberately do NOT set CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC. It reads like a
+    // privacy win, but Claude Code gates gateway model discovery behind the same "essential traffic
+    // only" switch — with it set, the discovery fetch returns before writing
+    // ~/.claude/cache/gateway-models.json, so the picker below never sees our models and silently
+    // falls back to Claude Code's built-in table. applyClaude strips it from older installs.
     // Populate Claude Code's /model picker from our /anthropic/v1/models so the user can switch
     // models natively. Coexists with ANTHROPIC_MODEL (which stays the 1M default — it does NOT lock
     // the picker). Claude Code >=2.1.129 only; older builds ignore it. Picker lists claude* ids.
