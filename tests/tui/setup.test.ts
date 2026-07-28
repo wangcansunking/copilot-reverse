@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { claudeCodeConfig, codexConfig, claudeCopilotReverseEnv, withClaude1mSuffix } from "../../src/tui/setup/clients.js";
+import { claudeCodeConfig, codexConfig, claudeCopilotReverseEnv, withClaude1mSuffix, claudeCustomModelEnv } from "../../src/tui/setup/clients.js";
 
 describe("withClaude1mSuffix", () => {
   it("maps a claude model to the dashed canonical id + [1m] so Claude Code's picker matches it", () => {
@@ -33,8 +33,28 @@ describe("withClaude1mSuffix", () => {
   });
 });
 
-describe("claudeCopilotReverseEnv", () => {
-  it("writes the canonical dashed [1m] model + window so Claude Code matches + uses 1M", () => {
+describe("claudeCustomModelEnv", () => {
+  // Claude Code shows a model missing from its built-in table as a raw id ("claude-opus-5[1m]"). The
+  // per-family custom-model trio gives it a friendly label + points the family alias at it.
+  it("declares name + alias for a 1M model the built-in table lacks", () => {
+    expect(claudeCustomModelEnv("claude-opus-5", 1_000_000)).toEqual({
+      ANTHROPIC_DEFAULT_OPUS_MODEL: "claude-opus-5[1m]",
+      ANTHROPIC_DEFAULT_OPUS_MODEL_NAME: "Opus 5 (1M context)",
+      ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION: "Opus 5 · 1M context · via copilot-reverse",
+    });
+  });
+  it("uses the model's own family, and omits the 1M label for a sub-1M window", () => {
+    const env = claudeCustomModelEnv("claude-sonnet-4.5", 200_000);
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("claude-sonnet-4-5");
+    expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME).toBe("Sonnet 4.5");
+  });
+  it("leaves non-claude ids and unknown families alone (no env to write)", () => {
+    expect(claudeCustomModelEnv("gpt-4o", 1_000_000)).toEqual({});
+    expect(claudeCustomModelEnv("claude-mythos-preview", 1_000_000)).toEqual({});
+  });
+});
+
+describe("claudeCopilotReverseEnv", () => {  it("writes the canonical dashed [1m] model + window so Claude Code matches + uses 1M", () => {
     const env = claudeCopilotReverseEnv("http://127.0.0.1:7891", "k", "claude-opus-4.8", 1_000_000);
     expect(env.ANTHROPIC_MODEL).toBe("claude-opus-4-8[1m]");
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");

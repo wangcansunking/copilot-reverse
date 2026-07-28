@@ -9,11 +9,17 @@ export interface PlaceOpts { home?: string; cwd?: string }
 // The env keys copilot-reverse writes for each client — so reset knows exactly what to remove.
 // ANTHROPIC_AUTH_TOKEN isn't one we write, but reset strips it too: if it lingers alongside our
 // API key, Claude Code warns "both set", so a clean reset should clear the conflict.
+// The ANTHROPIC_DEFAULT_<FAMILY>_MODEL* trio is what gives a model Claude Code doesn't know natively a
+// friendly picker/status-line name (see claudeCustomModelEnv). We only ever write ONE family's trio, but
+// reset clears all of them so switching families (opus -> sonnet) can't strand a stale alias.
 export const CLAUDE_ENV_KEYS = [
   "ANTHROPIC_BASE_URL", "ANTHROPIC_API_KEY", "ANTHROPIC_MODEL", "ANTHROPIC_AUTH_TOKEN",
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE",
   "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "CLAUDE_CODE_ATTRIBUTION_HEADER",
   "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY",
+  ...["OPUS", "SONNET", "HAIKU", "FABLE"].flatMap((f) => [
+    `ANTHROPIC_DEFAULT_${f}_MODEL`, `ANTHROPIC_DEFAULT_${f}_MODEL_NAME`, `ANTHROPIC_DEFAULT_${f}_MODEL_DESCRIPTION`,
+  ]),
 ];
 export const CODEX_ENV_KEYS = ["OPENAI_BASE_URL", "OPENAI_API_KEY", "OPENAI_MODEL"];
 

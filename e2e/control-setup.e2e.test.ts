@@ -49,6 +49,10 @@ describe("E2E: setup lifecycle (Claude + Codex)", () => {
     // Dashed canonical id (not Copilot's dotted claude-opus-4.8[1m]) so Claude Code's picker matches it.
     expect(settings.env.ANTHROPIC_MODEL).toBe("claude-opus-4-8[1m]");
     expect(settings.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
+    // Friendly name + family alias, so a model Claude Code's built-in table lacks still renders as
+    // "Opus 4.8 (1M context)" in the picker/status line instead of the raw id.
+    expect(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("claude-opus-4-8[1m]");
+    expect(settings.env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME).toBe("Opus 4.8 (1M context)");
   });
 
   it("EP-25 setup-codex writes a native config.toml with the model context window", () => {
@@ -67,6 +71,10 @@ describe("E2E: setup lifecycle (Claude + Codex)", () => {
     const settings = JSON.parse(readFileSync(join(cwd, ".claude", "settings.json"), "utf8"));
     expect(settings.env?.ANTHROPIC_MODEL).toBeUndefined();
     expect(settings.env?.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBeUndefined();
+    // the custom-model trio must go too, or a stale alias outlives the reset
+    expect(settings.env?.ANTHROPIC_DEFAULT_OPUS_MODEL).toBeUndefined();
+    expect(settings.env?.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME).toBeUndefined();
+    expect(settings.env?.ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION).toBeUndefined();
   });
 });
 

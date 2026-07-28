@@ -29,6 +29,40 @@ export function withClaude1mSuffix(model: string, contextWindow?: number): strin
   return inBand && !model.endsWith(ONE_M_SUFFIX) ? `${model}${ONE_M_SUFFIX}` : model;
 }
 
+// Claude Code renders a model its BUILT-IN table doesn't know (one shipped after the CLI binary, e.g.
+// claude-opus-5) as a RAW id in the picker + status line — `claude-opus-5[1m]` instead of a friendly
+// `Opus 5 (1M context)`. Note this is DISPLAY ONLY: the 1M window itself comes from the `[1m]` suffix,
+// which Claude Code matches with a plain regex (`/\[1m\]/i`), so an unknown model still gets the full
+// 1M window — it just looks ugly.
+//
+// The supported escape hatch is the per-family custom-model env trio. Verified against the 2.1.216
+// binary: the picker entry is built as
+//   { value:"opus", label: ANTHROPIC_DEFAULT_OPUS_MODEL_NAME ?? <raw id>,
+//     description: ANTHROPIC_DEFAULT_OPUS_MODEL_DESCRIPTION ?? `Custom Opus model (1M context)` }
+// gated on a check that passes whenever ANTHROPIC_BASE_URL isn't api.anthropic.com — i.e. always,
+// through this proxy. Setting the trio also points the family ALIAS (`opus`, `sonnet`, …) at our model,
+// so `/model opus` selects it. `(1M context)` only lands in the description by default, so we fold it
+// into the label ourselves to match how built-in 1M models read in the status line.
+//
+// Only the families Claude Code exposes an alias for are eligible; anything else is left alone (it would
+// have no env to write). Returns {} for non-claude ids.
+const CLAUDE_ALIAS_FAMILIES = new Set(["opus", "sonnet", "haiku", "fable"]);
+
+export function claudeCustomModelEnv(model: string, contextWindow?: number): Record<string, string> {
+  const canonical = withClaude1mSuffix(model, contextWindow);
+  const bare = stripOneM(canonical);
+  const family = /^claude-([a-z]+)-/.exec(bare)?.[1];
+  if (!family || !CLAUDE_ALIAS_FAMILIES.has(family)) return {};
+  const prefix = `ANTHROPIC_DEFAULT_${family.toUpperCase()}_MODEL`;
+  const oneM = canonical.endsWith(ONE_M_SUFFIX);
+  const display = toCanonical(bare).display_name;
+  return {
+    [prefix]: canonical,
+    [`${prefix}_NAME`]: oneM ? `${display} (1M context)` : display,
+    [`${prefix}_DESCRIPTION`]: `${display}${oneM ? " · 1M context" : ""} · via copilot-reverse`,
+  };
+}
+
 // The full env copilot-reverse writes into Claude Code's settings.json. Beyond the endpoint, it tells
 // Claude Code the selected model's real context window (via the [1m] model suffix and
 // CLAUDE_CODE_AUTO_COMPACT_WINDOW) so the client stops assuming the default 200K. Mirrors agent-maestro.
@@ -38,6 +72,8 @@ export function claudeCopilotReverseEnv(base: string, apiKey: string, model: str
     ANTHROPIC_API_KEY: apiKey,
     ANTHROPIC_MODEL: withClaude1mSuffix(model, contextWindow),
     ...(contextWindow ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow) } : {}),
+    // Friendly name + family alias for a model Claude Code's built-in table doesn't carry yet.
+    ...claudeCustomModelEnv(model, contextWindow),
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80",
     CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
     CLAUDE_CODE_ATTRIBUTION_HEADER: "0", // keep prompt caching working on a non-Anthropic gateway
