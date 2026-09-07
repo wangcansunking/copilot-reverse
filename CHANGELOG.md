@@ -1,3 +1,7 @@
+## v0.22.0 — 2026-09-07
+
+Refresh Claude compatibility identities for the current model lineup and add an interactive `/claude-map` editor. Users can map Fable 5.1, Opus 5, Sonnet 5, and Haiku 4.5 to any live GPT backend, restore defaults, and keep unavailable choices safely persisted until their backend returns.
+
 ## v0.21.0 — 2026-08-05
 
 feat(models): add an opt-in `/claude-map` compatibility mode for GPT-only Copilot accounts.
