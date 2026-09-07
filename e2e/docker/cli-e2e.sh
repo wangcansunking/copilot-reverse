@@ -59,19 +59,49 @@ CODEX_LINE=$(echo "$CODEX_OUT" | tail -1)
 echo "  codex stdout: $CODEX_LINE"
 check "codex round-trips through /openai/responses" 'echo "$CODEX_OUT" | grep -q "CODEX_OK"' "codex $CODEX_VER replied: \`${CODEX_LINE}\`"
 
+# Establish one compatible current Claude identity before any Claude-specific case. If no default map
+# target is live, those cases SKIP rather than hard-coding an unavailable alias; plain GPT passthrough
+# remains covered independently by Codex and the [1m] case.
+MODELS=""
+for _ in $(seq 1 40); do
+  MODELS=$(curl -sf "http://127.0.0.1:$PORT/anthropic/v1/models")
+  echo "$MODELS" | jq -e '.data | length > 0' >/dev/null 2>&1 && break
+  sleep 0.25
+done
+printf '%s' "$MODELS" > /tmp/live-models.json
+MAP_PICK=$(node --input-type=module - <<'NODE'
+const { readFileSync } = await import("node:fs");
+const { CLAUDE_MODEL_ALIASES, CLAUDE_MODEL_DEFAULTS } = await import("/app/dist/core/claude-model-map.js");
+const models = JSON.parse(readFileSync("/tmp/live-models.json", "utf8"));
+const ids = new Set(models.data.map((m) => m.id));
+const alias = CLAUDE_MODEL_ALIASES.find((candidate) => ids.has(CLAUDE_MODEL_DEFAULTS[candidate]));
+if (alias) process.stdout.write(`${alias}|${CLAUDE_MODEL_DEFAULTS[alias]}`);
+NODE
+)
+MAP_ALIAS=""; MAP_BACKEND=""; MAP_ID=""
+if [ -n "$MAP_PICK" ]; then
+  MAP_ALIAS=${MAP_PICK%%|*}; MAP_BACKEND=${MAP_PICK#*|}
+  MAP_ID=$(echo "$MODELS" | jq -r --arg a "$MAP_ALIAS" '.data[] | select((.id|sub("\\[1m\\]$";""))==$a) | .id' | head -1)
+fi
+
 # --- 2) Claude via /anthropic/v1/messages -------------------------------------------------------
-note "claude -p -> /anthropic/v1/messages"
-CLAUDE_JSON=$(claude -p "Reply with exactly the token: CLAUDE_OK and nothing else." --output-format json 2>/tmp/claude.err)
-CLAUDE_TEXT=$(echo "$CLAUDE_JSON" | jq -r '.result // empty' 2>/dev/null)
-echo "  claude result: $CLAUDE_TEXT"
-check "claude round-trips through /anthropic/v1/messages" 'echo "$CLAUDE_TEXT" | grep -q "CLAUDE_OK"' "claude $CLAUDE_VER replied: \`${CLAUDE_TEXT}\`"
+if [ -n "$MAP_ID" ]; then
+  note "claude -p -> /anthropic/v1/messages ($MAP_ALIAS -> $MAP_BACKEND)"
+  CLAUDE_JSON=$(ANTHROPIC_MODEL="$MAP_ID" claude -p "Reply with exactly the token: CLAUDE_OK and nothing else." --output-format json 2>/tmp/claude.err)
+  CLAUDE_TEXT=$(echo "$CLAUDE_JSON" | jq -r '.result // empty' 2>/dev/null)
+  echo "  claude result: $CLAUDE_TEXT"
+  check "claude round-trips through /anthropic/v1/messages" 'echo "$CLAUDE_TEXT" | grep -q "CLAUDE_OK"' "claude $CLAUDE_VER replied: \`${CLAUDE_TEXT}\`"
+else
+  note "claude -p -> SKIPPED (none of the four default GPT targets is live)"
+  record "claude round-trips through /anthropic/v1/messages" "SKIP" "no default target in live model discovery"
+fi
 
 # --- 3) Claude web search through the gateway loop ----------------------------------------------
-# Requires a WebIQ key (mount webiq.json too); skip the grounding assertion if it's absent.
-if [ -f /root/.copilot-reverse/webiq.json ] || [ -n "${WEBIQ_API_KEY:-}" ]; then
+# Requires both a live mapped identity and a WebIQ key; missing optional inputs must SKIP.
+if [ -n "$MAP_ID" ] && { [ -f /root/.copilot-reverse/webiq.json ] || [ -n "${WEBIQ_API_KEY:-}" ]; }; then
   note "claude web_search -> gateway loop (grounded answer, no tool leak)"
   # Headless claude blocks tools by default; allow WebSearch so it can actually call the gateway tool.
-  WEB_JSON=$(claude -p "Use web search to find the latest stable Rust release version and reply with just the version number." \
+  WEB_JSON=$(ANTHROPIC_MODEL="$MAP_ID" claude -p "Use web search to find the latest stable Rust release version and reply with just the version number." \
     --allowedTools WebSearch --permission-mode acceptEdits --output-format json 2>/tmp/claude-web.err)
   WEB_TEXT=$(echo "$WEB_JSON" | jq -r '.result // empty' 2>/dev/null)
   WEB_ERR=$(echo "$WEB_JSON" | jq -r '.is_error // false' 2>/dev/null)
@@ -90,9 +120,13 @@ CODEX2=$(cd /tmp && codex exec --skip-git-repo-check --sandbox read-only \
 check "codex preserves multi-line output" 'echo "$CODEX2" | grep -q "LINE_ONE" && echo "$CODEX2" | grep -q "LINE_TWO"' "codex replied: \`$(echo "$CODEX2" | tail -2 | tr "\n" " ")\`"
 
 # --- 5) edge: claude constrained numeric answer (tool-free reasoning round-trip) -----------------
-note "claude -p -> constrained numeric answer"
-MATH=$(claude -p "What is 6 multiplied by 7? Reply with just the number." --output-format json 2>/dev/null | jq -r '.result // empty')
-check "claude returns the right constrained answer" 'echo "$MATH" | grep -q "42"' "claude replied: \`${MATH}\`"
+if [ -n "$MAP_ID" ]; then
+  note "claude -p -> constrained numeric answer"
+  MATH=$(ANTHROPIC_MODEL="$MAP_ID" claude -p "What is 6 multiplied by 7? Reply with just the number." --output-format json 2>/dev/null | jq -r '.result // empty')
+  check "claude returns the right constrained answer" 'echo "$MATH" | grep -q "42"' "claude replied: \`${MATH}\`"
+else
+  record "claude returns the right constrained answer" "SKIP" "no default target in live model discovery"
+fi
 
 # --- 6) edge: a [1m] model id round-trips (suffix stripped before forwarding) --------------------
 note "claude -p with a [1m] model id -> still answers"
@@ -100,51 +134,49 @@ ONEM=$(ANTHROPIC_MODEL="gpt-4o[1m]" claude -p "Reply with exactly: ONEM_OK" --ou
 check "[1m] model id round-trips" 'echo "$ONEM" | grep -q "ONEM_OK"' "claude (gpt-4o[1m]) replied: \`${ONEM}\`"
 
 # --- 7) mapped model discovery: native Claude ids backed by this account's GPT models ------------
-note "/anthropic/v1/models -> mapped native Claude ids + real backend window"
-MODELS=""
-for _ in $(seq 1 40); do
-  MODELS=$(curl -sf "http://127.0.0.1:$PORT/anthropic/v1/models")
-  echo "$MODELS" | jq -e '.data[] | select(.id=="claude-opus-5[1m]")' >/dev/null 2>&1 && break
-  sleep 0.25
-done
-printf '%s' "$MODELS" > /tmp/live-models.json
-check "picker advertises mapped Opus 5 with a 1M badge" 'echo "$MODELS" | jq -e ".data[] | select(.id==\"claude-opus-5[1m]\") | select(.display_name==\"Opus 5\")" >/dev/null' "models: $(echo "$MODELS" | jq -rc '[.data[].id]' 2>/dev/null)"
-check "original GPT backend remains in Anthropic discovery" 'echo "$MODELS" | jq -e ".data[] | select(.id==\"gpt-5.6-sol\")" >/dev/null' "mapping must append/replace aliases, never hide real GPT rows"
+note "/anthropic/v1/models -> first available current Claude identity + real backend window"
 check "no dotted claude id leaks to picker" '! echo "$MODELS" | grep -Eq "claude-(opus|sonnet)-4\.[0-9]"' "dotted ids would blank the picker"
 
-# --- 8) mapped canonical Claude [1m] id answers end-to-end ---------------------------------------
-note "claude -p with mapped canonical Opus 5 [1m] -> gpt-5.6-sol"
-OPUS=$(ANTHROPIC_MODEL="claude-opus-5[1m]" claude -p "Reply with exactly: OPUS_OK" --output-format json 2>/dev/null | jq -r '.result // empty')
-check "mapped canonical opus [1m] id answers via Copilot" 'echo "$OPUS" | grep -q "OPUS_OK"' "claude (claude-opus-5[1m] -> gpt-5.6-sol) replied: \`${OPUS}\`"
+# --- 8) mapped canonical Claude identity answers end-to-end --------------------------------------
+if [ -n "$MAP_PICK" ]; then
+  check "picker advertises the first live current Claude identity" '[ -n "$MAP_ID" ]' "alias=$MAP_ALIAS backend=$MAP_BACKEND models=$(echo "$MODELS" | jq -rc '[.data[].id]' 2>/dev/null)"
+  check "original GPT backend remains in Anthropic discovery" 'echo "$MODELS" | jq -e --arg b "$MAP_BACKEND" ".data[] | select(.id==\$b)" >/dev/null' "mapping must append aliases, never hide real GPT rows"
+  note "claude -p with $MAP_ID -> $MAP_BACKEND"
+  MAP_REPLY=$(ANTHROPIC_MODEL="$MAP_ID" claude -p "Reply with exactly: CLAUDE_MAP_OK" --output-format json 2>/dev/null | jq -r '.result // empty')
+  check "mapped canonical Claude identity answers via Copilot" 'echo "$MAP_REPLY" | grep -q "CLAUDE_MAP_OK"' "$MAP_ALIAS -> $MAP_BACKEND replied: \`$MAP_REPLY\`"
+else
+  note "mapped Claude identity -> SKIPPED (none of the four default GPT targets is live)"
+  record "mapped canonical Claude identity answers via Copilot" "SKIP" "no default target in live model discovery"
+fi
 
-# The setup helper remains independently canonical for existing native models.
-OP5DEF=$(node -e 'import("/app/dist/tui/setup/clients.js").then(m=>process.stdout.write(m.claudeCopilotReverseEnv("b","k","claude-opus-5",1100000).ANTHROPIC_MODEL))')
-check "setup writes mapped opus-5 with the [1m] window suffix" '[ "$OP5DEF" = "claude-opus-5[1m]" ]' "setup writes ANTHROPIC_MODEL=\`${OP5DEF}\`"
-
-# Existing native-model setup canonicalization is covered hermetically; this live GPT-only matrix uses
-# OP5DEF above, whose mapped backend is present and whose real CLI turn just passed.
+# The setup helper remains independently canonical for the newest Claude family.
+FABLEDEF=$(node -e 'import("/app/dist/tui/setup/clients.js").then(m=>process.stdout.write(m.claudeCopilotReverseEnv("b","k","claude-fable-5-1",1050000).ANTHROPIC_MODEL))')
+check "setup writes mapped Fable 5.1 with the [1m] window suffix" '[ "$FABLEDEF" = "claude-fable-5-1[1m]" ]' "setup writes ANTHROPIC_MODEL=\`${FABLEDEF}\`"
 
 # --- 9b) MULTI-TURN: a resumed session remembers turn 1 (real conversation state through the proxy) --
 # The truest "does a multi-turn conversation survive the proxy" check: turn 1 states a codeword, turn 2
-# RESUMES that session (claude replays the full turn-1 exchange in `messages`) and must recall it. This
-# exercises exactly what an interactive REPL does — the wire is identical — without a flaky PTY. If the
-# proxy dropped prior turns in translation, turn 2 could not answer. The hermetic EP-39/40/41 gate locks
-# the same history round-trip deterministically; this proves it end-to-end against live Copilot.
-note "multi-turn: claude -p turn1 (set codeword) -> --resume turn2 (recall it)"
-SID=$(claude -p "Remember this codeword for later: HORIZON. Just acknowledge with OK." \
-  --output-format json 2>/tmp/mt1.err | jq -r '.session_id // empty')
-echo "  captured session_id: ${SID:-<none>}"
-if [ -n "$SID" ]; then
-  MT2=$(claude -p --resume "$SID" "What was the codeword I gave you? Reply with just the word." \
-    --output-format json 2>/tmp/mt2.err | jq -r '.result // empty')
-  echo "  turn 2 recall: $MT2"
-  check "resumed session recalls turn-1 codeword through the proxy" 'echo "$MT2" | grep -q "HORIZON"' "claude (--resume) recalled: \`${MT2}\`"
+# RESUMES that session (claude replays the full turn-1 exchange in `messages`) and must recall it.
+if [ -n "$MAP_ID" ]; then
+  note "multi-turn: claude -p turn1 (set codeword) -> --resume turn2 (recall it)"
+  SID=$(ANTHROPIC_MODEL="$MAP_ID" claude -p "Remember this codeword for later: HORIZON. Just acknowledge with OK." \
+    --output-format json 2>/tmp/mt1.err | jq -r '.session_id // empty')
+  echo "  captured session_id: ${SID:-<none>}"
+  if [ -n "$SID" ]; then
+    MT2=$(ANTHROPIC_MODEL="$MAP_ID" claude -p --resume "$SID" "What was the codeword I gave you? Reply with just the word." \
+      --output-format json 2>/tmp/mt2.err | jq -r '.result // empty')
+    echo "  turn 2 recall: $MT2"
+    check "resumed session recalls turn-1 codeword through the proxy" 'echo "$MT2" | grep -q "HORIZON"' "claude (--resume) recalled: \`${MT2}\`"
+  else
+    note "multi-turn: SKIPPED (no session_id in claude -p JSON output)"
+    record "resumed session recalls turn-1 codeword" "SKIP" "no session_id in claude -p JSON envelope"
+  fi
 else
-  # No session_id in the JSON envelope (older/newer CLI shape) — degrade gracefully, never hard-fail.
-  note "multi-turn: SKIPPED (no session_id in claude -p JSON output)"
-  record "resumed session recalls turn-1 codeword" "SKIP" "no session_id in claude -p JSON envelope"
+  record "resumed session recalls turn-1 codeword" "SKIP" "no default target in live model discovery"
 fi
 
+# Remaining Claude-specific cases require a live map identity. On accounts with no default target, the
+# dedicated map case above records SKIP; hermetic tests still cover every routing/capability branch.
+if [ -n "$MAP_ID" ]; then
 # --- 10) reasoning EFFORT is honored end-to-end (#33) --------------------------------------------
 # Two halves of reality: (a) the proxy correctly reads the effort the user picks and reports it back,
 # and (b) the real `claude --effort` CLI knob drives a working turn at every level.
@@ -159,7 +191,7 @@ EFF_FAIL=0
 for LVL in low medium high xhigh max; do
   HDR=$(curl -s -D - -o /dev/null -X POST "http://127.0.0.1:$PORT/anthropic/v1/messages" \
     -H "content-type: application/json" \
-    -d "{\"model\":\"claude-opus-4-8[1m]\",\"max_tokens\":16,\"output_config\":{\"effort\":\"$LVL\"},\"thinking\":{\"type\":\"adaptive\"},\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
+    -d "{\"model\":\"$MAP_ID\",\"max_tokens\":16,\"output_config\":{\"effort\":\"$LVL\"},\"thinking\":{\"type\":\"adaptive\"},\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
     2>/dev/null | tr -d '\r' | grep -i "x-copilot-reverse-effort:" | awk '{print $2}')
   echo "  effort=$LVL -> header=$HDR"
   [ "$HDR" = "$LVL" ] || EFF_FAIL=1
@@ -170,18 +202,18 @@ check "every effort level is resolved + echoed in x-copilot-reverse-effort" '[ "
 note "effort: legacy thinking.budget_tokens still maps (back-compat)"
 LEG=$(curl -s -D - -o /dev/null -X POST "http://127.0.0.1:$PORT/anthropic/v1/messages" \
   -H "content-type: application/json" \
-  -d "{\"model\":\"claude-opus-4-8[1m]\",\"max_tokens\":16,\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":16000},\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
+  -d "{\"model\":\"$MAP_ID\",\"max_tokens\":16,\"thinking\":{\"type\":\"enabled\",\"budget_tokens\":16000},\"messages\":[{\"role\":\"user\",\"content\":\"hi\"}]}" \
   2>/dev/null | tr -d '\r' | grep -i "x-copilot-reverse-effort:" | awk '{print $2}')
 check "legacy budget_tokens=16000 maps to effort=high" '[ "$LEG" = "high" ]' "legacy thinking budget -> \`${LEG}\`"
 
 # (b) The real CLI knob: `claude --effort max` must still produce a correct answer (high effort must
 # not break a turn). We can't see its output length deterministically, so we assert the turn succeeds.
 note "claude --effort max -> still answers correctly (real CLI knob)"
-EFFMAX=$(claude --effort max -p "What is 6 times 7? Reply with just the number." --output-format json 2>/dev/null | jq -r '.result // empty')
+EFFMAX=$(ANTHROPIC_MODEL="$MAP_ID" claude --effort max -p "What is 6 times 7? Reply with just the number." --output-format json 2>/dev/null | jq -r '.result // empty')
 check "claude --effort max returns the right answer" 'echo "$EFFMAX" | grep -q "42"' "claude (--effort max) replied: \`${EFFMAX}\`"
 
 note "claude --effort low -> still answers correctly (real CLI knob)"
-EFFLOW=$(claude --effort low -p "What is 6 times 7? Reply with just the number." --output-format json 2>/dev/null | jq -r '.result // empty')
+EFFLOW=$(ANTHROPIC_MODEL="$MAP_ID" claude --effort low -p "What is 6 times 7? Reply with just the number." --output-format json 2>/dev/null | jq -r '.result // empty')
 check "claude --effort low returns the right answer" 'echo "$EFFLOW" | grep -q "42"' "claude (--effort low) replied: \`${EFFLOW}\`"
 
 # --- 11) a Claude model must NEVER surface a "Responses API" error (#45) --------------------------
@@ -198,10 +230,10 @@ note "claude -p with a large pasted history -> answers, no Responses-API error"
 BIGHIST=$(printf 'Here is a long transcript to summarize:\n'; for i in $(seq 1 400); do printf 'Turn %d: the user asked about topic %d and the assistant replied in detail about it.\n' "$i" "$i"; done)
 BIGHIST="${BIGHIST}
 When you are done reading, reply with exactly the token: BIGHIST_OK and nothing else."
-BH_JSON=$(ANTHROPIC_MODEL="claude-opus-5[1m]" claude -p "$BIGHIST" --output-format json 2>/tmp/bighist.err)
+BH_JSON=$(ANTHROPIC_MODEL="$MAP_ID" claude -p "$BIGHIST" --output-format json 2>/tmp/bighist.err)
 BH_TEXT=$(echo "$BH_JSON" | jq -r '.result // empty' 2>/dev/null)
 echo "  claude (big history) result: $(echo "$BH_TEXT" | tail -1)"
-check "large history turn answers via Copilot" 'echo "$BH_TEXT" | grep -q "BIGHIST_OK"' "claude (claude-opus-4-8[1m], ~400-line history) replied: \`$(echo "$BH_TEXT" | tail -1)\`"
+check "large history turn answers via Copilot" 'echo "$BH_TEXT" | grep -q "BIGHIST_OK"' "claude ($MAP_ID, ~400-line history) replied: \`$(echo "$BH_TEXT" | tail -1)\`"
 check "large history turn never hits the Responses API" '! { echo "$BH_JSON"; cat /tmp/bighist.err; } | grep -qi "does not support Responses API"' "no \`does not support Responses API\` leaked for a Claude turn"
 
 # (b) the exact edge you hit: pasted history + a screenshot. Feed a real image the way Claude Code does
@@ -213,14 +245,14 @@ check "large history turn never hits the Responses API" '! { echo "$BH_JSON"; ca
 # `invalid_request_body` body was mis-retried on /responses, masking the real reason).
 note "claude+image (pasted history + screenshot) -> Claude sees the image, never a Responses-API error"
 # Build a valid 64x64 red PNG at runtime (deterministic bytes, no fixtures) and post it as a base64 image.
-IMG_RESP=$(node -e '
+IMG_RESP=$(MAP_ID="$MAP_ID" node -e '
 const zlib=require("zlib");const W=64,H=64;
 function chunk(t,d){const l=Buffer.alloc(4);l.writeUInt32BE(d.length);const ty=Buffer.from(t);const cb=Buffer.concat([ty,d]);
   let c=~0;for(const b of cb){c^=b;for(let i=0;i<8;i++)c=(c>>>1)^(0xEDB88320&-(c&1));}c=~c>>>0;const cr=Buffer.alloc(4);cr.writeUInt32BE(c>>>0);return Buffer.concat([l,ty,d,cr]);}
 const sig=Buffer.from([137,80,78,71,13,10,26,10]);const ihdr=Buffer.alloc(13);ihdr.writeUInt32BE(W,0);ihdr.writeUInt32BE(H,4);ihdr[8]=8;ihdr[9]=2;
 const raw=Buffer.alloc(H*(1+W*3));for(let y=0;y<H;y++){const o=y*(1+W*3);raw[o]=0;for(let x=0;x<W;x++){const p=o+1+x*3;raw[p]=200;raw[p+1]=30;raw[p+2]=30;}}
 const png=Buffer.concat([sig,chunk("IHDR",ihdr),chunk("IDAT",zlib.deflateSync(raw)),chunk("IEND",Buffer.alloc(0))]);
-const body=JSON.stringify({model:"claude-opus-5[1m]",max_tokens:64,messages:[{role:"user",content:[{type:"text",text:"A screenshot pasted after a long history. What colour is this square? Reply with one word."},{type:"image",source:{type:"base64",media_type:"image/png",data:png.toString("base64")}}]}]});
+const body=JSON.stringify({model:process.env.MAP_ID,max_tokens:64,messages:[{role:"user",content:[{type:"text",text:"A screenshot pasted after a long history. What colour is this square? Reply with one word."},{type:"image",source:{type:"base64",media_type:"image/png",data:png.toString("base64")}}]}]});
 fetch("http://127.0.0.1:'"$PORT"'/anthropic/v1/messages",{method:"POST",headers:{"content-type":"application/json"},body}).then(r=>r.text()).then(t=>process.stdout.write(t)).catch(e=>process.stdout.write(JSON.stringify({error:{message:String(e)}})));
 ' 2>/dev/null)
 IMG_TEXT=$(echo "$IMG_RESP" | jq -r '[.content[]?|select(.type=="text")|.text]|join("")' 2>/dev/null)
@@ -269,11 +301,11 @@ check "codex completes a real tool loop (file written through the proxy)" 'echo 
 # AND JPEG both rejected), regardless of our (valid) media type. That is an upstream model capability,
 # not a proxy bug — a real user doing OCR picks a vision-capable model, so the test must too. Claude
 # models accept images (probed: the exact Jimp fixture returns its baked token upstream). #50 P2.
-VISION_MODEL="claude-opus-5[1m]"
+VISION_MODEL="$MAP_ID"
 vision_case() { # vision_case <png-path> <expected-token>
   local png="$1" tok="$2"
   local out
-  out=$(ANTHROPIC_MODEL="$VISION_MODEL" claude -p "Read the image file at ${png} and reply with ONLY the exact text shown in the image, nothing else." \
+  out=$(ANTHROPIC_MODEL="$VISION_MODEL" timeout 120 claude -p "Read the image file at ${png} and reply with ONLY the exact text shown in the image, nothing else." \
     --allowedTools Read --permission-mode acceptEdits --output-format json 2>/tmp/vision.err | jq -r '.result // empty' 2>/dev/null)
   echo "  claude vision (${png##*/}) read: ${out:-<none>}"
   # tolerant + case-insensitive (the model may add whitespace); a hit proves it truly saw the pixels.
@@ -307,6 +339,10 @@ import { SANS_64_BLACK, SANS_128_BLACK } from "jimp/fonts";
 else
   note "vision: SKIPPED (fixture render failed)"
   record "claude vision OCR round-trip" "SKIP" "Jimp fixture render failed: $(head -1 /tmp/vision-gen.err 2>/dev/null)"
+fi
+else
+  note "Claude effort/history/image/vision cases -> SKIPPED (no default map target live)"
+  record "Claude effort/history/image/vision matrix" "SKIP" "no default target in live model discovery"
 fi
 
 # --- 14) unknown / typo'd model degrades gracefully (bounded is_error, never a hang or 502-mask) ---
@@ -376,6 +412,7 @@ echo "  codex-unknown-model rc=$CODEX_BAD_RC"
 check "codex unknown model returns (did not hang to timeout)" '[ "$CODEX_BAD_RC" != "124" ]' "codex returned rc=$CODEX_BAD_RC within 60s (no freeze on /responses)"
 check "codex unknown model surfaces a visible error" '{ echo "$CODEX_BAD"; cat /tmp/codex-bad.err; } | grep -qiE "error|not.?support|unknown|invalid|400|404"' "a typo'd Codex model id degrades to a visible error, not a silent/frozen turn"
 
+if [ -n "$MAP_ID" ]; then
 # --- 18) context editing: a browser-harness-style pile of screenshots does NOT 413 ----------------
 # The exact failure a user reported: browser-harness screenshots accumulate in history, the stateless
 # wire re-sends them ALL every turn, and Copilot's gateway rejects the oversized body with 413 (relayed
@@ -390,7 +427,7 @@ check "codex unknown model surfaces a visible error" '{ echo "$CODEX_BAD"; cat /
 #       (with the pre-fix 6MB budget, ~7MB of screenshots would still exceed the wall and 413), and
 #   (c) Claude still reads the MOST RECENT (green) screenshot — old cleared, recent kept, conversation intact.
 note "context editing -> a 7MB pile of history screenshots does not 413, latest image still readable"
-CE_RESP=$(node -e '
+CE_RESP=$(MAP_ID="$MAP_ID" node -e '
 const zlib=require("zlib");const crypto=require("crypto");
 function chunk(t,d){const l=Buffer.alloc(4);l.writeUInt32BE(d.length);const ty=Buffer.from(t);const cb=Buffer.concat([ty,d]);
   let c=~0;for(const b of cb){c^=b;for(let i=0;i<8;i++)c=(c>>>1)^(0xEDB88320&-(c&1));}c=~c>>>0;const cr=Buffer.alloc(4);cr.writeUInt32BE(c>>>0);return Buffer.concat([l,ty,d,cr]);}
@@ -418,7 +455,7 @@ msgs.push({role:"assistant",content:[{type:"text",text:"final step"},{type:"tool
 msgs.push({role:"user",content:[{type:"tool_result",tool_use_id:"slast",content:[{type:"text",text:"final step"},{type:"image",source:{type:"base64",media_type:"image/png",data:pngSolid(200,200,30,200,30)}}]}]});
 msgs.push({role:"user",content:[{type:"text",text:"What colour is the most recent screenshot? Reply with one word."}]});
 process.stderr.write("unedited screenshot bytes ~"+(rawSum/1024/1024).toFixed(1)+"MB\n");
-const body=JSON.stringify({model:"claude-opus-5[1m]",max_tokens:64,messages:msgs});
+const body=JSON.stringify({model:process.env.MAP_ID,max_tokens:64,messages:msgs});
 fetch("http://127.0.0.1:'"$PORT"'/anthropic/v1/messages",{method:"POST",headers:{"content-type":"application/json"},body}).then(r=>r.text()).then(t=>process.stdout.write(t)).catch(e=>process.stdout.write(JSON.stringify({error:{message:String(e)}})));
 ' 2>/tmp/ce-size.txt)
 CE_TEXT=$(echo "$CE_RESP" | jq -r '[.content[]?|select(.type=="text")|.text]|join("")' 2>/dev/null)
@@ -442,7 +479,7 @@ fi
 # tokenize at ~char/4, so a ~5 MiB body is ~1.3M tokens, over the model window — which is exactly why the
 # byte-budget math is asserted hermetically, and case #16 stresses a big screenshot pile on its own.)
 note "context editing (dynamic) -> a big conversation + screenshots stays a valid turn (issue #52)"
-DCE_RESP=$(node -e '
+DCE_RESP=$(MAP_ID="$MAP_ID" node -e '
 const zlib=require("zlib");const crypto=require("crypto");
 function chunk(t,d){const l=Buffer.alloc(4);l.writeUInt32BE(d.length);const ty=Buffer.from(t);const cb=Buffer.concat([ty,d]);
   let c=~0;for(const b of cb){c^=b;for(let i=0;i<8;i++)c=(c>>>1)^(0xEDB88320&-(c&1));}c=~c>>>0;const cr=Buffer.alloc(4);cr.writeUInt32BE(c>>>0);return Buffer.concat([l,ty,d,cr]);}
@@ -467,7 +504,7 @@ msgs.push({role:"assistant",content:[{type:"text",text:"final"},{type:"tool_use"
 msgs.push({role:"user",content:[{type:"tool_result",tool_use_id:"dlast",content:[{type:"text",text:"final"},{type:"image",source:{type:"base64",media_type:"image/png",data:pngSolid(200,200,30,200,30)}}]}]});
 msgs.push({role:"user",content:[{type:"text",text:"What colour is the most recent screenshot? Reply with one word."}]});
 process.stderr.write("text ~"+(bigText.length/1024/1024).toFixed(1)+"MB + images ~"+(rawImg/1024/1024).toFixed(1)+"MB unedited\n");
-const body=JSON.stringify({model:"claude-opus-5[1m]",max_tokens:64,messages:msgs});
+const body=JSON.stringify({model:process.env.MAP_ID,max_tokens:64,messages:msgs});
 fetch("http://127.0.0.1:'"$PORT"'/anthropic/v1/messages",{method:"POST",headers:{"content-type":"application/json"},body}).then(r=>r.text()).then(t=>process.stdout.write(t)).catch(e=>process.stdout.write(JSON.stringify({error:{message:String(e)}})));
 ' 2>/tmp/dce-size.txt)
 DCE_TEXT=$(echo "$DCE_RESP" | jq -r '[.content[]?|select(.type=="text")|.text]|join("")' 2>/dev/null)
@@ -480,6 +517,10 @@ if echo "$DCE_TEXT" | grep -qi "green"; then
 else
   note "dynamic latest-screenshot colour -> SKIPPED (mapped GPT vision is model-dependent; body/413 guards passed)"
   record "latest screenshot still readable with a big conversation (answers green)" "SKIP" "mapped GPT replied \`${DCE_TEXT:-<none>}\`; request validity + no-413 remain hard gates"
+fi
+else
+  note "Claude screenshot-context cases -> SKIPPED (no default map target live)"
+  record "Claude screenshot-context matrix" "SKIP" "no default target in live model discovery"
 fi
 
 # --- 19) codex gpt-5.6 additional_tools: tools survive the new wire shape (issue #4231) -----------
@@ -517,17 +558,11 @@ fi
 note "claude-map: native Claude alias -> exact live GPT backend (SKIP if no preset target exists)"
 MAP_PICK=$(node --input-type=module - <<'NODE'
 const { readFileSync } = await import("node:fs");
+const { CLAUDE_MODEL_ALIASES, CLAUDE_MODEL_DEFAULTS } = await import("/app/dist/core/claude-model-map.js");
 const models = JSON.parse(readFileSync("/tmp/live-models.json", "utf8"));
-const map = [
-  ["claude-opus-5", "gpt-5.6-sol"],
-  ["claude-opus-4-8", "gpt-5.6-luna"],
-  ["claude-sonnet-5", "gpt-5.6-terra"],
-  ["claude-sonnet-4-6", "gpt-5.5"],
-  ["claude-haiku-4-5", "gpt-5.4"],
-];
 const ids = new Set(models.data.map((m) => m.id));
-const hit = map.find(([, backend]) => ids.has(backend));
-if (hit) process.stdout.write(hit.join("|"));
+const alias = CLAUDE_MODEL_ALIASES.find((candidate) => ids.has(CLAUDE_MODEL_DEFAULTS[candidate]));
+if (alias) process.stdout.write(`${alias}|${CLAUDE_MODEL_DEFAULTS[alias]}`);
 NODE
 )
 if [ -n "$MAP_PICK" ]; then
@@ -555,7 +590,7 @@ if [ -n "$MAP_PICK" ]; then
   check "real claude CLI answers through the mapped GPT backend" 'echo "$MAP_TEXT" | grep -q "CLAUDE_MAP_OK"' "$MAP_ALIAS -> $MAP_BACKEND replied: \`$MAP_TEXT\`"
   node --input-type=module -e 'import("/app/dist/shared/prefs.js").then(m=>m.writeClaudeMapEnabled("/root/.copilot-reverse",false))'
 else
-  note "claude-map -> SKIPPED (none of the five preset GPT targets is live on this account)"
+  note "claude-map -> SKIPPED (none of the four default GPT targets is live on this account)"
   record "real claude CLI answers through a mapped GPT backend" "SKIP" "no preset target in live model discovery"
 fi
 

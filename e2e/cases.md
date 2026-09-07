@@ -62,17 +62,20 @@ provider, no network. Spec: `responses.e2e.test.ts`, `describe("E2E: Codex /resp
 | EP-42 | tools carried in an `additional_tools` input item (Codex 0.145+ / gpt-5.6) | the tools reach the provider (not dropped); the `additional_tools` item never leaks as a message (#4231) |
 | EP-43 | prior `custom_tool_call` + `custom_tool_call_output` in `input` | round-trip to the provider as `tool_use` (raw-string input wrapped as `{input}`) + `tool_result` (#4231) |
 
-### Claude model compatibility map (EP-44 … EP-47)
+### Claude model compatibility map (EP-44 … EP-49)
 
-The map is opt-in and snapshots the persisted preference at worker startup. Hermetic tests inject a live
-model list and fake provider so discovery and resolved routing are proven without Copilot quota.
+The map is opt-in and snapshots the persisted preference plus custom overrides at worker startup. Hermetic
+tests inject a live model list and fake provider so default/custom discovery and resolved routing are proven
+without Copilot quota.
 
 | ID | Scenario | Expected result |
 |----|----------|-----------------|
-| EP-44 | map disabled, Anthropic + OpenAI discovery | existing real-model lists are unchanged; no preset Claude alias is synthesized |
-| EP-45 | map enabled with only some preset GPT targets live | Anthropic discovery retains real models and adds only aliases whose exact targets are live; OpenAI discovery adds none |
-| EP-46 | Anthropic request using a published `[1m]` Claude alias | provider receives the mapped GPT ID, not the alias; metrics also record the GPT backend |
-| EP-47 | mapped backend advertises a ~1.1M window | alias discovery/setup metadata uses that backend window and carries the canonical `[1m]` suffix |
+| EP-44 | map disabled, Anthropic + OpenAI discovery | existing real-model lists are unchanged; no compatibility Claude identity is synthesized |
+| EP-45 | default map enabled with all current GPT targets live | Anthropic discovery retains real models and adds Fable 5.1, Opus 5, Sonnet 5, and Haiku 4.5; removed legacy aliases are absent; OpenAI discovery adds none |
+| EP-46 | custom Sonnet mapping is live and requested via `[1m]` | discovery publishes Sonnet 5; provider and metrics receive the custom GPT ID, not the alias |
+| EP-47 | a persisted custom target is absent from live discovery | the identity is neither advertised nor specially resolved; the stored choice can recover when its target returns |
+| EP-48 | custom backend has a sub-1M window; removed legacy aliases are submitted | Sonnet metadata/context follows the custom backend without `[1m]`; old Opus 4.8 and Sonnet 4.6 receive no compatibility routing |
+| EP-49 | live discovery already contains a real Claude model with a compatibility identity | the real Claude entry is retained once, keeps its own context metadata, and routes to the genuine Claude backend rather than the mapped GPT target |
 
 ### Multi-turn continuity (EP-39 … EP-41)
 

@@ -112,25 +112,31 @@ async function main() {
     offlineMap.setAvailableModels(["gpt-5.6-sol", "gpt-4o"], false);
     offlineMap.setModelLimits({ "gpt-5.6-sol": 1_100_000 });
     check("map never trusts offline fallback ids", !offlineMap.listAnthropicModels().some((m) => m.id.startsWith("claude-opus-5")));
-    const liveMap = new Router([dummyProvider], {}, { claudeMapEnabled: true });
-    liveMap.setAvailableModels(["gpt-5.6-sol", "gpt-4o"], true);
-    liveMap.setModelLimits({ "gpt-5.6-sol": 1_100_000 });
+    const customModelMap = {
+      "claude-fable-5-1": "gpt-6-astra",
+      "claude-opus-5": "gpt-5.6-sol",
+      "claude-sonnet-5": "gpt-5.5",
+      "claude-haiku-4-5": "gpt-not-live",
+    };
+    const liveMap = new Router([dummyProvider], {}, { claudeMapEnabled: true, claudeModelMap: customModelMap });
+    liveMap.setAvailableModels(["gpt-5.6-sol", "gpt-5.5", "gpt-4o"], true);
+    liveMap.setModelLimits({ "gpt-5.6-sol": 1_100_000, "gpt-5.5": 400_000 });
     const liveAlias = liveMap.listAnthropicModels().find((m) => m.id.startsWith("claude-opus-5"));
+    const customAlias = liveMap.listAnthropicModels().find((m) => m.id.startsWith("claude-sonnet-5"));
     check("live exact GPT target publishes native Claude alias + backend 1M badge", liveAlias?.id === "claude-opus-5[1m]" && liveAlias?.display_name === "Opus 5", JSON.stringify(liveAlias));
+    check("custom mapping publishes the identity with its backend-derived window", customAlias?.id === "claude-sonnet-5" && customAlias?.display_name === "Sonnet 5", JSON.stringify(customAlias));
     check("mapped alias resolves to its exact GPT backend", liveMap.resolveModel("claude-opus-5[1m]") === "gpt-5.6-sol");
-    check("OpenAI model list remains real-only under mapping", JSON.stringify(liveMap.listModels()) === JSON.stringify(["gpt-5.6-sol", "gpt-4o"]));
-    check("missing mapped GPT target hides its Claude alias", !liveMap.listAnthropicModels().some((m) => m.id.startsWith("claude-sonnet-5")));
-    // Model mapping: Claude families must surface as the DASHED canonical ids Claude Code's native
-    // picker recognises (claude-opus-4-8) with a friendly display_name + [1m] badge for 1M models —
-    // never Copilot's dotted ids. Holds on both the live list and the offline fallback.
-    check("no dotted claude ids leak to picker", !models.some((m) => /claude-(opus|sonnet)-4\.[0-9]/.test(m.id)));
-    const opus = models.find((m) => m.id.startsWith("claude-opus-4-8"));
-    check("opus has friendly display_name", opus?.display_name === "Opus 4.8", opus?.display_name);
-    check("opus carries [1m] 1M badge", opus?.id === "claude-opus-4-8[1m]", opus?.id);
-    // Single-segment version id (claude-sonnet-5): the friendly name must not regress to a bare id, and
-    // as a known-current 1M model it must carry the [1m] badge. In the hermetic gate the dummy token
-    // fails discovery, so this rides the offline fallback list (which now lists sonnet-5) — proving the
-    // generalised display-name + default-1M path without spending quota.
+    check("custom alias resolves to its configured GPT backend", liveMap.resolveModel("claude-sonnet-5") === "gpt-5.5");
+    check("OpenAI model list remains real-only under mapping", JSON.stringify(liveMap.listModels()) === JSON.stringify(["gpt-5.6-sol", "gpt-5.5", "gpt-4o"]));
+    check("missing custom GPT target hides its Claude alias", !liveMap.listAnthropicModels().some((m) => m.id.startsWith("claude-haiku-4-5")));
+    check("removed legacy aliases receive no compatibility mapping", liveMap.resolveModel("claude-opus-4-8[1m]") === "claude-opus-4-8" && liveMap.resolveModel("claude-sonnet-4-6[1m]") === "claude-sonnet-4-6");
+    // Current Claude families must surface as DASHED canonical ids with friendly names and the fallback
+    // [1m] badge when live capability discovery is unavailable — never Copilot's dotted ids.
+    check("no dotted claude ids leak to picker", !models.some((m) => /claude-(fable|opus|sonnet|haiku)-\d+\.\d+/.test(m.id)));
+    const fable = models.find((m) => m.id.startsWith("claude-fable-5-1"));
+    check("fable-5.1 present in picker", !!fable, JSON.stringify(models.map((m) => m.id)));
+    check("fable-5.1 has friendly display_name", fable?.display_name === "Fable 5.1", fable?.display_name);
+    check("fable-5.1 carries [1m] 1M badge", fable?.id === "claude-fable-5-1[1m]", fable?.id);
     const sonnet5 = models.find((m) => m.id.startsWith("claude-sonnet-5"));
     check("sonnet-5 present in picker", !!sonnet5, JSON.stringify(models.map((m) => m.id)));
     check("sonnet-5 has friendly display_name (single-segment version)", sonnet5?.display_name === "Sonnet 5", sonnet5?.display_name);
