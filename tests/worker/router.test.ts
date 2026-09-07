@@ -56,8 +56,8 @@ describe("Router", () => {
       { id: "gpt-5.6-sol", display_name: "gpt-5.6-sol" },
       { id: "gpt-5.6-luna", display_name: "gpt-5.6-luna" },
       { id: "gpt-4o", display_name: "gpt-4o" },
-      { id: "claude-opus-4-8[1m]", display_name: "Opus 4.8" },
       { id: "claude-opus-5[1m]", display_name: "Opus 5" },
+      { id: "claude-haiku-4-5[1m]", display_name: "Haiku 4.5" },
     ]);
   });
 
@@ -77,15 +77,17 @@ describe("Router", () => {
     expect(r.resolveModel("claude-opus-5[1m]")).toBe("claude-opus-5");
   });
 
-  it("replaces an existing Claude discovery entry with backend-derived metadata in map mode", () => {
+  it("never hijacks a real Copilot Claude model whose id collides with a compatibility identity", () => {
     const r = new Router([fake], {}, { claudeMapEnabled: true });
     r.setAvailableModels(["claude-opus-5", "gpt-5.6-sol"]);
+    r.setOneMModels(["gpt-5.6-sol"]); // live capability data: real Opus is 200K, GPT backend is 1M
     r.setModelLimits({ "claude-opus-5": 200_000, "gpt-5.6-sol": 1_100_000 });
     expect(r.listAnthropicModels()).toEqual([
-      { id: "claude-opus-5[1m]", display_name: "Opus 5" },
+      { id: "claude-opus-5", display_name: "Opus 5" },
       { id: "gpt-5.6-sol", display_name: "gpt-5.6-sol" },
     ]);
-    expect(r.resolveModel("claude-opus-5[1m]")).toBe("gpt-5.6-sol");
+    expect(r.resolveModel("claude-opus-5[1m]")).toBe("claude-opus-5");
+    expect(r.modelLimit("claude-opus-5[1m]")).toBe(200_000);
   });
 
   it("returns the only provider", () => {

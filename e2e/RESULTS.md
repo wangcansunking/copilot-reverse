@@ -3,6 +3,21 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-09-07 (current Claude identities + customizable GPT map)** — `/claude-map` now opens one
+  interactive editor for the enabled state and four current identities: Fable 5.1→gpt-6-astra,
+  Opus 5→gpt-5.6-sol, Sonnet 5→gpt-5.6-sol-fast, and Haiku 4.5→gpt-5.6-luna. Per-model choices are
+  selected from live `gpt-*` discovery, persisted atomically, and hidden (not silently rerouted) while
+  unavailable. Legacy Sonnet 4.6/Opus 4.8 compatibility aliases are removed. Verification after the
+  final edits: TypeScript build clean; **765/765 full Vitest tests** and **57/57 Vitest E2E** passed;
+  Docker HTTP edge E2E **80/80 passed**. Real Docker CLI E2E against live Copilot finished with
+  **36/36 recorded checks passed, 0 FAIL (`✅ ALL PASSED`)**, proving live discovery and
+  `claude-fable-5-1[1m] → gpt-6-astra`
+  through real `claude -p`, plus chat, web search, multi-turn, effort, image transport, context editing,
+  Codex tool loops, and the final map restart case. Optional OCR/color-quality checks recorded SKIP when
+  the mapped GPT backend declined image interpretation; transport validity and no-413 remained hard PASS.
+  TUI behavior was driven through Ink interaction tests: load/error/no-GPT, edit, reset, disable,
+  cancel, save, unavailable target, stale-model healing, invalid arguments, and restart failure.
+
 - **2026-08-05 (opt-in Claude model map for GPT-only Copilot accounts)** — `/claude-map on|off`
   persists an explicit default-off compatibility mode. When enabled, Anthropic discovery retains the
   real GPT rows and adds only native Claude aliases whose exact GPT targets are live; alias requests

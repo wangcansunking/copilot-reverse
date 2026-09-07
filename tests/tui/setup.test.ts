@@ -30,6 +30,7 @@ describe("withClaude1mSuffix", () => {
   it("falls back to the default set when the window is unknown", () => {
     expect(withClaude1mSuffix("claude-opus-4.8")).toBe("claude-opus-4-8[1m]");
     expect(withClaude1mSuffix("claude-opus-5")).toBe("claude-opus-5[1m]");
+    expect(withClaude1mSuffix("claude-fable-5-1")).toBe("claude-fable-5-1[1m]");
   });
 });
 
@@ -47,6 +48,13 @@ describe("claudeCustomModelEnv", () => {
     const env = claudeCustomModelEnv("claude-sonnet-4.5", 200_000);
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL).toBe("claude-sonnet-4-5");
     expect(env.ANTHROPIC_DEFAULT_SONNET_MODEL_NAME).toBe("Sonnet 4.5");
+  });
+  it("declares the current Fable family alias with a friendly 1M label", () => {
+    expect(claudeCustomModelEnv("claude-fable-5-1", 1_050_000)).toEqual({
+      ANTHROPIC_DEFAULT_FABLE_MODEL: "claude-fable-5-1[1m]",
+      ANTHROPIC_DEFAULT_FABLE_MODEL_NAME: "Fable 5.1 (1M context)",
+      ANTHROPIC_DEFAULT_FABLE_MODEL_DESCRIPTION: "Fable 5.1 · 1M context · via copilot-reverse",
+    });
   });
   it("leaves non-claude ids and unknown families alone (no env to write)", () => {
     expect(claudeCustomModelEnv("gpt-4o", 1_000_000)).toEqual({});
