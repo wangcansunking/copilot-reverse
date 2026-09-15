@@ -1,3 +1,7 @@
+## v0.23.1 — 2026-09-15
+
+Release terminal input before starting interactive GitHub CLI authentication so GHE.com login accepts Enter instead of hanging.
+
 ## v0.23.0 — 2026-09-15
 
 Add GitHub Enterprise Cloud with data residency (GHE.com) login through GitHub CLI, while preserving the built-in GitHub.com device flow.
