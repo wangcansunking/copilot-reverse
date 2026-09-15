@@ -2,6 +2,14 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.23.0",
+    "date": "2026-09-15",
+    "summary": "Add GitHub Enterprise Cloud with data residency (GHE.com) login through GitHub CLI, while preserving the built-in GitHub.com device flow.",
+    "summaries": [
+      "Add GitHub Enterprise Cloud with data residency (GHE.com) login through GitHub CLI, while preserving the built-in GitHub.com device flow."
+    ]
+  },
+  {
     "version": "0.22.0",
     "date": "2026-09-07",
     "summary": "Refresh Claude compatibility identities for the current model lineup and add an interactive `/claude-map` editor. Users can map Fable 5.1, Opus 5, Sonnet 5, and Haiku 4.5 to any live GPT backend, restore defaults, and keep unavailable choices safely persisted until their backend returns.",
@@ -81,14 +89,6 @@ export const APP_CHANGES: ChangeEntry[] = [
     "summary": "Fix context editing still 413ing on long screenshot sessions: the cumulative image budget was 6MB — ABOVE Copilot's gateway HTTP entity limit, which was probed at exactly 5 MiB (a ~4.95MB body returns 400/accepted, a 5.00MB body returns 413). Because the budget sat above the wall, context editing believed an over-limit payload was \"within budget\" and forwarded it straight into a 413. Lower `IMAGE_PAYLOAD_BUDGET` to 3.5MB (≥1.5MB headroom under the 5 MiB wall for text, tool schemas, and JSON overhead). Also make `keep` a preference, not a hard floor: if the most recent 3 screenshots alone still exceed the budget, clearing now breaks through the floor (oldest-first, up to and including the newest) so the body always fits — a request that still 413s is strictly worse than one missing a recent screenshot. Adds a regression test that the budget stays below the probed gateway limit, a floor-break test, and an http-e2e assertion that the edited payload fits under 5 MiB.",
     "summaries": [
       "Fix context editing still 413ing on long screenshot sessions: the cumulative image budget was 6MB — ABOVE Copilot's gateway HTTP entity limit, which was probed at exactly 5 MiB (a ~4.95MB body returns 400/accepted, a 5.00MB body returns 413). Because the budget sat above the wall, context editing believed an over-limit payload was \"within budget\" and forwarded it straight into a 413. Lower `IMAGE_PAYLOAD_BUDGET` to 3.5MB (≥1.5MB headroom under the 5 MiB wall for text, tool schemas, and JSON overhead). Also make `keep` a preference, not a hard floor: if the most recent 3 screenshots alone still exceed the budget, clearing now breaks through the floor (oldest-first, up to and including the newest) so the body always fits — a request that still 413s is strictly worse than one missing a recent screenshot. Adds a regression test that the budget stays below the probed gateway limit, a floor-break test, and an http-e2e assertion that the edited payload fits under 5 MiB."
-    ]
-  },
-  {
-    "version": "0.16.0",
-    "date": "2026-07-02",
-    "summary": "Context editing for images: clear old tool screenshots before they reach Copilot, fixing `413 Request Entity Too Large` (relayed as a 502) on long browser-harness / agentic sessions. A stateless wire re-sends the whole history every turn, so a loop that screenshots each step accretes base64 until Copilot's gateway rejects the request body at the HTTP layer — a byte-size limit that per-image downscaling alone can't satisfy. The worker now does what Anthropic's backend does server-side (`clear_tool_uses_20250919`): keep the most recent 3 tool screenshots at full fidelity and replace older ones with a placeholder once the cumulative image payload exceeds budget, oldest-first and only as much as needed. Runs on both the Anthropic and OpenAI send paths (and `count_tokens`, so the estimate matches what's sent). Also adds a 413 hint pointing the user at `/compact` / fewer images.",
-    "summaries": [
-      "Context editing for images: clear old tool screenshots before they reach Copilot, fixing `413 Request Entity Too Large` (relayed as a 502) on long browser-harness / agentic sessions. A stateless wire re-sends the whole history every turn, so a loop that screenshots each step accretes base64 until Copilot's gateway rejects the request body at the HTTP layer — a byte-size limit that per-image downscaling alone can't satisfy. The worker now does what Anthropic's backend does server-side (`clear_tool_uses_20250919`): keep the most recent 3 tool screenshots at full fidelity and replace older ones with a placeholder once the cumulative image payload exceeds budget, oldest-first and only as much as needed. Runs on both the Anthropic and OpenAI send paths (and `count_tokens`, so the estimate matches what's sent). Also adds a 413 hint pointing the user at `/compact` / fewer images."
     ]
   }
 ];
