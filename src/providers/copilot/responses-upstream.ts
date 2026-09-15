@@ -8,7 +8,9 @@ import { clampEffort } from "../../core/reasoning.js";
 // routes them here instead of the chat path. This is the mirror image of core/responses-inbound.ts
 // (which translates Codex's INBOUND /responses calls); here we SEND /responses to Copilot.
 
-export const RESPONSES_URL = "https://api.githubcopilot.com/responses";
+import { copilotUrl, DEFAULT_COPILOT_INFERENCE_ORIGIN } from "./session.js";
+
+export const RESPONSES_URL = copilotUrl(DEFAULT_COPILOT_INFERENCE_ORIGIN, "/responses");
 
 // ---- request: canonical -> Responses body -------------------------------------------------------
 

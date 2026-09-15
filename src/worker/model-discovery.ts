@@ -1,9 +1,12 @@
-// Mapping depends on the live model list: announcing readiness before discovery finishes lets setup and
-// Claude's picker observe only raw GPT ids for the worker's first few moments. Wait only in opt-in map
-// mode; disabled mode preserves the existing non-blocking startup. Discovery failure still fails open —
-// the worker remains useful with its normal fallback list, just without synthetic aliases.
-export async function discoveryBeforeReady(enabled: boolean, discover: () => Promise<unknown>): Promise<void> {
-  const pending = discover();
-  if (enabled) await pending.catch(() => undefined);
-  else void pending.catch(() => undefined);
+import { CopilotEndpointContractError } from "../providers/copilot/token.js";
+
+// Discovery resolves before readiness so a permanent endpoint-contract failure can stop startup instead of
+// advertising a worker that cannot serve requests. Other discovery failures still fail open: the worker
+// remains useful with its fallback list, just without live capabilities or synthetic aliases.
+export async function discoveryBeforeReady(_enabled: boolean, discover: () => Promise<unknown>): Promise<void> {
+  try {
+    await discover();
+  } catch (error) {
+    if (error instanceof CopilotEndpointContractError) throw error;
+  }
 }

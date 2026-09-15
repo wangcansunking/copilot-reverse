@@ -6,18 +6,21 @@ import { Command } from "commander";
 import { App } from "../tui/app.js";
 import { buildRegistry } from "../tui/slash/commands.js";
 import { DaemonClient } from "../tui/daemon-client.js";
-import { runDeviceLogin, beginDeviceLogin } from "./auth.js";
-import { probeSupervisor } from "../daemon/lifecycle.js";
+import { beginDeviceLogin, GitHubReauthenticationRequiredError, loginGitHubConnection, retrieveGitHubToken, type LoginRequest } from "./auth.js";
+import { runLoginCommand } from "./login-command.js";
+import { ghAuth } from "./gh-auth.js";
+import { ensureDaemon, probeSupervisor, spawnSupervisor } from "../daemon/lifecycle.js";
 import { startSupervisor } from "../supervisor/index.js";
 import { runAssistantTurn } from "../tui/assistant/runtime.js";
 import { makeOnChat } from "../tui/assistant/on-chat.js";
-import { readGhToken, clearGhToken, hasGhTokenFile } from "../shared/creds.js";
+import { readGitHubConnection, clearGitHubConnection, writeGitHubConnection } from "../shared/creds.js";
 import { writeWebIqKey, readWebIqKey, clearWebIqKey, readWebSearchMode, writeWebSearchMode, resolveWebSearchBackend } from "../shared/webiq-key.js";
 import { readClientSetup, writeClientSetup } from "../shared/client-setup.js";
 import { readChatModel, writeChatModel, shouldShowChange, markChangeShown, readClaudeMapEnabled, readClaudeMapSettings, writeClaudeMapSettings, type ClaudeMapSettings } from "../shared/prefs.js";
 import { readAccessMode, readAccessKey, setAccessMode as persistAccessMode, rotateAccessKey } from "../shared/network.js";
 import type { NetworkInfo } from "../tui/screens/network.js";
-import { CopilotTokenStore, isCopilotTokenValid } from "../providers/copilot/token.js";
+import { CopilotAuthError } from "../providers/copilot/token.js";
+import { createWorkerCopilotTokenStore } from "../worker/copilot-session.js";
 import { fetchGithubUser, skuLabel, formatIdentity } from "../providers/copilot/account.js";
 import { fetchModelDiscovery } from "../providers/copilot/models.js";
 import { applyClaude, applyCodex, resetClaude, resetCodex, CLAUDE_ENV_KEYS, CODEX_ENV_KEYS, type Scope } from "../tui/setup/apply.js";
@@ -94,14 +97,31 @@ function networkInfoOf(workerPort: number): NetworkInfo {
 async function launchTui(): Promise<void> {
   installProcessBackstop();
   const cfg = defaultConfig();
-  const existingToken = readGhToken(dataDir());
-  if (!existingToken) {
-    console.log("No GitHub login found — starting device-code login.");
-    await runDeviceLogin(dataDir());
-  } else if (!(await isCopilotTokenValid(existingToken))) {
-    console.log("GitHub login expired — re-authenticating.");
-    await runDeviceLogin(dataDir());
+  let startupConnection = readGitHubConnection(dataDir());
+  let needsLogin = !startupConnection;
+  if (startupConnection) {
+    try {
+      await createWorkerCopilotTokenStore(startupConnection, ghAuth).getSession();
+    } catch (error) {
+      if (error instanceof CopilotAuthError || error instanceof GitHubReauthenticationRequiredError) {
+        console.log(`GitHub login for ${startupConnection.type === "github" ? "github.com" : startupConnection.host} expired.`);
+        needsLogin = true;
+      } else {
+        throw error;
+      }
+    }
   }
+  if (needsLogin) {
+    const result = await runLoginCommand({}, {
+      isTTY: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+      dir: dataDir(),
+      ghAuth,
+      activate: async (connection) => { await createWorkerCopilotTokenStore(connection, ghAuth).getSession(); },
+    });
+    if (!result.completed) return;
+    startupConnection = result.connection ?? null;
+  }
+  if (!startupConnection) return;
 
   // Run the daemon IN-PROCESS — no separate console window pops up. Reuse one if already running.
   let stopSupervisor: (() => void) | undefined;
@@ -139,27 +159,42 @@ async function launchTui(): Promise<void> {
     appVersion: APP_VERSION,
     platform: `${process.platform} node-${process.version}`,
     resetClient,
-    // Clear the stored token and restart the worker (it will report unauthenticated until re-login).
     logout: async () => {
-      clearGhToken(dataDir());
-      await client.restart().catch(() => {});
-      return ["signed out — GitHub token removed", "run /login to sign in again"];
+      await client.stop();
+      clearGitHubConnection(dataDir());
+      return ["disconnected from GitHub", "worker stopped; GitHub CLI credentials were left unchanged", "run /login to sign in again"];
     },
   });
-  // Two-phase /login for the TUI: surface the device code immediately, poll in the background, then
-  // restart the worker so it picks up the new token. The blocking single-call form deadlocked the
-  // Repl (the code stayed hidden behind the poll, so the user could never authorize it).
-  const doLogin = async (show: (lines: string[]) => void): Promise<string[]> => {
-    const { code, complete } = await beginDeviceLogin(dataDir());
-    show([`Open ${code.verification_uri} and enter code: ${code.user_code}`, "waiting for authorization…"]);
-    await complete();
-    // Drop the cached Copilot token so the next get() does a fresh exchange with the just-written
-    // GitHub token (the store re-reads the token on each exchange, so a new instance isn't required —
-    // but resetting clears any Copilot token cached against the old login).
-    tokenStore = new CopilotTokenStore(() => readGhToken(dataDir()));
-    cachedIdentity = undefined; // a new login may be a different user — re-resolve the username
-    await client.restart().catch(() => {});
-    return ["GitHub authorization complete — worker restarting with the new token"];
+  const doLogin = async (request: LoginRequest, show: (lines: string[]) => void): Promise<string[]> => {
+    if (request.type === "github") {
+      const { code, complete } = await beginDeviceLogin(dataDir());
+      show([`Open ${code.verification_uri} and enter code: ${code.user_code}`, "waiting for authorization…"]);
+      await complete();
+    } else {
+      show([`Starting GitHub CLI login for ${request.host}…`]);
+      await loginGitHubConnection(request, dataDir(), { ghAuth });
+    }
+    const connection = readGitHubConnection(dataDir());
+    if (!connection) throw new Error("GitHub login completed without saving a connection");
+    const previous = startupConnection;
+    const candidateStore = createWorkerCopilotTokenStore(connection, ghAuth);
+    try {
+      await candidateStore.getSession();
+      await client.restart();
+    } catch (error) {
+      if (previous) {
+        writeGitHubConnection(previous, dataDir());
+        await client.restart().catch(() => {});
+      } else {
+        clearGitHubConnection(dataDir());
+        await client.stop().catch(() => {});
+      }
+      throw error;
+    }
+    startupConnection = connection;
+    tokenStore = candidateStore;
+    cachedIdentity = undefined;
+    return [`GitHub authorization complete for ${connection.type === "github" ? "github.com" : connection.host} — worker restarted`];
   };
   // Filled in below once we have a token; the assistant prefers a model's real window over the default.
   const modelLimits: Record<string, number> = {};
@@ -170,10 +205,9 @@ async function launchTui(): Promise<void> {
   // Provider form: the store re-reads the GitHub token on each exchange, so a transient unreadable
   // creds.json (Windows lock / partial write) can't poison the store for the session — it recovers on
   // the next clean read, and a genuinely absent token surfaces as a 401 instead of a `token null` send.
-  let tokenStore = new CopilotTokenStore(() => readGhToken(dataDir()));
+  let tokenStore = createWorkerCopilotTokenStore(startupConnection, ghAuth);
   const loadModels = async () => {
-    const token = await tokenStore.get();
-    const discovery = await fetchModelDiscovery(token);
+    const discovery = await fetchModelDiscovery(tokenStore);
     const { ids, limits } = discovery;
     latestModels = ids;
     latestModelsLive = discovery.live;
@@ -193,7 +227,7 @@ async function launchTui(): Promise<void> {
     return out;
   };
   // Pull each model's real context window in the background too, in case the picker never opens.
-  void tokenStore.get().then((t) => fetchModelDiscovery(t)).then((m) => Object.assign(modelLimits, m.limits)).catch(() => {});
+  void fetchModelDiscovery(tokenStore).then((m) => Object.assign(modelLimits, m.limits)).catch(() => {});
 
   // Account facts for the status card: who's logged in (GitHub /user) + their Copilot plan (rides along
   // on the token exchange, so getEntitlement() is free once get() has run). The username is cached
@@ -206,8 +240,12 @@ async function launchTui(): Promise<void> {
     try { await tokenStore.get(); const ent = tokenStore.getEntitlement(); if (ent) plan = skuLabel(ent.sku); }
     catch { /* not logged in / transient — omit plan */ }
     if (cachedIdentity === undefined) {
-      const gh = readGhToken(dataDir());
-      if (gh) { const user = await fetchGithubUser(gh); if (user) cachedIdentity = formatIdentity(user); }
+      const connection = readGitHubConnection(dataDir());
+      if (connection) {
+        const ghToken = await retrieveGitHubToken(connection, ghAuth);
+        const user = await fetchGithubUser({ connection, token: ghToken });
+        if (user) cachedIdentity = formatIdentity(user);
+      }
     }
     return { identity: cachedIdentity, plan };
   };
@@ -247,9 +285,15 @@ async function launchTui(): Promise<void> {
     // hangs until the turn timeout. Reuses the long-lived tokenStore so a valid login is a cached,
     // round-trip-free check between message bursts (its get() caches with a 60s skew).
     async () => {
-      if (!hasGhTokenFile(dataDir())) return "you're signed out — run /login to sign in before chatting";
+      const connection = readGitHubConnection(dataDir());
+      if (!connection) return "you're signed out — run /login to sign in before chatting";
       try { await tokenStore.get(); return null; }
-      catch { return "your GitHub login has expired — run /login to sign in again"; }
+      catch (error) {
+        if (error instanceof CopilotAuthError || error instanceof GitHubReauthenticationRequiredError) {
+          return `your GitHub login for ${connection.type === "github" ? "github.com" : connection.host} has expired — run /login to sign in again`;
+        }
+        return error instanceof Error ? error.message : String(error);
+      }
     },
   );
 
@@ -281,13 +325,14 @@ async function launchTui(): Promise<void> {
   const clientStatus = readClientStatus();
   const account = await resolveAccount().catch(() => ({} as { identity?: string; plan?: string }));
   const startupStatus = summarizeStatus({
-    hasToken: Boolean(readGhToken(dataDir())),
+    hasToken: Boolean(readGitHubConnection(dataDir())),
     tokenValid: true,
     webSearch: resolveWebSearchBackend(readWebSearchMode(dataDir()), Boolean(readWebIqKey(dataDir()))),
     worker: "ready",
     clients: { claude: clientStatus.claude.user || clientStatus.claude.project, codex: clientStatus.codex.user || clientStatus.codex.project },
     identity: account.identity,
     plan: account.plan,
+    githubHost: startupConnection.type === "github" ? "github.com" : startupConnection.host,
   });
 
   app = render(
@@ -362,9 +407,15 @@ async function launchTui(): Promise<void> {
       changeBanner,
       onChangeSeen: () => markChangeShown(dataDir(), CHANGE_ID),
       githubStatus: async () => {
-        const token = readGhToken(dataDir());
-        if (!token) return "signed-out";
-        return (await isCopilotTokenValid(token)) ? "connected" : "expired";
+        const connection = readGitHubConnection(dataDir());
+        if (!connection) return "signed-out";
+        try {
+          await createWorkerCopilotTokenStore(connection, ghAuth).getSession();
+          return "connected";
+        } catch (error) {
+          if (error instanceof CopilotAuthError || error instanceof GitHubReauthenticationRequiredError) return "expired";
+          throw error;
+        }
       },
       // Fresh username + Copilot plan for the live /status card (best-effort).
       accountInfo: resolveAccount,
@@ -374,6 +425,28 @@ async function launchTui(): Promise<void> {
 
 const program = new Command();
 program.name("copilot-reverse").description("copilot-reverse: interactive Copilot proxy").version(APP_VERSION);
-program.command("login").description("GitHub device-code login").action(() => runDeviceLogin(dataDir()));
-program.action(() => { void launchTui(); });
-program.parseAsync(process.argv);
+program.command("login")
+  .description("Login with GitHub.com or GHE.com")
+  .option("--type <type>", "github or ghecom")
+  .option("--host <hostname>", "GHE.com hostname")
+  .action(async (options: { type?: string; host?: string }) => {
+    const cfg = defaultConfig();
+    const client = new DaemonClient(`http://${cfg.bindHost}:${cfg.supervisorPort}`);
+    await runLoginCommand(options, {
+      isTTY: Boolean(process.stdin.isTTY && process.stdout.isTTY),
+      dir: dataDir(),
+      ghAuth,
+      activate: async (connection) => {
+        await createWorkerCopilotTokenStore(connection, ghAuth).getSession();
+        const state = await ensureDaemon({ spawn: spawnSupervisor, probe: probeSupervisor, retries: 60, delayMs: 100 });
+        if (state === "already-running") await client.restart();
+      },
+    });
+  });
+program.action(() => launchTui());
+try {
+  await program.parseAsync(process.argv);
+} catch (error) {
+  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+  process.exitCode = 1;
+}

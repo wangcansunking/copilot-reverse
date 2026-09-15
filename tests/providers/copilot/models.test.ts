@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { fetchModelEndpoints, fetchModelReasoningSupport, fetchModelOneMSupport, fetchModelDiscovery } from "../../../src/providers/copilot/models.js";
+import { CopilotEndpointContractError } from "../../../src/providers/copilot/token.js";
+import type { GitHubConnection } from "../../../src/shared/github-connection.js";
 
 const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
 
@@ -19,6 +21,36 @@ describe("fetchModelDiscovery", () => {
     expect(out.reasoningEfforts["gpt-5.6-sol"]).toEqual(["high"]);
     expect(out.oneM.has("gpt-5.6-sol")).toBe(true);
     expect(out.limits["gpt-5.6-sol"]).toBe(1_100_000);
+  });
+
+
+  it("uses the session inference origin for model discovery", async () => {
+    const source = {
+      get: async () => "legacy-token",
+      getSession: async () => ({
+        token: "enterprise-token", expiresAtMs: 9_999_999_999_000,
+        inferenceOrigin: "https://copilot.acme.ghe.com",
+      }),
+    };
+    const f = vi.fn(async () => json({ data: [{ id: "enterprise-model" }] }));
+
+    const out = await fetchModelDiscovery(source, f as unknown as typeof fetch);
+
+    expect(out.ids).toEqual(["enterprise-model"]);
+    expect(f.mock.calls[0][0]).toBe("https://copilot.acme.ghe.com/models");
+  });
+
+
+  it("propagates endpoint contract errors instead of converting them to offline fallback models", async () => {
+    const error = new CopilotEndpointContractError({ type: "ghecom", host: "acme.ghe.com" } satisfies GitHubConnection);
+    const source = {
+      get: async () => "legacy-token",
+      getSession: async () => { throw error; },
+    };
+    const f = vi.fn();
+
+    await expect(fetchModelDiscovery(source, f as unknown as typeof fetch)).rejects.toBe(error);
+    expect(f).not.toHaveBeenCalled();
   });
 
   it("marks fallback ids as non-live when upstream discovery fails", async () => {

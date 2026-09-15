@@ -1,9 +1,9 @@
 import { createWorkerApp } from "./server.js";
 import { Router } from "./router.js";
 import { CopilotAdapter } from "../providers/copilot/adapter.js";
-import { CopilotTokenStore } from "../providers/copilot/token.js";
 import { fetchModelDiscovery } from "../providers/copilot/models.js";
-import { readGhToken } from "../shared/creds.js";
+import { readGitHubConnection } from "../shared/creds.js";
+import { ghAuth } from "../cli/gh-auth.js";
 import { readWebIqKey, readWebSearchMode, resolveWebSearchBackend } from "../shared/webiq-key.js";
 import { readAccessMode, readAccessKey } from "../shared/network.js";
 import { makeGatewayRunner } from "../core/server-tools.js";
@@ -14,6 +14,7 @@ import { readClaudeMapSettings } from "../shared/prefs.js";
 import { resolveClaudeModelMap } from "../core/claude-model-map.js";
 import type { WorkerToSupervisor } from "../shared/ipc.js";
 import { discoveryBeforeReady } from "./model-discovery.js";
+import { createWorkerCopilotTokenStore } from "./copilot-session.js";
 
 // Sending after the parent tore down the IPC channel throws ERR_IPC_CHANNEL_CLOSED; guard it so a
 // crash-time report can't itself become a second, masking crash.
@@ -23,10 +24,10 @@ const cfg = defaultConfig();
 const port = Number(process.env.WORKER_PORT ?? cfg.workerPort);
 const host = process.env.BIND_HOST ?? cfg.bindHost;
 
-const gh = readGhToken(dataDir());
-if (!gh) { send({ type: "error", message: "no GitHub token; run `copilot-reverse` and /login first" }); process.exit(1); }
+const connection = readGitHubConnection(dataDir());
+if (!connection) { send({ type: "error", message: "no GitHub connection; run `copilot-reverse` and /login first" }); process.exit(1); }
 
-const tokenStore = new CopilotTokenStore(gh);
+const tokenStore = createWorkerCopilotTokenStore(connection, ghAuth);
 // Per-model supported_endpoints, populated lazily from the live model list (same source as the model
 // ids). The adapter reads through this map so responses-only models (e.g. gpt-5.5) route to /responses
 // as soon as discovery resolves; until then the map is empty and the /chat 400 safety net covers it.
@@ -52,7 +53,7 @@ const router = new Router(
 // One coherent upstream snapshot feeds fuzzy matching, endpoint/reasoning routing, and context metadata.
 // Mapped aliases are never synthesized from the offline fallback alone: Router requires a live `available`
 // list before publishing or resolving them.
-const discoverModels = () => tokenStore.get().then((t) => fetchModelDiscovery(t)).then((discovery) => {
+const discoverModels = () => fetchModelDiscovery(tokenStore).then((discovery) => {
   router.setAvailableModels(discovery.ids, discovery.live);
   router.setOneMModels(discovery.oneM);
   router.setModelLimits(discovery.limits);

@@ -1,5 +1,7 @@
+import { CopilotEndpointContractError } from "./token.js";
+import { copilotUrl, DEFAULT_COPILOT_INFERENCE_ORIGIN, readCopilotSession, type CopilotSessionSource } from "./session.js";
+
 // Live model list from Copilot. Falls back to a curated list if the endpoint is unavailable.
-const MODELS_URL = "https://api.githubcopilot.com/models";
 export const FALLBACK_MODELS = ["gpt-4o", "gpt-4o-mini", "claude-haiku-4-5", "claude-sonnet-5", "claude-opus-5", "claude-fable-5-1", "o3-mini"];
 
 const HEADERS = (token: string) => ({
@@ -21,21 +23,27 @@ export interface CopilotModelInfo {
   };
 }
 
-async function getModels(token: string, fetchFn: typeof fetch, timeoutMs: number): Promise<CopilotModelInfo[] | null> {
+type TokenOrSessionSource = string | CopilotSessionSource;
+
+async function getModels(source: TokenOrSessionSource, fetchFn: typeof fetch, timeoutMs: number): Promise<CopilotModelInfo[] | null> {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
-    const res = await fetchFn(MODELS_URL, { headers: HEADERS(token), signal: ctrl.signal });
+    const session = typeof source === "string"
+      ? { token: source, inferenceOrigin: DEFAULT_COPILOT_INFERENCE_ORIGIN }
+      : await readCopilotSession(source);
+    const res = await fetchFn(copilotUrl(session.inferenceOrigin, "/models"), { headers: HEADERS(session.token), signal: ctrl.signal });
     if (!res.ok) return null;
     return ((await res.json()) as { data?: unknown[] }).data as never ?? [];
-  } catch {
+  } catch (error) {
+    if (typeof source !== "string" && error instanceof CopilotEndpointContractError) throw error;
     return null;
   } finally {
     clearTimeout(timer);
   }
 }
 
-export async function fetchCopilotModels(token: string, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string[]> {
+export async function fetchCopilotModels(token: TokenOrSessionSource, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string[]> {
   const data = await getModels(token, fetchFn, timeoutMs);
   if (!data) return FALLBACK_MODELS;
   const ids = [...new Set(data.map((m) => m.id).filter((x): x is string => Boolean(x)))];
@@ -45,7 +53,7 @@ export async function fetchCopilotModels(token: string, fetchFn: typeof fetch = 
 // Map of model id -> the Copilot API endpoints it supports (e.g. ["/responses","ws:/responses"]).
 // Used to route each request to the right upstream: newer gpt-5.x models are /responses-only and
 // reject /chat/completions. Returns {} on failure so the adapter falls back to chat/completions.
-export async function fetchModelEndpoints(token: string, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Record<string, string[]>> {
+export async function fetchModelEndpoints(token: TokenOrSessionSource, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Record<string, string[]>> {
   const data = await getModels(token, fetchFn, timeoutMs);
   if (!data) return {};
   const out: Record<string, string[]> = {};
@@ -60,7 +68,7 @@ export async function fetchModelEndpoints(token: string, fetchFn: typeof fetch =
 // gpt-4o) is a hard 400 (`invalid_reasoning_effort`). Returns an empty set on failure/timeout, so the
 // adapter omits reasoning_effort until discovery resolves — safe (a turn just runs without reasoning)
 // rather than a 400. Only ids with a non-empty reasoning_effort array are included.
-export async function fetchModelReasoningSupport(token: string, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Set<string>> {
+export async function fetchModelReasoningSupport(token: TokenOrSessionSource, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Set<string>> {
   const data = await getModels(token, fetchFn, timeoutMs);
   const out = new Set<string>();
   if (!data) return out;
@@ -75,7 +83,7 @@ export async function fetchModelReasoningSupport(token: string, fetchFn: typeof 
 // instead of a hardcoded list — a new 1M model (claude-sonnet-5, or any future family) badges with zero
 // code changes. Threshold 800K matches clients.ts's context-window suffix rule (max_prompt_tokens 936K
 // also clears it). Returns an empty set on failure/timeout, so callers fall back to the default set.
-export async function fetchModelOneMSupport(token: string, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Set<string>> {
+export async function fetchModelOneMSupport(token: TokenOrSessionSource, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Set<string>> {
   const data = await getModels(token, fetchFn, timeoutMs);
   const out = new Set<string>();
   if (!data) return out;
@@ -88,7 +96,7 @@ export async function fetchModelOneMSupport(token: string, fetchFn: typeof fetch
 
 // Map of model id -> its real input/context window, used to size auto-compaction per model and
 // to show the window in the picker. Returns {} on failure/timeout so callers fall back gracefully.
-export async function fetchModelLimits(token: string, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Record<string, number>> {
+export async function fetchModelLimits(token: TokenOrSessionSource, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<Record<string, number>> {
   const data = await getModels(token, fetchFn, timeoutMs);
   if (!data) return {};
   const out: Record<string, number> = {};
@@ -114,7 +122,7 @@ export interface CopilotModelDiscovery {
 
 // One upstream request supplies every model capability consumer. Besides avoiding five identical calls,
 // this guarantees aliases are filtered and badged from one coherent snapshot of the account's model list.
-export async function fetchModelDiscovery(token: string, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<CopilotModelDiscovery> {
+export async function fetchModelDiscovery(token: TokenOrSessionSource, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<CopilotModelDiscovery> {
   const data = await getModels(token, fetchFn, timeoutMs);
   if (!data) return { ids: FALLBACK_MODELS, live: false, endpoints: {}, reasoning: new Set(), reasoningEfforts: {}, oneM: new Set(), limits: {} };
   const ids = [...new Set(data.map((m) => m.id).filter((id): id is string => Boolean(id)))];

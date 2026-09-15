@@ -77,6 +77,27 @@ without Copilot quota.
 | EP-48 | custom backend has a sub-1M window; removed legacy aliases are submitted | Sonnet metadata/context follows the custom backend without `[1m]`; old Opus 4.8 and Sonnet 4.6 receive no compatibility routing |
 | EP-49 | live discovery already contains a real Claude model with a compatibility identity | the real Claude entry is retained once, keeps its own context metadata, and routes to the genuine Claude backend rather than the mapped GPT target |
 
+### GitHub.com and GHE.com login (EP-50 … EP-60)
+
+The login lifecycle uses one active connection. GitHub.com retains the embedded device flow and never depends on
+GitHub CLI. GHE.com stores only its validated hostname, obtains its token from `gh`, and fails closed when its
+Copilot exchange does not provide a trusted inference endpoint. Hermetic tests inject process and HTTP boundaries;
+the final cases require a real GHE.com account.
+
+| ID | Scenario | Expected result |
+|----|----------|-----------------|
+| EP-50 | Existing `{ "ghToken": "…" }` credentials start after upgrade | They resolve as the active GitHub.com connection with no migration prompt or `gh` invocation |
+| EP-51 | Interactive login selects GitHub.com while `gh` is absent | Existing device-code flow completes; no executable check, install hint, or `gh` call occurs |
+| EP-52 | Interactive login selects GHE.com while `gh` is absent | Login stops before network/auth, preserves the previous connection, and shows official GitHub CLI installation guidance |
+| EP-53 | GHE.com hostname validation matrix | A valid mixed-case `SUBDOMAIN.ghe.com` normalizes; schemes, paths, ports, credentials, root domains, malformed labels, Unicode/whitespace, and suffix lookalikes fail before credentials are read |
+| EP-54 | Successful GHE.com login | `gh auth login --hostname HOST` is invoked without a shell; only type/host metadata is persisted and no enterprise token appears in files or output |
+| EP-55 | Failed/cancelled login, connection switch, and `/logout` | Failure preserves the old connection; success atomically replaces it; logout clears only copilot-reverse state and never invokes `gh auth logout` |
+| EP-56 | Non-TTY `login` argument matrix | `--type github` works without `--host`; `--type ghecom` requires a valid `--host`; missing/contradictory arguments fail before auth |
+| EP-57 | GHE.com account and Copilot token requests | `/user` and `/copilot_internal/v2/token` use `https://api.SUBDOMAIN.ghe.com`; runtime token comes from `gh auth token --hostname HOST` and is never logged |
+| EP-58 | GHE.com exchange returns a trusted inference endpoint | Models, chat, Responses, and borrowed search all use the same validated session origin; refresh atomically replaces token and origin |
+| EP-59 | GHE.com exchange omits or returns an invalid inference endpoint | Enterprise requests fail with an endpoint-contract error before any request reaches `api.githubcopilot.com` |
+| EP-60 | Real GHE.com acceptance | Real login, identity, entitlement, discovery, Claude turn, Codex turn, tool loop, expiry recovery, and non-destructive logout all pass; otherwise release remains blocked |
+
 ### Multi-turn continuity (EP-39 … EP-41)
 
 The Anthropic/OpenAI wire is **stateless** — the client (Claude Code on `--resume`, or an interactive
