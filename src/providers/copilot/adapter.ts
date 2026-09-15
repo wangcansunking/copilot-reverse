@@ -2,12 +2,10 @@ import { randomUUID } from "node:crypto";
 import type { ProviderAdapter } from "../types.js";
 import type { CanonicalRequest, CanonicalResponse, CanonicalChunk, CanonicalMessage, ContentBlock } from "../../core/canonical.js";
 import { ToolCallExtractor, type ExtractEvent } from "../../core/tool-xml.js";
-import { canonicalToResponsesBody, parseResponsesResult, streamResponses, RESPONSES_URL } from "./responses-upstream.js";
-import { oneLine } from "../../shared/format.js";
+import { canonicalToResponsesBody, parseResponsesResult, streamResponses } from "./responses-upstream.js";
+import { copilotUrl, readCopilotSession, type CopilotSessionSource } from "./session.js";
+import { upstreamErrorDetail } from "./error-detail.js";
 import { clampEffort } from "../../core/reasoning.js";
-
-const CHAT_URL = "https://api.githubcopilot.com/chat/completions";
-interface TokenSource { get(): Promise<string> }
 
 // A non-ok HTTP response from Copilot, carrying the upstream status so the request handlers can
 // classify it: a permanent 4xx (bad model, malformed request) must surface as a TERMINAL client
@@ -105,21 +103,13 @@ function headers(token: string) {
   return { authorization: `Bearer ${token}`, "content-type": "application/json", "editor-version": "vscode/1.95.0", "copilot-integration-id": "vscode-chat" };
 }
 
-// Copilot puts the real reason (bad model, oversized prompt, unsupported tool, …) in the body —
-// surface it instead of a bare status code so failures are diagnosable. Flatten it to one line:
-// a 502 returns a whole HTML page, and the raw newlines would later shatter the bordered /logs card.
-async function errorDetail(res: Response): Promise<string> {
-  try { const t = oneLine(await res.text(), 400); return t ? ` — ${t}` : ""; }
-  catch { return ""; }
-}
-
 export class CopilotAdapter implements ProviderAdapter {
   readonly name = "copilot";
   // endpointsFor(model) -> the model's supported_endpoints (e.g. ["/responses"]). When known and it
   // omits /chat/completions, route to /responses; unknown ([]) keeps the chat path (with a 400 net).
   // supportsReasoningFn(model) -> whether the model advertises reasoning_effort (gates the /chat field).
   constructor(
-    private tokenStore: TokenSource,
+    private tokenStore: CopilotSessionSource,
     private fetchFn: typeof fetch = fetch,
     private endpointsFor?: EndpointsFor,
     private supportsReasoningFn?: SupportsReasoning,
@@ -147,10 +137,10 @@ export class CopilotAdapter implements ProviderAdapter {
 
   async complete(req: CanonicalRequest): Promise<CanonicalResponse> {
     if (this.usesResponses(req.model)) return this.completeResponses(req);
-    const token = await this.tokenStore.get();
-    const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: false }, this.supportsReasoning(req.model), this.reasoningEffortsFor?.(req.model))) });
+    const session = await readCopilotSession(this.tokenStore);
+    const res = await this.fetchFn(copilotUrl(session.inferenceOrigin, "/chat/completions"), { method: "POST", headers: headers(session.token), body: JSON.stringify(buildBody({ ...req, stream: false }, this.supportsReasoning(req.model), this.reasoningEffortsFor?.(req.model))) });
     if (!res.ok) {
-      const detail = await errorDetail(res);
+      const detail = await upstreamErrorDetail(res, session.token);
       // Safety net: a responses-capable model rejected on /chat — retry once on /responses. ONLY when
       // the model actually advertises /responses; otherwise a matching 400 is a real /chat error to surface.
       if (res.status === 400 && this.canUseResponses(req.model) && RESPONSES_HINT_RE.test(detail)) return this.completeResponses(req);
@@ -188,24 +178,24 @@ export class CopilotAdapter implements ProviderAdapter {
 
   // /responses variants — used for responses-only models and as the /chat 400 safety-net target.
   private async completeResponses(req: CanonicalRequest): Promise<CanonicalResponse> {
-    const token = await this.tokenStore.get();
-    const res = await this.fetchFn(RESPONSES_URL, { method: "POST", headers: headers(token), body: JSON.stringify(canonicalToResponsesBody({ ...req, stream: false }, this.reasoningEffortsFor?.(req.model))) });
-    if (!res.ok) throw new UpstreamError(res.status, `copilot responses failed: ${res.status}${await errorDetail(res)}`);
+    const session = await readCopilotSession(this.tokenStore);
+    const res = await this.fetchFn(copilotUrl(session.inferenceOrigin, "/responses"), { method: "POST", headers: headers(session.token), body: JSON.stringify(canonicalToResponsesBody({ ...req, stream: false }, this.reasoningEffortsFor?.(req.model))) });
+    if (!res.ok) throw new UpstreamError(res.status, `copilot responses failed: ${res.status}${await upstreamErrorDetail(res, session.token)}`);
     return { ...parseResponsesResult(await res.json()), model: req.model };
   }
   private async *streamResponsesReq(req: CanonicalRequest): AsyncIterable<CanonicalChunk> {
-    const token = await this.tokenStore.get();
-    const res = await this.fetchFn(RESPONSES_URL, { method: "POST", headers: headers(token), body: JSON.stringify(canonicalToResponsesBody({ ...req, stream: true }, this.reasoningEffortsFor?.(req.model))) });
-    if (!res.ok || !res.body) throw new UpstreamError(res.status, `copilot responses stream failed: ${res.status}${await errorDetail(res)}`);
+    const session = await readCopilotSession(this.tokenStore);
+    const res = await this.fetchFn(copilotUrl(session.inferenceOrigin, "/responses"), { method: "POST", headers: headers(session.token), body: JSON.stringify(canonicalToResponsesBody({ ...req, stream: true }, this.reasoningEffortsFor?.(req.model))) });
+    if (!res.ok || !res.body) throw new UpstreamError(res.status, `copilot responses stream failed: ${res.status}${await upstreamErrorDetail(res, session.token)}`);
     yield* streamResponses(res);
   }
 
   async *stream(req: CanonicalRequest): AsyncIterable<CanonicalChunk> {
     if (this.usesResponses(req.model)) { yield* this.streamResponsesReq(req); return; }
-    const token = await this.tokenStore.get();
-    const res = await this.fetchFn(CHAT_URL, { method: "POST", headers: headers(token), body: JSON.stringify(buildBody({ ...req, stream: true }, this.supportsReasoning(req.model), this.reasoningEffortsFor?.(req.model))) });
+    const session = await readCopilotSession(this.tokenStore);
+    const res = await this.fetchFn(copilotUrl(session.inferenceOrigin, "/chat/completions"), { method: "POST", headers: headers(session.token), body: JSON.stringify(buildBody({ ...req, stream: true }, this.supportsReasoning(req.model), this.reasoningEffortsFor?.(req.model))) });
     if (!res.ok || !res.body) {
-      const detail = await errorDetail(res);
+      const detail = await upstreamErrorDetail(res, session.token);
       if (res.status === 400 && this.canUseResponses(req.model) && RESPONSES_HINT_RE.test(detail)) { yield* this.streamResponsesReq(req); return; }
       throw new UpstreamError(res.status, `copilot stream failed: ${res.status}${detail}`);
     }

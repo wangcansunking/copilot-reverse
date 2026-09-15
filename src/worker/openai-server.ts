@@ -62,13 +62,13 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
       const message = hint ? `${raw}\n${hint}` : raw;
       // A permanent upstream 4xx (bad model, invalid body) is terminal — surface its real status so
       // the client fails fast instead of retrying a 502-class error to its turn timeout (#50 P1).
-      const { status } = classifyError(err);
+      const { status, terminal } = classifyError(err);
       if (!res.headersSent) {
         res.status(status).json({ error: { message } });
       } else {
         // Stream already opened: surface the failure as a final error chunk so the client
         // sees it instead of a silently truncated response, then close the stream.
-        res.write(`data: ${JSON.stringify({ error: { message } })}\n\n`);
+        res.write(`data: ${JSON.stringify({ error: { type: terminal ? "invalid_request_error" : "api_error", message } })}\n\n`);
         res.end();
       }
       metric(status, { error: message });
@@ -122,11 +122,11 @@ export function mountOpenAI(app: Express, router: Router, onMetric: MetricSink):
       // Terminal upstream 4xx → its real status; retriable (5xx/network/429) → 502. Fast-fail (#50 P1).
       // The Responses error shape stays a flat {type:"error"} (Codex's contract); the STATUS carries
       // the fast-fail — a non-stream 400 no longer masquerades as a retriable 502.
-      const { status } = classifyError(err);
+      const { status, terminal } = classifyError(err);
       if (!res.headersSent) {
         res.status(status).json({ error: { type: "error", message } });
       } else {
-        res.write(`data: ${JSON.stringify({ type: "error", message })}\n\n`);
+        res.write(`data: ${JSON.stringify({ type: "error", error: { type: terminal ? "invalid_request_error" : "api_error", message } })}\n\n`);
         res.end();
       }
       metric(status, { error: message });

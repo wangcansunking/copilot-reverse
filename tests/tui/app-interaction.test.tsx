@@ -140,7 +140,7 @@ describe("TUI: /login surfaces the device code before the poll resolves", () => 
     // can't see. The login prop must push the code to the UI, then resolve when authorized.
     let releaseToken!: () => void;
     const tokenGate = new Promise<void>((r) => { releaseToken = r; });
-    const login = (show: (lines: string[]) => void) => {
+    const login = (_request: { type: "github" } | { type: "ghecom"; host: string }, show: (lines: string[]) => void) => {
       show(["Open https://github.com/login/device and enter code: AB-12"]);
       return tokenGate.then(() => ["GitHub authorization complete."]);
     };
@@ -148,6 +148,9 @@ describe("TUI: /login surfaces the device code before the poll resolves", () => 
     await tick();
     stdin.write("/login");
     await tick();
+    stdin.write("\r");
+    await tick(80);
+    expect(lastFrame()).toContain("GitHub.com");
     stdin.write("\r");
     await tick(80);
     // The code is on screen WHILE the token poll is still pending (gate not released).
@@ -162,7 +165,7 @@ describe("TUI: /login surfaces the device code before the poll resolves", () => 
   it("renders an error card (not a crash) when authorization fails", async () => {
     // A rejected poll (e.g. expired/incorrect device code) must surface as an error card. The old
     // path let the rejection escape as an unhandled rejection and killed the whole process.
-    const login = (show: (lines: string[]) => void) => {
+    const login = (_request: { type: "github" } | { type: "ghecom"; host: string }, show: (lines: string[]) => void) => {
       show(["Open https://github.com/login/device and enter code: AB-12"]);
       return Promise.reject(new Error("authorization failed: incorrect_device_code"));
     };
@@ -170,6 +173,8 @@ describe("TUI: /login surfaces the device code before the poll resolves", () => 
     await tick();
     stdin.write("/login");
     await tick();
+    stdin.write("\r");
+    await tick(80);
     stdin.write("\r");
     await tick(80);
     const f = lastFrame() ?? "";
@@ -184,10 +189,10 @@ describe("TUI: /login surfaces the device code before the poll resolves", () => 
     // and polling a superseded code fails with incorrect_device_code. Only one flow should start.
     let starts = 0;
     const gate = new Promise<string[]>(() => {}); // never resolves — login stays pending
-    const login = (show: (lines: string[]) => void) => { starts++; show([`code ${starts}`]); return gate; };
+    const login = (_request: { type: "github" } | { type: "ghecom"; host: string }, show: (lines: string[]) => void) => { starts++; show([`code ${starts}`]); return gate; };
     const { stdin } = render(<App registry={reg()} title="m" login={login} />);
     await tick();
-    stdin.write("/login"); await tick(); stdin.write("\r"); await tick(60);
+    stdin.write("/login"); await tick(); stdin.write("\r"); await tick(60); stdin.write("\r"); await tick(60);
     stdin.write("/login"); await tick(); stdin.write("\r"); await tick(60);
     expect(starts).toBe(1);
   });

@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useInput } from "ink";
+import { Box, Text, useInput, useStdin } from "ink";
 import { loadingVerb, oneLine } from "../shared/format.js";
 import { Repl, type CommandHint } from "./repl.js";
 import { SetupWizard, type SetupClient } from "./setup/wizard.js";
@@ -9,6 +9,8 @@ import { WebIqKeyScreen } from "./screens/webiq-key.js";
 import { NetworkScreen, type NetworkInfo, type NetworkAction } from "./screens/network.js";
 import { ClaudeMapScreen, type ClaudeMapSaveResult } from "./screens/claude-map.js";
 import { SkillScreen } from "./screens/skill.js";
+import { GitHubLoginScreen } from "./screens/github-login.js";
+import type { LoginRequest } from "../cli/auth.js";
 import type { SkillEntry } from "./skills/catalog.js";
 import { summarizeStatus, githubLoginState, type StatusSummary, type GithubLoginState } from "./status-summary.js";
 import { remoteConfigBlocks } from "./setup/remote-config.js";
@@ -29,7 +31,7 @@ type Entry =
   | { type: "metrics"; agg: Aggregate; day: Aggregate; errors: string[] }
   | { type: "help"; commands: CommandHint[] };
 
-type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | { kind: "webiq-key" } | { kind: "network" } | { kind: "claude-map" } | { kind: "skill" } | null;
+type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | { kind: "webiq-key" } | { kind: "network" } | { kind: "claude-map" } | { kind: "skill" } | { kind: "github-login" } | null;
 
 const stateColor: Record<WorkerState, string> = {
   ready: theme.ready, starting: theme.starting, crashed: theme.crashed, unhealthy: theme.unhealthy,
@@ -56,7 +58,7 @@ function statusCard(s: StatusSummary, extra: string[] = [], clients?: ClientStat
   // Fold in who's logged in + their Copilot plan when connected: "✓ connected · Can Wang (canwa) ·
   // Copilot Enterprise". Each segment is appended only when present, so a failed/pending lookup just
   // shows "✓ connected" with no dangling separator.
-  const ghLine = [gh, s.identity, s.plan].filter(Boolean).join(" · ");
+  const ghLine = [gh, s.githubHost, s.identity, s.plan].filter(Boolean).join(" · ");
   const web = s.webSearch === "webiq" ? "✓ via WebIQ" : s.webSearch === "copilot" ? "✓ via Copilot (native)" : "✗ unavailable — run /webiq";
   // Per-scope + model when we have the file-derived detail; else fall back to the simple flag.
   const scope = (sc?: { on: boolean; model?: string }) => sc?.on ? `✓ ${sc.model ? sc.model.replace(/\[1m\]$/, "") : "on"}` : "○";
@@ -102,10 +104,9 @@ export interface AppProps {
   // Persists one complete draft and restarts the worker. Restart failure is represented separately so
   // the UI can truthfully report that preferences were saved while activation remains incomplete.
   saveClaudeMap?: (settings: ClaudeMapSettings) => Promise<ClaudeMapSaveResult>;
-  // Device-code login. `show` pushes the verification URL + code to the UI immediately; the
-  // returned promise resolves with a completion message once the user authorizes. The two-phase
-  // shape is required: a single blocking call would hide the code behind the token poll.
-  login?: (show: (lines: string[]) => void) => Promise<string[]>;
+  // The login screen chooses a provider first. GitHub.com then uses the two-phase device flow so its
+  // verification code is visible while polling; GHE.com delegates the interactive login to GitHub CLI.
+  login?: (request: LoginRequest, show: (lines: string[]) => void) => Promise<string[]>;
   // Web search backend control. /webiq opts into Microsoft Web IQ (enableWebiq stores the key + flips
   // mode); disableWebiq (/webiq clean) clears the key. webSearchBackend reports the RESOLVED active
   // backend (copilot | webiq | unavailable), read live so the HUD/status reflect it.
@@ -255,11 +256,13 @@ export function App({
   const [net, setNet] = useState<NetworkInfo | undefined>(() => networkInfo?.());
   // GitHub login state, kept fresh by the supervisor heartbeat surfaced through the 2s status poll.
   const [github, setGithub] = useState<GithubLoginState | undefined>(startupStatus?.github);
+  const [githubHost, setGithubHost] = useState<string | undefined>(startupStatus?.githubHost);
   const [model, setModel] = useState(initialModel);
   const [screen, setScreen] = useState<Screen>(pickModelOnStart && loadModels ? { kind: "model" } : null);
   const [, setNow] = useState(0); // ticks the live loading line while the assistant streams
   const abortRef = useRef<AbortController | null>(null); // current turn's interrupt handle
-  const loginInFlight = useRef(false); // guards against starting a second device-login flow
+  const loginInFlight = useRef(false); // guards against starting a second login flow
+  const { setRawMode, isRawModeSupported } = useStdin();
   const add = (e: Entry) => setEntries((p) => [...p, e].slice(-100));
   // Re-read the real config files, but keep the previous object when nothing changed so the 2s poll
   // doesn't force a full-frame repaint (see sameStatus). webBackend is a string and already bails on
@@ -280,7 +283,10 @@ export function App({
         const s = await statusSource?.();
         if (alive && s) {
           setState(s.workerState);
-          if (s.github) setGithub(githubLoginState(s.github.hasToken, s.github.ok)); // live login badge
+          if (s.github) {
+            setGithub(githubLoginState(s.github.hasToken, s.github.ok));
+            setGithubHost(s.github.host);
+          }
         }
       } catch { /* daemon momentarily down */ }
       if (alive) refreshStatus(); // HUD reflects the real config files, even if edited externally
@@ -325,7 +331,12 @@ export function App({
       // Render the live status overview (same card as startup), then the worker restart history.
       // /status is an explicit "is my login OK right now?" — do the live check when wired (the cached
       // heartbeat can be up to ~60s stale), falling back to the cached/seed value only if it isn't.
-      const ghState = githubStatus ? await githubStatus() : (github ?? startupStatus?.github ?? "signed-out");
+      let ghState: GithubLoginState = github ?? startupStatus?.github ?? "signed-out";
+      let githubError: string | undefined;
+      if (githubStatus) {
+        try { ghState = await githubStatus(); }
+        catch (error) { githubError = error instanceof Error ? error.message : String(error); }
+      }
       let worker = state, restarts: string[] = [];
       try {
         const s = await statusSource?.();
@@ -340,8 +351,13 @@ export function App({
         clients: { claude: status.claude.user || status.claude.project, codex: status.codex.user || status.codex.project },
         identity: acct.identity ?? startupStatus?.identity,
         plan: acct.plan ?? startupStatus?.plan,
+        githubHost,
       });
-      add(statusCard(summary, restarts.length ? ["", "recent restarts:", ...restarts] : [], status));
+      const extra = [
+        ...(githubError ? [`GitHub check   ${githubError}`] : []),
+        ...(restarts.length ? ["", "recent restarts:", ...restarts] : []),
+      ];
+      add(statusCard(summary, extra, status));
       return;
     }
     if (t === "/config" && info) { setScreen({ kind: "config" }); return; }
@@ -355,16 +371,8 @@ export function App({
       return;
     }
     if (t === "/login" && login) {
-      // Show the verification URL + code right away, then resolve a completion card once the user
-      // authorizes. Done as a special case (not a registry command) because the slash registry only
-      // renders a command's final return value — it can't surface the code mid-poll. Guarded so a
-      // double Enter doesn't start two device-code flows (polling a superseded code 401s).
       if (loginInFlight.current) { add({ type: "card", title: "/login", tone: "info", lines: ["already waiting for authorization…"] }); return; }
-      loginInFlight.current = true;
-      void login((lines) => add({ type: "card", title: "/login", tone: "info", lines }))
-        .then((lines) => add({ type: "card", title: "/login", tone: "ok", lines }))
-        .catch((e) => add({ type: "card", title: "/login", tone: "error", lines: [`login failed: ${e instanceof Error ? e.message : String(e)}`] }))
-        .finally(() => { loginInFlight.current = false; });
+      setScreen({ kind: "github-login" });
       return;
     }
     if (setup && loadModels && (t === "/setup-claude" || t === "/setup-codex")) {
@@ -530,6 +538,25 @@ export function App({
       }
     };
     body = <NetworkScreen info={net} onAction={onNet} />;
+  } else if (screen?.kind === "github-login" && login) {
+    body = (
+      <GitHubLoginScreen
+        onSubmit={(request) => {
+          if (loginInFlight.current) return;
+          loginInFlight.current = true;
+          setScreen(null);
+          if (request.type === "ghecom" && isRawModeSupported) setRawMode(false);
+          void login(request, (lines) => add({ type: "card", title: "/login", tone: "info", lines }))
+            .then((lines) => add({ type: "card", title: "/login", tone: "ok", lines }))
+            .catch((e) => add({ type: "card", title: "/login", tone: "error", lines: [`login failed: ${e instanceof Error ? e.message : String(e)}`] }))
+            .finally(() => {
+              if (request.type === "ghecom" && isRawModeSupported) setRawMode(true);
+              loginInFlight.current = false;
+            });
+        }}
+        onCancel={() => { setScreen(null); add({ type: "system", text: "login cancelled" }); }}
+      />
+    );
   } else if (screen?.kind === "skill" && installSkill) {
     body = (
       <SkillScreen

@@ -3,6 +3,22 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-09-15 (GitHub.com + GHE.com login)** — added an interactive two-provider login flow while
+  preserving GitHub.com's embedded device authorization with no GitHub CLI dependency. GHE.com validates
+  `SUBDOMAIN.ghe.com`, delegates credentials to `gh`, stores only connection metadata, routes GitHub REST
+  and Copilot inference through a connection-bound session, and fails closed on missing/untrusted
+  enterprise endpoints. Verification after final review fixes: TypeScript build clean; **906/906 full
+  Vitest tests** and **100/100 Vitest E2E passed** under Node 25 (matching the installed native SQLite
+  ABI). The existing live GitHub.com integration passed **10/11**; token exchange, discovery, OpenAI,
+  Anthropic streaming/usage, tokenizer and cache guards passed, while the pre-existing nondeterministic
+  extended-thinking case returned an empty answer once. Real GHE.com (`msft.ghe.com`) verification
+  authenticated through `gh`, discovered `copilot-api.msft.ghe.com`, returned **31 live models**, and
+  completed an isolated worker Anthropic round-trip on `gpt-5.3-codex` with exact answer `GHE_OK`.
+  The actual Codex 0.145.0 and Claude Code 2.1.220 CLIs were then driven through a temporary worker on
+  port 17991 and returned exact `CODEX_GHE_OK` and `CLAUDE_GHE_OK`; a real Codex shell tool loop then
+  created a proof file containing `CODEX_GHE_TOOL_OK`. The existing 7890/7891 service was not stopped or
+  replaced. Docker verification was not run because Docker Desktop's Linux engine was unavailable.
+
 - **2026-09-07 (current Claude identities + customizable GPT map)** — `/claude-map` now opens one
   interactive editor for the enabled state and four current identities: Fable 5.1→gpt-6-astra,
   Opus 5→gpt-5.6-sol, Sonnet 5→gpt-5.6-sol-fast, and Haiku 4.5→gpt-5.6-luna. Per-model choices are
