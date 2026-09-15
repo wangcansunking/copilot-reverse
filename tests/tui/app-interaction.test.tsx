@@ -134,6 +134,34 @@ describe("TUI: /metrics styled card", () => {
 });
 
 describe("TUI: /login surfaces the device code before the poll resolves", () => {
+  it("unmounts Ink input handlers before starting interactive GHE.com login", async () => {
+    let frameWhenLoginStarted = "";
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let getFrame = (): string | undefined => undefined;
+    let readableListenersWhenLoginStarted = -1;
+    let inputStream: NodeJS.ReadableStream | undefined;
+    const login = vi.fn(async () => {
+      frameWhenLoginStarted = getFrame() ?? "";
+      readableListenersWhenLoginStarted = inputStream?.listenerCount("readable") ?? -1;
+      await gate;
+      return ["GitHub authorization complete."];
+    });
+    const { stdin, lastFrame } = render(<App registry={reg()} title="m" login={login} />);
+    inputStream = stdin;
+    getFrame = lastFrame;
+    await tick();
+    stdin.write("/login"); await tick(); stdin.write("\r"); await tick(60);
+    stdin.write("\x1b[B"); await tick(); stdin.write("\r"); await tick(60);
+    stdin.write("acme.ghe.com"); await tick(); stdin.write("\r"); await tick(60);
+
+    expect(login).toHaveBeenCalledWith({ type: "ghecom", host: "acme.ghe.com" }, expect.any(Function));
+    expect(frameWhenLoginStarted).toContain("GitHub CLI owns this terminal");
+    expect(readableListenersWhenLoginStarted).toBe(0);
+    expect(lastFrame()).toContain("GitHub CLI owns this terminal");
+    release();
+  });
+
   it("renders the verification URL + code immediately, not buffered behind the token poll", async () => {
     // Reproduces the deadlock: the old /login buffered its device-code line and only returned
     // (and thus rendered) after pollForToken resolved — but the user can't authorize a code they

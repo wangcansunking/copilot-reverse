@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { Box, Text, useInput, useStdin } from "ink";
+import { Box, Text, useInput } from "ink";
 import { loadingVerb, oneLine } from "../shared/format.js";
 import { Repl, type CommandHint } from "./repl.js";
 import { SetupWizard, type SetupClient } from "./setup/wizard.js";
@@ -31,7 +31,7 @@ type Entry =
   | { type: "metrics"; agg: Aggregate; day: Aggregate; errors: string[] }
   | { type: "help"; commands: CommandHint[] };
 
-type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | { kind: "webiq-key" } | { kind: "network" } | { kind: "claude-map" } | { kind: "skill" } | { kind: "github-login" } | null;
+type Screen = { kind: "model" } | { kind: "setup"; client: SetupClient } | { kind: "config" } | { kind: "webiq-key" } | { kind: "network" } | { kind: "claude-map" } | { kind: "skill" } | { kind: "github-login" } | { kind: "github-cli"; request: Extract<LoginRequest, { type: "ghecom" }> } | null;
 
 const stateColor: Record<WorkerState, string> = {
   ready: theme.ready, starting: theme.starting, crashed: theme.crashed, unhealthy: theme.unhealthy,
@@ -262,7 +262,6 @@ export function App({
   const [, setNow] = useState(0); // ticks the live loading line while the assistant streams
   const abortRef = useRef<AbortController | null>(null); // current turn's interrupt handle
   const loginInFlight = useRef(false); // guards against starting a second login flow
-  const { setRawMode, isRawModeSupported } = useStdin();
   const add = (e: Entry) => setEntries((p) => [...p, e].slice(-100));
   // Re-read the real config files, but keep the previous object when nothing changed so the 2s poll
   // doesn't force a full-frame repaint (see sameStatus). webBackend is a string and already bails on
@@ -273,7 +272,7 @@ export function App({
   };
 
   // esc interrupts an in-flight assistant turn (the Repl doesn't use esc, so this is unambiguous).
-  useInput((_input, key) => { if (key.escape) abortRef.current?.abort(); });
+  useInput((_input, key) => { if (key.escape) abortRef.current?.abort(); }, { isActive: screen?.kind !== "github-cli" });
 
   useEffect(() => {
     if (!statusSource && !readStatus) return;
@@ -295,6 +294,19 @@ export function App({
     const id = setInterval(tick, 2000);
     return () => { alive = false; clearInterval(id); };
   }, [statusSource]);
+
+  useEffect(() => {
+    if (screen?.kind !== "github-cli" || !login || loginInFlight.current) return;
+    const request = screen.request;
+    loginInFlight.current = true;
+    const timer = setTimeout(() => {
+      void login(request, (lines) => add({ type: "card", title: "/login", tone: "info", lines }))
+        .then((lines) => add({ type: "card", title: "/login", tone: "ok", lines }))
+        .catch((e) => add({ type: "card", title: "/login", tone: "error", lines: [`login failed: ${e instanceof Error ? e.message : String(e)}`] }))
+        .finally(() => { loginInFlight.current = false; setScreen(null); });
+    }, 0);
+    return () => clearTimeout(timer);
+  }, [screen, login]);
 
   const streaming = entries.some((e) => e.type === "assistant" && e.streaming);
   useEffect(() => {
@@ -416,7 +428,9 @@ export function App({
   const configured = (s: { user: boolean; project: boolean }) => s.user || s.project;
 
   let body: React.ReactNode;
-  if (screen?.kind === "model" && loadModels) {
+  if (screen?.kind === "github-cli") {
+    body = <Text color={theme.muted}>GitHub CLI owns this terminal — complete its prompts below.</Text>;
+  } else if (screen?.kind === "model" && loadModels) {
     body = <ModelScreen loadModels={loadModels} limits={modelLimits} labels={modelLabels} current={model} onPick={pickModel} onCancel={() => setScreen(null)} />;
   } else if (screen?.kind === "claude-map" && claudeMapSettings && saveClaudeMap && loadModels) {
     body = (
@@ -543,16 +557,16 @@ export function App({
       <GitHubLoginScreen
         onSubmit={(request) => {
           if (loginInFlight.current) return;
+          if (request.type === "ghecom") {
+            setScreen({ kind: "github-cli", request });
+            return;
+          }
           loginInFlight.current = true;
           setScreen(null);
-          if (request.type === "ghecom" && isRawModeSupported) setRawMode(false);
           void login(request, (lines) => add({ type: "card", title: "/login", tone: "info", lines }))
             .then((lines) => add({ type: "card", title: "/login", tone: "ok", lines }))
             .catch((e) => add({ type: "card", title: "/login", tone: "error", lines: [`login failed: ${e instanceof Error ? e.message : String(e)}`] }))
-            .finally(() => {
-              if (request.type === "ghecom" && isRawModeSupported) setRawMode(true);
-              loginInFlight.current = false;
-            });
+            .finally(() => { loginInFlight.current = false; });
         }}
         onCancel={() => { setScreen(null); add({ type: "system", text: "login cancelled" }); }}
       />
