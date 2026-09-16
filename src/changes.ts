@@ -2,6 +2,14 @@
 export interface ChangeEntry { version: string; date: string; summary: string; summaries: string[] }
 export const APP_CHANGES: ChangeEntry[] = [
   {
+    "version": "0.23.2",
+    "date": "2026-09-16",
+    "summary": "Show the active GitHub account, login host, and Copilot plan as explicit fields in the startup welcome card and `/status`.",
+    "summaries": [
+      "Show the active GitHub account, login host, and Copilot plan as explicit fields in the startup welcome card and `/status`."
+    ]
+  },
+  {
     "version": "0.23.1",
     "date": "2026-09-15",
     "summary": "Release terminal input before starting interactive GitHub CLI authentication so GHE.com login accepts Enter instead of hanging.",
@@ -80,15 +88,6 @@ export const APP_CHANGES: ChangeEntry[] = [
     "summary": "Fix the 413 that returns on screenshot-heavy sessions with a large conversation (issue #52 follow-up). The 413 is on the WHOLE request body, but context editing budgeted only image bytes against a fixed 3.5MB cap — so a ~700k-token transcript (~2.7MB of text) plus 3 kept screenshots (~3.15MB) still exceeded Copilot's 5 MiB gateway wall. The image allowance is now DYNAMIC: `GATEWAY_ENTITY_LIMIT (5 MiB) − SAFETY_MARGIN − nonImageBytes`, capped by the fixed budget for the common small-text case. Big text automatically clears more screenshots (700k text → keep 1 image; 900k text → keep 0), keeping the total body under the wall for any text size. Adds a reactive fallback: if the gateway STILL returns 413, force-clear every screenshot and retry once before surfacing the error (both the streaming and non-streaming Anthropic paths). New unit tests (dynamic budget across text sizes, `forceClearAllScreenshots`, `is413Error`, and end-to-end reactive-retry through the Express app for both stream and non-stream) + an http-e2e assertion that big-text + screenshots fits under 5 MiB.",
     "summaries": [
       "Fix the 413 that returns on screenshot-heavy sessions with a large conversation (issue #52 follow-up). The 413 is on the WHOLE request body, but context editing budgeted only image bytes against a fixed 3.5MB cap — so a ~700k-token transcript (~2.7MB of text) plus 3 kept screenshots (~3.15MB) still exceeded Copilot's 5 MiB gateway wall. The image allowance is now DYNAMIC: `GATEWAY_ENTITY_LIMIT (5 MiB) − SAFETY_MARGIN − nonImageBytes`, capped by the fixed budget for the common small-text case. Big text automatically clears more screenshots (700k text → keep 1 image; 900k text → keep 0), keeping the total body under the wall for any text size. Adds a reactive fallback: if the gateway STILL returns 413, force-clear every screenshot and retry once before surfacing the error (both the streaming and non-streaming Anthropic paths). New unit tests (dynamic budget across text sizes, `forceClearAllScreenshots`, `is413Error`, and end-to-end reactive-retry through the Express app for both stream and non-stream) + an http-e2e assertion that big-text + screenshots fits under 5 MiB."
-    ]
-  },
-  {
-    "version": "0.16.2",
-    "date": "2026-07-03",
-    "summary": "fix(worker): fast-fail an unknown/typo'd model id instead of freezing the turn (#50 P1). An upstream 4xx (e.g. `model_not_supported`) was masked as a retriable 502/`api_error`, so clients that retry (Claude Code, the Anthropic SDK) backed off to their 90s turn timeout and froze. The worker now carries the upstream status through a typed `UpstreamError` and surfaces a permanent 4xx as a terminal `invalid_request_error` (HTTP 400 on the non-stream path; a terminal `error` SSE frame on the stream path), while genuine 5xx/network/429 stay retriable 502s — honoring the never-freeze north-star.",
-    "summaries": [
-      "fix(worker): fast-fail an unknown/typo'd model id instead of freezing the turn (#50 P1). An upstream 4xx (e.g. `model_not_supported`) was masked as a retriable 502/`api_error`, so clients that retry (Claude Code, the Anthropic SDK) backed off to their 90s turn timeout and froze. The worker now carries the upstream status through a typed `UpstreamError` and surfaces a permanent 4xx as a terminal `invalid_request_error` (HTTP 400 on the non-stream path; a terminal `error` SSE frame on the stream path), while genuine 5xx/network/429 stay retriable 502s — honoring the never-freeze north-star.",
-      "fix(responses): finalize a streamed function_call with its full call_id + name + arguments so Codex actually runs the tool (#50 P2). The terminal `response.function_call_arguments.done` and `response.output_item.done` events (and the `function_call` item inside `response.completed.output`) were emitted with only `{type,id,status}` — missing `name` and `arguments`. Codex reads those terminal events to learn which shell command to run, so a nameless/argless call was silently skipped: every real Codex tool loop (`codex exec` writing a file, running a command) completed with no action. `ResponsesSSE` now retains each call's `callId`+`name` and emits the complete item on every terminal event, matching the OpenAI Responses spec. Verified end-to-end: `codex exec -s workspace-write` now writes the file through the proxy."
     ]
   }
 ];

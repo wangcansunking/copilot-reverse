@@ -1,3 +1,7 @@
+## v0.23.2 — 2026-09-16
+
+Show the active GitHub account, login host, and Copilot plan as explicit fields in the startup welcome card and `/status`.
+
 ## v0.23.1 — 2026-09-15
 
 Release terminal input before starting interactive GitHub CLI authentication so GHE.com login accepts Enter instead of hanging.
