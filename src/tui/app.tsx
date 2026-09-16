@@ -58,7 +58,6 @@ function statusCard(s: StatusSummary, extra: string[] = [], clients?: ClientStat
   // Fold in who's logged in + their Copilot plan when connected: "✓ connected · Can Wang (canwa) ·
   // Copilot Enterprise". Each segment is appended only when present, so a failed/pending lookup just
   // shows "✓ connected" with no dangling separator.
-  const ghLine = [gh, s.githubHost, s.identity, s.plan].filter(Boolean).join(" · ");
   const web = s.webSearch === "webiq" ? "✓ via WebIQ" : s.webSearch === "copilot" ? "✓ via Copilot (native)" : "✗ unavailable — run /webiq";
   // Per-scope + model when we have the file-derived detail; else fall back to the simple flag.
   const scope = (sc?: { on: boolean; model?: string }) => sc?.on ? `✓ ${sc.model ? sc.model.replace(/\[1m\]$/, "") : "on"}` : "○";
@@ -67,7 +66,10 @@ function statusCard(s: StatusSummary, extra: string[] = [], clients?: ClientStat
     : `claude ${s.clients.claude ? "✓" : "○"}  codex ${s.clients.codex ? "✓" : "○"}`;
   const tone: "ok" | "error" = s.github === "connected" ? "ok" : "error";
   return { type: "card", title: "status", tone, lines: [
-    `GitHub login   ${ghLine}`,
+    `GitHub login   ${gh}`,
+    ...(s.identity ? [`account        ${s.identity}`] : []),
+    ...(s.githubHost ? [`host           ${s.githubHost}`] : []),
+    ...(s.plan ? [`plan           ${s.plan}`] : []),
     `web search     ${web}`,
     `worker         ${s.worker}`,
     `clients        ${clientsLine}`,
@@ -350,9 +352,14 @@ export function App({
         catch (error) { githubError = error instanceof Error ? error.message : String(error); }
       }
       let worker = state, restarts: string[] = [];
+      let liveGithubHost = githubHost;
       try {
         const s = await statusSource?.();
-        if (s) { worker = s.workerState; restarts = s.restarts.slice(0, 5).map((r) => `  ${r.reason} exit=${r.exitCode ?? "-"} ${r.stderrTail.slice(0, 60)}`); }
+        if (s) {
+          worker = s.workerState;
+          restarts = s.restarts.slice(0, 5).map((r) => `  ${r.reason} exit=${r.exitCode ?? "-"} ${r.stderrTail.slice(0, 60)}`);
+          liveGithubHost = s.github?.hasToken ? s.github.host : undefined;
+        }
       } catch { /* daemon momentarily down — show what we have */ }
       // Fresh identity/plan for the live card when connected. Best-effort — a failed lookup just omits
       // them. Fall back to the startup values so a transient miss doesn't blank a name we already had.
@@ -363,7 +370,7 @@ export function App({
         clients: { claude: status.claude.user || status.claude.project, codex: status.codex.user || status.codex.project },
         identity: acct.identity ?? startupStatus?.identity,
         plan: acct.plan ?? startupStatus?.plan,
-        githubHost,
+        githubHost: liveGithubHost,
       });
       const extra = [
         ...(githubError ? [`GitHub check   ${githubError}`] : []),

@@ -343,20 +343,24 @@ describe("TUI: startup status card", () => {
     expect(f).toMatch(/web search.*via WebIQ/);
     expect(f).toMatch(/worker.*ready/);
   });
-  it("folds the username + Copilot plan into the GitHub line when present", () => {
+  it("shows the login account and GHE.com domain as explicit welcome fields", () => {
     const startupStatus = { github: "connected" as const, webSearch: "webiq" as const, worker: "ready" as const,
-      clients: { claude: true, codex: false }, identity: "Can Wang (canwa_microsoft)", plan: "Copilot Enterprise" };
+      clients: { claude: true, codex: false }, identity: "Can Wang (canwa_microsoft)", plan: "Copilot Enterprise", githubHost: "msft.ghe.com" };
     const { lastFrame } = render(<App registry={reg()} title="m" startupStatus={startupStatus} />);
     const f = lastFrame() ?? "";
-    expect(f).toMatch(/GitHub login.*connected.*canwa_microsoft.*Copilot Enterprise/);
+    expect(f).toMatch(/GitHub login.*connected/);
+    expect(f).toMatch(/account.*Can Wang \(canwa_microsoft\)/);
+    expect(f).toMatch(/host.*msft\.ghe\.com/);
+    expect(f).toMatch(/plan.*Copilot Enterprise/);
   });
 });
 
 describe("TUI: /status folds in identity + plan from accountInfo", () => {
-  it("shows the fresh username + plan on the live status card", async () => {
+  it("shows the fresh account and GHE.com domain as explicit fields", async () => {
     const accountInfo = vi.fn(async () => ({ identity: "Can Wang (canwa_microsoft)", plan: "Copilot Enterprise" }));
+    const statusSource = async () => ({ workerState: "ready" as const, restarts: [], github: { ok: true, hasToken: true, checkedAt: 1, detail: "token valid", host: "msft.ghe.com" } });
     const { stdin, lastFrame } = render(
-      <App registry={reg()} title="m" githubStatus={async () => "connected"} webSearchBackend={() => "copilot"} accountInfo={accountInfo} />,
+      <App registry={reg()} title="m" statusSource={statusSource} githubStatus={async () => "connected"} webSearchBackend={() => "copilot"} accountInfo={accountInfo} />,
     );
     await tick();
     stdin.write("/status");
@@ -364,7 +368,11 @@ describe("TUI: /status folds in identity + plan from accountInfo", () => {
     stdin.write("\r");
     await tick(80);
     expect(accountInfo).toHaveBeenCalled();
-    expect(lastFrame() ?? "").toMatch(/GitHub login.*connected.*canwa_microsoft.*Copilot Enterprise/);
+    const frame = lastFrame() ?? "";
+    expect(frame).toMatch(/GitHub login.*connected/);
+    expect(frame).toMatch(/account.*Can Wang \(canwa_microsoft\)/);
+    expect(frame).toMatch(/host.*msft\.ghe\.com/);
+    expect(frame).toMatch(/plan.*Copilot Enterprise/);
   });
 });
 
