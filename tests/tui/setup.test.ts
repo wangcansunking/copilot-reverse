@@ -62,7 +62,14 @@ describe("claudeCustomModelEnv", () => {
   });
 });
 
-describe("claudeCopilotReverseEnv", () => {  it("writes the canonical dashed [1m] model + window so Claude Code matches + uses 1M", () => {
+describe("claudeCopilotReverseEnv", () => {
+  it("uses the backend input budget and clamps to Claude's accepted compact window", () => {
+    const env = claudeCopilotReverseEnv("http://x", "k", "claude-opus-5", 1_050_000, 922_000);
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("922000");
+    expect(env.ANTHROPIC_MODEL).toBe("claude-opus-5[1m]");
+    expect(claudeCopilotReverseEnv("http://x", "k", "claude-opus-5", 1_050_000).CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
+  });
+  it("writes the canonical dashed [1m] model + window so Claude Code matches + uses 1M", () => {
     const env = claudeCopilotReverseEnv("http://127.0.0.1:7891", "k", "claude-opus-4.8", 1_000_000);
     expect(env.ANTHROPIC_MODEL).toBe("claude-opus-4-8[1m]");
     expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
@@ -80,7 +87,7 @@ describe("claudeCopilotReverseEnv", () => {  it("writes the canonical dashed [1m
     expect(env.ANTHROPIC_MODEL).toBe("claude-opus-5[1m]");
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL).toBe("claude-opus-5[1m]");
     expect(env.ANTHROPIC_DEFAULT_OPUS_MODEL_NAME).toBe("Opus 5 (1M context)");
-    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1100000");
+    expect(env.CLAUDE_CODE_AUTO_COMPACT_WINDOW).toBe("1000000");
   });
   // Regression: setup used to write CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1 alongside
   // CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY=1. The former gates the latter — Claude Code's

@@ -27,11 +27,48 @@ function parseFrames(body: string): { event: string; data: any }[] {
 }
 
 describe("worker Anthropic endpoint", () => {
+  it.each([false, true])("blocks replayed edit loops before upstream or SSE (stream=%s)", async (stream) => {
+    const messages: any[] = [{ role: "user", content: "Fix tests" }];
+    for (let i = 0; i < 12; i++) {
+      messages.push({ role: "assistant", content: [{ type: "tool_use", id: `call_${i}`, name: "Edit", input: {
+        file_path: "/project/test.mjs", old_string: `const x = 1; tagged${i}.`, new_string: `const x = 1; tagged${i + 1}.`,
+      } }] });
+      messages.push({ role: "user", content: [{ type: "tool_result", tool_use_id: `call_${i}`, content: "updated" }] });
+    }
+    let called = false;
+    const provider: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => { called = true; return textProvider.complete({} as any); },
+      async *stream() { called = true; yield* textProvider.stream({} as any); },
+    };
+    const worker = app(provider);
+    const result = await request(worker).post("/anthropic/v1/messages").send({ model: "m", max_tokens: 100, stream, messages });
+    expect(result.status).toBe(400);
+    expect(result.body.error.type).toBe("invalid_request_error");
+    expect(result.body.error.message).toContain("repeated Edit loop");
+    expect(called).toBe(false);
+    // New instructions allow recovery without discarding history or poisoning another session.
+    messages.push({ role: "user", content: "Summarize the valid changes instead" });
+    expect((await request(worker).post("/anthropic/v1/messages").send({ model: "m", max_tokens: 100, stream, messages })).status).toBe(200);
+  });
+
   it("non-stream message", async () => {
     const res = await request(app()).post("/anthropic/v1/messages").send({ model: "claude-opus-4-8", max_tokens: 100, messages: [{ role: "user", content: "hi" }] });
     expect(res.status).toBe(200);
     expect(res.body.type).toBe("message");
     expect(res.body.content[0].text).toBe("hello");
+  });
+
+  it.each([false, true])("uses Claude-recognizable overflow wording (stream=%s)", async (stream) => {
+    const failing: ProviderAdapter = {
+      name: "copilot",
+      complete: async () => { throw new UpstreamError(400, "Your input exceeds the context window of this model."); },
+      async *stream() { throw new UpstreamError(400, "Your input exceeds the context window of this model."); },
+    };
+    const result = await request(app(failing)).post("/anthropic/v1/messages").send({ model: "m", max_tokens: 100, stream, messages: [{ role: "user", content: "hi" }] });
+    const message = stream ? parseFrames(result.text).find((f) => f.event === "error")!.data.error.message : result.body.error.message;
+    expect(message).toContain("prompt is too long");
+    expect(message).toContain("Your input exceeds");
   });
 
   it("reports real usage tokens in message_delta when the provider returns them", async () => {

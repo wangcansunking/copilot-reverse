@@ -9,6 +9,7 @@ export interface ToolResultBlock {
   type: "tool_result";
   toolUseId: string;
   content: string;
+  isError?: boolean;
   // Images returned BY the tool (e.g. a Bash command that emits a screenshot, or an MCP tool that
   // returns an image). Anthropic/OpenAI both allow images inside a tool result, and Copilot accepts
   // them on a `tool` role message (probed). Kept as a separate field (not folded into `content`) so

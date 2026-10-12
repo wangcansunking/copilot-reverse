@@ -3,6 +3,33 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-10-12 (pre-merge verification for session/login fixes)** — full repository suite:
+  **930 passed, 2 opt-in tests skipped**; the two real-desktop compaction tests were then enabled
+  separately on Claude Code 2.1.286 and **2/2 passed**. Dedicated hermetic E2E **100/100 passed**;
+  TypeScript build clean. Current-branch Linux image built atop the reusable CLI toolchain; full Docker
+  HTTP edge matrix **83/83 passed** (dummy token; live golden cases skipped). The required real CLI
+  matrix against live Copilot completed with **36/36 checks passed, 0 FAIL, 4 SKIP**, using Claude Code
+  2.1.263 and Codex 0.145.0-alpha.25. The four skips were optional OCR/latest-screenshot colour checks
+  whose mapped GPT backend did not interpret the fixture; image validity/no-413, multi-turn replay,
+  real Claude/Codex tools, WebIQ/native search, model mapping and bounded-error gates passed.
+  Credential and WebIQ files were mounted read-only. No production worker was restarted for testing.
+
+- **2026-10-11 (session-loop recovery + first GHE login stdin)** — targeted verification, not a full
+  E2E run: **172/172 tests across 16 files passed**, TypeScript build clean. Real readline → inherited
+  stdin → separate login-child fixture passed; provider selection is closed before authentication.
+  The original failed plan-harness session tail was replayed locally and detected by the conservative
+  connected numeric-only Edit guard; new user instructions and normal batch edits are not blocked.
+  Actual affected desktop **Claude Code 2.1.284**, and current **2.1.286**, drove a local provider through auto-compaction and
+  a synthetic Copilot context-window 400: both emitted `compact_boundary` and continued successfully.
+  Restoring the old overflow wording reproduced exit 1 without recovery; the new `prompt is too long`
+  hint fixes that classification. The affected desktop build **caps** a 1,050,000 override to 1,000,000
+  (it does not reject it); setup now uses the backend prompt budget separately from the 1M badge.
+  Live GHE Copilot on isolated dev port 7991, via the actual desktop CLI, completed a 3-turn Read
+  round-trip with `LIVE_SESSION_OK`. Production 7890/7891 and real GitHub credentials were untouched.
+  The polluted plan-harness test line was backed up and restored; all 8 generation assertions passed.
+  Full E2E/Docker matrices and an actual fresh-account browser authorization were not run; the login
+  verification uses a real stdin child boundary, not a Windows console/ConPTY or OAuth browser flow.
+
 - **2026-09-15 (GitHub.com + GHE.com login)** — added an interactive two-provider login flow while
   preserving GitHub.com's embedded device authorization with no GitHub CLI dependency. GHE.com validates
   `SUBDOMAIN.ghe.com`, delegates credentials to `gh`, stores only connection metadata, routes GitHub REST

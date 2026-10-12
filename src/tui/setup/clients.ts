@@ -66,12 +66,16 @@ export function claudeCustomModelEnv(model: string, contextWindow?: number): Rec
 // The full env copilot-reverse writes into Claude Code's settings.json. Beyond the endpoint, it tells
 // Claude Code the selected model's real context window (via the [1m] model suffix and
 // CLAUDE_CODE_AUTO_COMPACT_WINDOW) so the client stops assuming the default 200K. Mirrors agent-maestro.
-export function claudeCopilotReverseEnv(base: string, apiKey: string, model: string, contextWindow?: number): Record<string, string> {
+export function claudeCopilotReverseEnv(base: string, apiKey: string, model: string, contextWindow?: number, promptLimit?: number): Record<string, string> {
+  const inputWindow = promptLimit ?? contextWindow;
+  // Keep the override in Claude's supported 100K..1M range instead of relying on version-specific caps.
+  const compactWindow = inputWindow && Number.isFinite(inputWindow) && inputWindow >= 100_000
+    ? Math.min(inputWindow, contextWindow ?? inputWindow, 1_000_000) : undefined;
   return {
     ANTHROPIC_BASE_URL: base,
     ANTHROPIC_API_KEY: apiKey,
     ANTHROPIC_MODEL: withClaude1mSuffix(model, contextWindow),
-    ...(contextWindow ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(contextWindow) } : {}),
+    ...(compactWindow ? { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(compactWindow) } : {}),
     // Friendly name + family alias for a model Claude Code's built-in table doesn't carry yet.
     ...claudeCustomModelEnv(model, contextWindow),
     CLAUDE_AUTOCOMPACT_PCT_OVERRIDE: "80",

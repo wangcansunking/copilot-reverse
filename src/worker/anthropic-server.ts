@@ -10,6 +10,7 @@ import { errorHint, classifyError } from "./errors.js";
 import { isGatewayTool, type GatewayToolRunner } from "../core/server-tools.js";
 import type { ContentBlock, CanonicalChunk } from "../core/canonical.js";
 import { RunawayGuard } from "../core/stream-guard.js";
+import { repeatedEditLoop } from "../core/tool-loop-guard.js";
 
 const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 const safeJson = (s: string): unknown => { try { return JSON.parse(s); } catch { return {}; } };
@@ -90,6 +91,12 @@ export function mountAnthropic(app: Express, router: Router, onMetric: MetricSin
     if (canon.reasoning?.effort) res.setHeader("x-copilot-reverse-effort", canon.reasoning.effort);
     const metric = (status: number, opts: { error?: string; tokensIn?: number; tokensOut?: number } = {}) => onMetric({ endpoint: "/anthropic/v1/messages", model: canon.model, status, latencyMs: Date.now() - start, tokensIn: opts.tokensIn, tokensOut: opts.tokensOut, error: opts.error });
     try {
+      if (repeatedEditLoop(canon.messages)) {
+        const message = "Stopped a repeated Edit loop before another upstream call. Inspect recent changes and give a new instruction to recover; repeated numeric-only edits made no meaningful progress.";
+        res.status(400).json({ type: "error", error: { type: "invalid_request_error", message } });
+        metric(400, { error: message });
+        return;
+      }
       if (canon.stream) {
         res.setHeader("content-type", "text/event-stream");
         res.setHeader("cache-control", "no-cache");

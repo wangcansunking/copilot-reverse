@@ -53,6 +53,33 @@ describe("login command request resolution", () => {
 });
 
 describe("runLoginCommand", () => {
+  it("closes the startup selector before a first GHE login takes over stdin", async () => {
+    const p = prompt("ghecom", "acme.ghe.com");
+    let authenticated = false;
+    const gh: GhAuth = {
+      isAvailable: vi.fn(async () => true),
+      token: vi.fn(async () => {
+        if (!authenticated) throw new Error("not logged in");
+        return "enterprise-token";
+      }),
+      login: vi.fn(async () => {
+        expect(p.close).toHaveBeenCalledTimes(1);
+        authenticated = true;
+      }),
+    };
+    await expect(runLoginCommand({}, { isTTY: true, dir: dataDir(), prompt: p, ghAuth: gh }))
+      .resolves.toMatchObject({ completed: true, connection: { type: "ghecom", host: "acme.ghe.com" } });
+    expect(p.close).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["cancel", "invalid", "failure"])("closes the prompt exactly once on %s", async (mode) => {
+    const p = prompt(mode === "cancel" ? null : "ghecom", mode === "invalid" ? "https://acme.ghe.com" : "acme.ghe.com");
+    const result = runLoginCommand({}, { isTTY: true, dir: dataDir(), prompt: p, ghAuth: ghThatMustNotRun() });
+    if (mode === "cancel") await expect(result).resolves.toEqual({ completed: false });
+    else await expect(result).rejects.toThrow();
+    expect(p.close).toHaveBeenCalledTimes(1);
+  });
+
   it("never touches gh for an explicit GitHub.com login", async () => {
     const fetchFn = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ device_code: "dc", user_code: "AB-12", verification_uri: "https://github.com/login/device", interval: 0, expires_in: 900 }), { status: 200 }))

@@ -122,6 +122,19 @@ describe("assistant runtime (stubbed SDK transport, real /v1/messages)", () => {
     expect(window).toBe("64000"); // real per-model limit wins over the conservative default
   });
 
+  it("uses the input budget instead of the headline display window", async () => {
+    let window: string | undefined;
+    const capturingQuery = (() => {
+      window = process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW;
+      async function* gen(): AsyncGenerator<never> {}
+      return gen();
+    }) as unknown as QueryFn;
+    const cfg: AssistantConfig = { client: {} as any, workerBaseUrl: "http://127.0.0.1:1", apiKey: "k", model: "gpt-6-sol",
+      modelLimits: { "gpt-6-sol": 1_000_000 }, modelPromptLimits: { "gpt-6-sol": 872_000 } };
+    await runAssistantTurn(cfg, "hi", () => {}, capturingQuery);
+    expect(window).toBe("872000");
+  });
+
   it("passes the AbortController into the query so the turn is interruptible", async () => {
     let seen: AbortController | undefined;
     const capturingQuery = ((params: { options?: { abortController?: AbortController } }) => {
