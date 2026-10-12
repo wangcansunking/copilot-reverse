@@ -198,6 +198,7 @@ async function launchTui(): Promise<void> {
   };
   // Filled in below once we have a token; the assistant prefers a model's real window over the default.
   const modelLimits: Record<string, number> = {};
+  const modelPromptLimits: Record<string, number> = {};
   const modelLabels: Record<string, string> = {};
   let latestModels: string[] = [];
   let latestModelsLive = false;
@@ -211,9 +212,10 @@ async function launchTui(): Promise<void> {
     const { ids, limits } = discovery;
     latestModels = ids;
     latestModelsLive = discovery.live;
-    Object.assign(modelLimits, limits); // so the picker shows windows and auto-compaction is sized
+    Object.assign(modelLimits, limits); // headline windows for display and 1M badges
+    Object.assign(modelPromptLimits, discovery.promptLimits);
     for (const key of Object.keys(modelLabels)) delete modelLabels[key];
-    for (const alias of CLAUDE_MODEL_ALIASES) delete modelLimits[alias];
+    for (const alias of CLAUDE_MODEL_ALIASES) { delete modelLimits[alias]; delete modelPromptLimits[alias]; }
     // A fallback list only keeps ordinary selection usable; it is not positive evidence that a mapped
     // backend exists. Match the worker's invariant and never advertise compatibility aliases offline.
     if (!readClaudeMapEnabled(dataDir()) || !discovery.live) return ids;
@@ -223,11 +225,15 @@ async function launchTui(): Promise<void> {
       if (!seen.has(alias)) { out.push(alias); seen.add(alias); }
       modelLabels[alias] = modelMapDisplay(alias, ids, claudeMap);
       if (limits[backend] !== undefined) modelLimits[alias] = limits[backend];
+      if (discovery.promptLimits[backend] !== undefined) modelPromptLimits[alias] = discovery.promptLimits[backend];
     }
     return out;
   };
   // Pull each model's real context window in the background too, in case the picker never opens.
-  void fetchModelDiscovery(tokenStore).then((m) => Object.assign(modelLimits, m.limits)).catch(() => {});
+  void fetchModelDiscovery(tokenStore).then((m) => {
+    Object.assign(modelLimits, m.limits);
+    Object.assign(modelPromptLimits, m.promptLimits);
+  }).catch(() => {});
 
   // Account facts for the status card: who's logged in (GitHub /user) + their Copilot plan (rides along
   // on the token exchange, so getEntitlement() is free once get() has run). The username is cached
@@ -260,7 +266,7 @@ async function launchTui(): Promise<void> {
   const applyClient = (clientKind: SetupClient, scope: Scope, model: string) => {
     if (clientKind === "claude") {
       const backend = readClaudeMapEnabled(dataDir()) && latestModelsLive ? backendForClaudeAlias(model, latestModels, claudeMap) : undefined;
-      const r = applyClaude(scope, claudeCopilotReverseEnv(anthropicBase, "copilot-reverse-local", model, modelLimits[backend ?? model]));
+      const r = applyClaude(scope, claudeCopilotReverseEnv(anthropicBase, "copilot-reverse-local", model, modelLimits[backend ?? stripOneM(model)], modelPromptLimits[backend ?? stripOneM(model)]));
       writeClientSetup(dataDir(), { ...readClientSetup(dataDir()), claude: true });
       return r;
     }
@@ -274,7 +280,7 @@ async function launchTui(): Promise<void> {
   const onChat = makeOnChat(
     {
       client, workerBaseUrl: anthropicBase, apiKey: "copilot-reverse-local", model: DEFAULT_MODEL,
-      maxInputTokens: DEFAULT_MAX_INPUT_TOKENS, modelLimits,
+      maxInputTokens: DEFAULT_MAX_INPUT_TOKENS, modelLimits, modelPromptLimits,
       listModels: loadModels,
       setupClient: async (c, s, m) => applyClient(c, s, m),
     },

@@ -11,7 +11,7 @@ export function errorHint(message: string): string {
     return "GitHub login expired — run /login to sign in again";
   }
   if (/context_length_exceeded|prompt is too long|maximum context|too many tokens|context window/.test(m)) {
-    return "context window exceeded — the conversation is too long; /compact or switch to a larger-context model";
+    return "prompt is too long — context window exceeded; /compact or switch to a larger-context model";
   }
   // Copilot's gateway rejected the request body at the HTTP layer (byte size, not tokens) — most often a
   // long agentic session that accreted many screenshots. Context editing clears old ones automatically,

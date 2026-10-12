@@ -3,7 +3,7 @@ import { GATEWAY_TOOL_DEFS, isGatewayTool } from "./server-tools.js";
 import { resolveReasoning } from "./reasoning.js";
 
 interface AnthropicImageSource { type: "base64" | "url"; media_type?: string; data?: string; url?: string }
-interface AnthropicBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; source?: AnthropicImageSource; thinking?: string; signature?: string }
+interface AnthropicBlock { type: string; text?: string; id?: string; name?: string; input?: unknown; tool_use_id?: string; content?: unknown; is_error?: boolean; source?: AnthropicImageSource; thinking?: string; signature?: string }
 interface AnthropicMsg { role: "user" | "assistant"; content: string | AnthropicBlock[] }
 // Custom tools carry an input_schema. Server-side tools (web_search, web_fetch, bash, computer, …)
 // instead carry a dated `type` (e.g. "web_search_20250305") and a bare `name`, with no schema.
@@ -62,7 +62,7 @@ function blocksToCanonical(content: string | AnthropicBlock[]): ContentBlock[] {
     else if (b.type === "tool_use") out.push({ type: "tool_use", id: b.id!, name: b.name!, input: b.input });
     else if (b.type === "tool_result") {
       const { text, images } = splitToolResultContent(b.content);
-      out.push({ type: "tool_result", toolUseId: b.tool_use_id!, content: text, ...(images.length ? { images } : {}) });
+      out.push({ type: "tool_result", toolUseId: b.tool_use_id!, content: text, ...(b.is_error ? { isError: true } : {}), ...(images.length ? { images } : {}) });
     }
     // A prior assistant thinking block round-trips so the opaque continuation token (signature) can be
     // echoed upstream, preserving the model's reasoning context across tool-call turns. redacted_thinking

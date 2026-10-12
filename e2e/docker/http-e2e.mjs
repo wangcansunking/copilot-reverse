@@ -143,6 +143,20 @@ async function main() {
     check("sonnet-5 carries [1m] 1M badge", sonnet5?.id === "claude-sonnet-5[1m]", sonnet5?.id);
     const ct = await jpost(wrkUrl("/anthropic/v1/messages/count_tokens"), JSON.stringify({ model: "gpt-4o", messages: [{ role: "user", content: "hi" }] }));
     check("count_tokens input_tokens>0", JSON.parse(ct.t).input_tokens > 0, ct.t);
+    const editHistory = [];
+    for (let i = 0; i < 12; i++) {
+      editHistory.push({ role: "assistant", content: [{ type: "tool_use", id: `edit_${i}`, name: "Edit", input: {
+        file_path: "/tmp/test.mjs", old_string: `const x = 1; tagged${i}.`, new_string: `const x = 1; tagged${i + 1}.`,
+      } }] });
+      editHistory.push({ role: "user", content: [{ type: "tool_result", tool_use_id: `edit_${i}`, content: "updated" }] });
+    }
+    for (const stream of [false, true]) {
+      const loop = await jpost(wrkUrl("/anthropic/v1/messages"), JSON.stringify({ model: "gpt-4o", max_tokens: 100, stream, messages: editHistory }));
+      check(`repeated Edit loop stops before upstream (stream=${stream})`, loop.s === 400 && JSON.parse(loop.t).error?.type === "invalid_request_error", loop.t);
+    }
+    const { claudeCopilotReverseEnv } = await import("../../dist/tui/setup/clients.js");
+    const budgetEnv = claudeCopilotReverseEnv("http://localhost", "dummy", "claude-opus-5", 1_050_000, 922_000);
+    check("compact input budget is valid while 1M badge is preserved", budgetEnv.CLAUDE_CODE_AUTO_COMPACT_WINDOW === "922000" && budgetEnv.ANTHROPIC_MODEL === "claude-opus-5[1m]");
 
     // Image downscale (model_max_prompt_tokens_exceeded fix): Copilot has no vision tiler on /chat for
     // Claude models — it bills an inline base64 data URL as PLAIN TEXT (~char/4), so a full-res

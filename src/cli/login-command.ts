@@ -72,8 +72,16 @@ export async function runLoginCommand(
   },
 ): Promise<LoginCommandResult> {
   const prompt = deps.prompt ?? createStdioLoginPrompt();
+  let closed = false;
+  const closePrompt = () => {
+    if (closed) return;
+    closed = true;
+    prompt.close();
+  };
   try {
     const request = await resolveLoginRequest(options, deps.isTTY, prompt);
+    // gh inherits the terminal; readline must release stdin before authentication starts.
+    closePrompt();
     if (!request) return { completed: false };
     const previous = readGitHubConnection(deps.dir);
     await loginGitHubConnection(request, deps.dir, {
@@ -92,6 +100,6 @@ export async function runLoginCommand(
     }
     return { completed: true, connection, previous };
   } finally {
-    prompt.close();
+    closePrompt();
   }
 }

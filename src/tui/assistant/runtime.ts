@@ -10,7 +10,8 @@ export interface AssistantConfig {
   apiKey: string;          // copilot-reverse server key (worker ignores/accepts in M1)
   model: string;           // e.g. claude-opus-4-8 (router remaps to a Copilot model)
   maxInputTokens?: number; // conservative default context window; drives auto-compaction
-  modelLimits?: Record<string, number>; // per-model real windows; preferred over maxInputTokens
+  modelLimits?: Record<string, number>; // headline windows for display
+  modelPromptLimits?: Record<string, number>; // input budgets for auto-compaction
   // Optional capabilities exposed to the assistant as tools (wired in production, omitted in tests).
   listModels?: () => Promise<string[]>;
   setupClient?: (client: "claude" | "codex", scope: "global" | "project", model: string) => Promise<{ path: string; changed: string[] }>;
@@ -75,7 +76,7 @@ export async function runAssistantTurn(cfg: AssistantConfig, prompt: string, pri
   // overflow and the upstream rejects with context_length_exceeded. Mirror agent-maestro:
   // size auto-compaction to the model's real window, compact early, and drop the billing
   // attribution header that breaks prompt caching on a non-Anthropic gateway.
-  const contextWindow = cfg.modelLimits?.[cfg.model] ?? cfg.maxInputTokens;
+  const contextWindow = cfg.modelPromptLimits?.[cfg.model] ?? cfg.modelLimits?.[cfg.model] ?? cfg.maxInputTokens;
   if (contextWindow) process.env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = String(contextWindow);
   // 80% keeps the compaction trigger under the model's input budget even when the window above is
   // the full context window (e.g. 1M ctx vs ~936K prompt budget on the 1M Claude models).

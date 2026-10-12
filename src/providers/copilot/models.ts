@@ -118,19 +118,21 @@ export interface CopilotModelDiscovery {
   reasoningEfforts: Record<string, string[]>;
   oneM: Set<string>;
   limits: Record<string, number>;
+  promptLimits: Record<string, number>;
 }
 
 // One upstream request supplies every model capability consumer. Besides avoiding five identical calls,
 // this guarantees aliases are filtered and badged from one coherent snapshot of the account's model list.
 export async function fetchModelDiscovery(token: TokenOrSessionSource, fetchFn: typeof fetch = fetch, timeoutMs = DEFAULT_TIMEOUT_MS): Promise<CopilotModelDiscovery> {
   const data = await getModels(token, fetchFn, timeoutMs);
-  if (!data) return { ids: FALLBACK_MODELS, live: false, endpoints: {}, reasoning: new Set(), reasoningEfforts: {}, oneM: new Set(), limits: {} };
+  if (!data) return { ids: FALLBACK_MODELS, live: false, endpoints: {}, reasoning: new Set(), reasoningEfforts: {}, oneM: new Set(), limits: {}, promptLimits: {} };
   const ids = [...new Set(data.map((m) => m.id).filter((id): id is string => Boolean(id)))];
   const endpoints: Record<string, string[]> = {};
   const reasoning = new Set<string>();
   const reasoningEfforts: Record<string, string[]> = {};
   const oneM = new Set<string>();
   const limits: Record<string, number> = {};
+  const promptLimits: Record<string, number> = {};
   for (const m of data) {
     if (!m.id) continue;
     if (Array.isArray(m.supported_endpoints) && m.supported_endpoints.length) endpoints[m.id] = m.supported_endpoints;
@@ -143,6 +145,10 @@ export async function fetchModelDiscovery(token: TokenOrSessionSource, fetchFn: 
       limits[m.id] = limit;
       if (limit > 800_000) oneM.add(m.id);
     }
+    const promptLimit = m.capabilities?.limits?.max_prompt_tokens ?? limit;
+    if (typeof promptLimit === "number" && Number.isFinite(promptLimit) && promptLimit > 0) {
+      promptLimits[m.id] = typeof limit === "number" && limit > 0 ? Math.min(promptLimit, limit) : promptLimit;
+    }
   }
-  return { ids: ids.length ? ids : FALLBACK_MODELS, live: ids.length > 0, endpoints, reasoning, reasoningEfforts, oneM, limits };
+  return { ids: ids.length ? ids : FALLBACK_MODELS, live: ids.length > 0, endpoints, reasoning, reasoningEfforts, oneM, limits, promptLimits };
 }

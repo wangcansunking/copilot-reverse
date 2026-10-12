@@ -6,6 +6,18 @@ import type { GitHubConnection } from "../../../src/shared/github-connection.js"
 const json = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { "content-type": "application/json" } });
 
 describe("fetchModelDiscovery", () => {
+  it("keeps input budgets separate from headline windows", async () => {
+    const f = vi.fn(async () => json({ data: [
+      { id: "gpt-6-sol", capabilities: { limits: { max_context_window_tokens: 1_000_000, max_prompt_tokens: 872_000 } } },
+      { id: "context-only", capabilities: { limits: { max_context_window_tokens: 200_000 } } },
+      { id: "prompt-only", capabilities: { limits: { max_prompt_tokens: 100_000 } } },
+    ] }));
+    const out = await fetchModelDiscovery("tok", f as unknown as typeof fetch);
+    expect(out.limits["gpt-6-sol"]).toBe(1_000_000);
+    expect(out.promptLimits).toEqual({ "gpt-6-sol": 872_000, "context-only": 200_000, "prompt-only": 100_000 });
+    expect(out.oneM.has("gpt-6-sol")).toBe(true);
+  });
+
   it("returns one coherent live capability snapshot", async () => {
     const f = vi.fn(async () => json({ data: [{
       id: "gpt-5.6-sol",
