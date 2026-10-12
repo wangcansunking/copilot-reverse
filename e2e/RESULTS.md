@@ -3,6 +3,17 @@
 Latest run of the end-to-end suite. Regenerate after every code change with `npm run test:e2e`
 and update this file (paste the summary).
 
+- **2026-10-12 (pre-merge verification for session/login fixes)** — full repository suite:
+  **930 passed, 2 opt-in tests skipped**; the two real-desktop compaction tests were then enabled
+  separately on Claude Code 2.1.286 and **2/2 passed**. Dedicated hermetic E2E **100/100 passed**;
+  TypeScript build clean. Current-branch Linux image built atop the reusable CLI toolchain; full Docker
+  HTTP edge matrix **83/83 passed** (dummy token; live golden cases skipped). The required real CLI
+  matrix against live Copilot completed with **36/36 checks passed, 0 FAIL, 4 SKIP**, using Claude Code
+  2.1.263 and Codex 0.145.0-alpha.25. The four skips were optional OCR/latest-screenshot colour checks
+  whose mapped GPT backend did not interpret the fixture; image validity/no-413, multi-turn replay,
+  real Claude/Codex tools, WebIQ/native search, model mapping and bounded-error gates passed.
+  Credential and WebIQ files were mounted read-only. No production worker was restarted for testing.
+
 - **2026-10-11 (session-loop recovery + first GHE login stdin)** — targeted verification, not a full
   E2E run: **172/172 tests across 16 files passed**, TypeScript build clean. Real readline → inherited
   stdin → separate login-child fixture passed; provider selection is closed before authentication.
